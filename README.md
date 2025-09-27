@@ -38,7 +38,7 @@ let (aspace, _) = ArrowSpaceBuilder::new()
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-arrowspace = "0.1.0"
+arrowspace = "*"
 ```
 
 ### From Source
@@ -69,10 +69,38 @@ $ cargo bench
 Construct an `ArrowSpace` from rows and compute a synthetic index `λτ` used in similarities search (spectral search):
 
 - Build λτ‑graph from data (preferred path):
-    - Use `ArrowSpaceBuilder::with_rows(...).build()` to get an `ArrowSpace` and its Laplacian+Tau mode; the builder will compute per‑row synthetic indices immediately.
-    - Use `ArrowSpaceBuilder::with_rows(...).with_lambda_graph(...).build()` to get an `ArrowSpace` and its Laplacian+Tau mode by specifying the parameters for the graph where the Laplacian is computed.
-    - Use `ArrowSpaceBuilder::with_rows(...).with_lambdas(...).build()` to get an `ArrowSpace` and its Laplacian+Tau indices by specifying which lambdas values to use.
-    - Other bulding options to use hypergraph cliques extensions and boost, ensembles, ...
+    - Use `ArrowSpaceBuilder::new().build(items)` to get an `ArrowSpace` and its Laplacian+Tau mode; the builder will compute per‑row synthetic indices immediately.
+    - Use `ArrowSpaceBuilder::new().with_lambda_graph(...).build(items)` to get an `ArrowSpace` and its Laplacian+Tau mode by specifying the parameters for the graph where the Laplacian is computed.
+    - Use `ArrowSpaceBuilder::new().with_lambdas(...).with_synthesis(...).build(items)` to get an `ArrowSpace` and its Laplacian+Tau indices by specifying which lambdas values to use.
+- Search the space:
+```rust
+use arrowSpace::builder::ArrowSpaceBuilder;
+use arrowSpace::core::ArrowItem;
+
+// define the search parameters: alpha=1.0 is equivalent to cosine similarity
+let alpha = 0.7;
+let beta = 0.3;
+
+// Build ArrowSpace from item vectors
+let items = vec![
+    vec![1.0, 2.0, 3.0],  // Item 1
+    vec![2.0, 3.0, 1.0],  // Item 2
+    vec![3.0, 1.0, 2.0],  // Item 3
+];
+
+let (aspace, _graph) = ArrowSpaceBuilder::new()
+    .with_rows(items)
+    .with_lambda_graph(1e-3, 6, 2.0, None)
+    .build();
+
+// Query with lambda-aware similarity
+let query = ArrowItem::new(vec![1.5, 2.5, 2.0], 0.0);
+// with alpha=1.0 and beta=0.0, same results as cosine similarity
+let results = aspace.search_lambda_aware(&query, 5, alpha, beta);
+println!("{:?}", results);
+
+```
+
 
 
 ## Main Features (spectral graph construction and search)
