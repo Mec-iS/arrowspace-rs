@@ -2,6 +2,7 @@ use arrowspace::builder::ArrowSpaceBuilder;
 use arrowspace::core::{ArrowItem, ArrowSpace};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::prelude::*;
+use smartcore::linalg::basic::arrays::Array;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -110,10 +111,9 @@ fn build_arrowspace(db: &[Vec<f64>]) -> (ArrowSpace, usize) {
     let cap_k = 3;
     let p = 2.0;
     let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_rows(db.to_vec())
         .with_lambda_graph(eps, cap_k, p, None)
-        .build();
-    assert_eq!(gl.nnodes, aspace.shape().1);
+        .build(db.to_vec());
+    assert_eq!(gl.nnodes, aspace.data.shape().1);
     (aspace, gl.nnodes)
 }
 

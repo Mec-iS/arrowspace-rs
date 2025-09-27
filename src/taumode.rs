@@ -51,12 +51,28 @@
 // [^9]: https://proceedings.neurips.cc/paper_files/paper/2024/file/f57de20ab7bb1540bcac55266ebb5401-Paper-Conference.pdf
 // [^10]: https://arxiv.org/pdf/2309.11251.pdf
 // [^11]: https://academic.oup.com/mnras/article-pdf/370/4/1713/3388125/mnras0370-1713.pdf
+//
+// Taumode has been tested for:
+// 1. **Non-negativity**: Fundamental property of Rayleigh quotients
+// 2. **Reasonable bounds**: Ensures values aren't pathologically large
+// 3. **Computational consistency**: Recomputation gives identical results
+// 4. **Data sensitivity**: Different inputs produce different outputs (discriminative power)
+// 5. **Numerical stability**: Values are finite (no NaN/infinity)
+// 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
+//
 use crate::core::ArrowSpace;
-use crate::graph_factory::GraphLaplacian;
 
-#[derive(Clone, Copy, Debug)]
+use smartcore::linalg::basic::arrays::Array;
+use smartcore::linalg::basic::matrix::DenseMatrix;
+
+use rayon::prelude::*;
+
+use log::debug;
+
+#[derive(Clone, Copy, Debug, Default)]
 pub enum TauMode {
     Fixed(f64),
+    #[default]
     Median,
     Mean,
     Percentile(f64),
@@ -64,185 +80,261 @@ pub enum TauMode {
 
 pub const TAU_FLOOR: f64 = 1e-9;
 
-pub fn select_tau(energies: &[f64], mode: TauMode) -> f64 {
-    match mode {
-        TauMode::Fixed(t) => {
-            if t.is_finite() && t > 0.0 {
-                t
-            } else {
-                TAU_FLOOR
-            }
-        }
-        TauMode::Mean => {
-            let mut sum = 0.0;
-            let mut cnt = 0usize;
-            for &e in energies {
-                if e.is_finite() {
-                    sum += e;
-                    cnt += 1;
+impl TauMode {
+    pub fn select_tau(energies: &[f64], mode: TauMode) -> f64 {
+        match mode {
+            TauMode::Fixed(t) => {
+                if t.is_finite() && t > 0.0 {
+                    t
+                } else {
+                    TAU_FLOOR
                 }
             }
-            let m = if cnt > 0 { sum / (cnt as f64) } else { 0.0 };
-            m.max(TAU_FLOOR)
-        }
-        TauMode::Median | TauMode::Percentile(_) => {
-            let mut v: Vec<f64> = energies.iter().copied().filter(|x| x.is_finite()).collect();
-            if v.is_empty() {
-                return TAU_FLOOR;
+            TauMode::Mean => {
+                let mut sum = 0.0;
+                let mut cnt = 0usize;
+                for &e in energies {
+                    if e.is_finite() {
+                        sum += e;
+                        cnt += 1;
+                    }
+                }
+                let m = if cnt > 0 { sum / (cnt as f64) } else { 0.0 };
+                m.max(TAU_FLOOR)
             }
-            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            if let TauMode::Percentile(p) = mode {
-                let pp = p.clamp(0.0, 1.0);
-                let idx = ((v.len() - 1) as f64 * pp).round() as usize;
-                return v[idx].max(TAU_FLOOR);
-            }
-            if v.len() % 2 == 1 {
-                v[v.len() / 2].max(TAU_FLOOR)
-            } else {
-                let mid = 0.5 * (v[v.len() / 2 - 1] + v[v.len() / 2]);
-                mid.max(TAU_FLOOR)
+            TauMode::Median | TauMode::Percentile(_) => {
+                let mut v: Vec<f64> =
+                    energies.iter().copied().filter(|x| x.is_finite()).collect();
+                if v.is_empty() {
+                    return TAU_FLOOR;
+                }
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                if let TauMode::Percentile(p) = mode {
+                    let pp = p.clamp(0.0, 1.0);
+                    let idx = ((v.len() - 1) as f64 * pp).round() as usize;
+                    return v[idx].max(TAU_FLOOR);
+                }
+                if v.len() % 2 == 1 {
+                    v[v.len() / 2].max(TAU_FLOOR)
+                } else {
+                    let mid = 0.5 * (v[v.len() / 2 - 1] + v[v.len() / 2]);
+                    mid.max(TAU_FLOOR)
+                }
             }
         }
     }
-}
 
-/// Aggregate from feature signals to per-item scores.
-/// For each item i, combine the feature-level spectral information weighted by the item’s feature magnitudes
-/// (or another explicit weighting) to get a single synthetic index S_i.
-///
-/// Use the same bounded energy map and dispersion blend idea, but perform it per item:
-/// - For each feature row f, compute Rayleigh energy E_f and dispersion G_f once (as today).
-/// - For each item i, compute a weight w_fi = |x_f[i]| (magnitude of feature f at item i) and use it to
-/// Aggregate the feature contributions to item level:
-/// - E_i_raw = (sum_f w_fi * E_f) / (sum_f w_fi) with 0-guard.
-/// - G_i_raw = (sum_f w_fi * G_f) / (sum_f w_fi) with 0-guard.
-/// - Select τ from the per-item energy population {E_i_raw} using the same TauMode.
-/// - Map E_i = E_i_raw / (E_i_raw + τ), clamp G_i to , then S_i = α * E_i + (1−α) * G_i.
-/// - Finally, update ArrowSpace.lambdas with the n_items synthetic vector S (length equals gl.nnodes).
-pub fn compute_synthetic_lambdas(
-    aspace: &mut ArrowSpace,
-    gl: &GraphLaplacian,
-    alpha: f64,
-    tau_mode: TauMode,
-) {
-    let (n_features, n_items) = aspace.shape();
-    assert_eq!(
-        gl.nnodes, n_items,
-        "GraphLaplacian nodes must match ArrowSpace items"
-    );
+    /// Compute synthetic lambdas using Laplacian for the *entire space*
+    /// Use this to compute the Rayleigh quotient space-wide.
+    ///
+    /// This function implements the synthetic index computation described in the design:
+    /// 1) Compute per-feature Rayleigh energy E_f and dispersion G_f using DenseMatrix operations
+    /// 2) Aggregate feature contributions to per-item raw energies weighted by feature magnitudes  
+    /// 3) Apply bounded transformation with tau normalization
+    /// 4) Blend energy and dispersion components with alpha parameter
+    /// 5) Store resulting synthetic lambdas in ArrowSpace
+    ///
+    /// Compute **taumode synthetic lambdas** using a formula involving:
+    /// - Feature energies ($E_f$)
+    /// - G values
+    /// - Tau parameter (0.9)
+    /// - Tau computation using median selection
+    /// - Final synthetic indices calculation
+    // ///
+    /// # Arguments
+    /// * `aspace` - Mutable ArrowSpace to update with synthetic lambdas
+    /// * `gl` - GraphLaplacian with DenseMatrix representation
+    /// * `alpha` - Blending parameter for energy vs dispersion (typically 0.7)
+    /// * `tau_mode` - Tau selection policy for bounded transformation
+    pub fn compute_taumode_lambdas(
+        aspace: &mut ArrowSpace,
+        taumode_params: Option<TauMode>, // used if different taumode from ArrowSpace is needed
+    ) {
+        use crate::core::TAUDEFAULT;
+        let n_items = aspace.nitems;
 
-    // 1) Compute per-feature Rayleigh energy E_f and dispersion G_f (as before)
-    let mut energies_f: Vec<f64> = Vec::with_capacity(n_features);
-    let mut dispersions_f: Vec<f64> = Vec::with_capacity(n_features);
+        // Parallel processing of all features
+        let synthetic_lambdas: Vec<f64> = (0..n_items)
+            .into_par_iter()
+            .map(|f| {
+                let item = aspace.get_item(f);
+                let tau = match taumode_params {
+                    None => Self::select_tau(&item.item, TAUDEFAULT.unwrap()),
+                    Some(t) => Self::select_tau(&item.item, t),
+                };
 
-    for f in 0..n_features {
-        let x = aspace.iter_feature(f); // length n_items
-        let den: f64 = x.iter().map(|&v| v * v).sum();
-        if den <= 0.0 {
-            energies_f.push(0.0);
-            dispersions_f.push(0.0);
-            continue;
+                Self::compute_item_vector_synthetic_lambda(
+                    &item.item,
+                    aspace,
+                    Some(tau),
+                )
+            })
+            .collect();
+
+        aspace.update_lambdas(synthetic_lambdas);
+    }
+
+    /// Compute synthetic lambda for a single external query vector
+    /// This follows the same algorithm as compute_taumode_lambdas but for one vector
+    pub fn compute_item_vector_synthetic_lambda(
+        item_vector: &[f64], // F-dimensional external query vector
+        aspace: &ArrowSpace, // Existing ArrowSpace with computed spectrum
+        tau: Option<f64>,
+    ) -> f64 {
+        assert_eq!(
+            item_vector.len(),
+            aspace.nfeatures,
+            "Item vector length {} must match ArrowSpace features {}",
+            item_vector.len(),
+            aspace.nfeatures
+        );
+
+        if item_vector.iter().all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-12)) {
+            panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
         }
 
-        // Rayleigh numerator
-        let mut num = 0.0;
-        // For dispersion G_f we need total edge energy to normalize shares
+        #[cfg(debug_assertions)]
+        {
+            debug!("=== COMPUTING SYNTHETIC LAMBDA FOR ITEM VECTOR ===");
+            debug!("Item vector dimensions: {}", item_vector.len());
+        }
+
+        // Step 1: Compute Rayleigh energy E_q = query^T * spectrum * query / (query^T * query)
+        let e_raw =
+            Self::compute_rayleigh_quotient_from_matrix(&aspace.signals, item_vector);
+
+        // Step 2: Compute dispersion G_q using edge-wise energy distribution
+        let g_raw = Self::compute_item_dispersion(item_vector, &aspace.signals);
+
+        // Step 3: Apply bounded transformation
+        let e_bounded = e_raw / (e_raw + tau.unwrap());
+        let g_clamped = g_raw.clamp(0.0, 1.0);
+        let use_tau = tau.unwrap();
+
+        // Step 4: Compute synthetic index S_q = α * E_bounded + (1-α) * G_clamped
+        let synthetic_lambda = use_tau * e_bounded + (1.0 - use_tau) * g_clamped;
+
+        #[cfg(debug_assertions)]
+        debug!(
+            "Query synthetic lambda: E_raw={:.8}, G_raw={:.8}, tau={:.8}, final={:.8}",
+            e_raw, g_raw, use_tau, synthetic_lambda
+        );
+
+        synthetic_lambda
+    }
+
+    /// Compute dispersion G_q for the query vector using edge-wise energy distribution
+    fn compute_item_dispersion(
+        item_vector: &[f64],
+        spectrum: &DenseMatrix<f64>,
+    ) -> f64 {
+        let n_features = item_vector.len();
+
+        // Compute total edge energy: sum over all edges w_ij * (x_i - x_j)^2
         let mut edge_energy_sum = 0.0;
-        for i in 0..n_items {
-            let xi = x[i];
-            let (s, e) = (gl.rows[i], gl.rows[i + 1]);
-            // (Lx)_i
-            let mut lx_i = 0.0;
-            for idx in s..e {
-                let j = gl.cols[idx];
-                let lij = gl.vals[idx];
-                lx_i += lij * x[j];
-            }
-            num += xi * lx_i;
-
-            // accumulate off-diagonal edge energy
-            for idx in s..e {
-                let j = gl.cols[idx];
-                if j == i {
-                    continue;
-                }
-                let w = (-gl.vals[idx]).max(0.0);
-                if w > 0.0 {
-                    let d = xi - x[j];
-                    edge_energy_sum += w * d * d;
+        for i in 0..n_features {
+            let xi = item_vector[i];
+            for (j, item) in item_vector.iter().enumerate() {
+                if i != j {
+                    let lij = spectrum.get((i, j));
+                    // For Laplacian, off-diagonal entries are -w_ij, so w_ij = -lij
+                    let w = (-lij).max(0.0);
+                    if w > 0.0 {
+                        let d = xi - item;
+                        edge_energy_sum += w * d * d;
+                    }
                 }
             }
         }
-        let e_f = num / den;
-        energies_f.push(e_f.max(0.0));
 
-        // G_f: sum of squared normalized edge shares
+        // Compute G_q as sum of squared normalized edge shares
         let mut g_sq_sum = 0.0;
         if edge_energy_sum > 0.0 {
-            for i in 0..n_items {
-                let xi = x[i];
-                let (s, e) = (gl.rows[i], gl.rows[i + 1]);
-                for idx in s..e {
-                    let j = gl.cols[idx];
-                    if j == i {
-                        continue;
-                    }
-                    let w = (-gl.vals[idx]).max(0.0);
-                    if w > 0.0 {
-                        let d = xi - x[j];
-                        let contrib = w * d * d;
-                        let share = contrib / edge_energy_sum;
-                        g_sq_sum += share * share;
+            for i in 0..n_features {
+                let xi = item_vector[i];
+                for (j, item) in item_vector.iter().enumerate() {
+                    if i != j {
+                        let lij = spectrum.get((i, j));
+                        let w = (-lij).max(0.0);
+                        if w > 0.0 {
+                            let d = xi - item;
+                            let contrib = w * d * d;
+                            let share = contrib / edge_energy_sum;
+                            g_sq_sum += share * share;
+                        }
                     }
                 }
             }
         }
-        let g_f = g_sq_sum.clamp(0.0, 1.0);
-        dispersions_f.push(g_f);
+
+        g_sq_sum.clamp(0.0, 1.0)
     }
 
-    // 2) Aggregate feature contributions into per-item raw energies and dispersions
-    let mut e_item_raw = vec![0.0f64; n_items];
-    let mut g_item_raw = vec![0.0f64; n_items];
-    let mut wsum_item = vec![0.0f64; n_items];
+    /// Compute Rayleigh quotient for any vector against any matrix
+    ///
+    /// The Rayleigh quotient is defined as: R(M, x) = (x^T M x) / (x^T x)
+    /// where M is a symmetric matrix and x is a non-zero vector.
+    ///
+    /// Mathematical Properties:
+    /// - For symmetric positive semi-definite matrices: R(M,x) ≥ 0
+    /// - Scale invariant: R(M, cx) = R(M, x) for any non-zero scalar c
+    /// - Bounds eigenvalues: λ_min ≤ R(M,x) ≤ λ_max for any x
+    /// - Maximized by largest eigenvector, minimized by smallest eigenvector
+    ///
+    /// # Arguments
+    /// * `matrix` - A symmetric matrix (typically a Laplacian or similarity matrix)
+    /// * `vector` - The vector for which to compute the quotient
+    ///
+    /// # Returns
+    /// The Rayleigh quotient value
+    ///
+    /// # Panics
+    /// Panics if vector length doesn't match matrix dimensions
+    pub fn compute_rayleigh_quotient_from_matrix(
+        matrix: &DenseMatrix<f64>,
+        vector: &[f64],
+    ) -> f64 {
+        let n = matrix.shape().0;
+        assert_eq!(
+            vector.len(),
+            n,
+            "Vector length {} must match matrix size {}",
+            vector.len(),
+            n
+        );
+        assert_eq!(
+            matrix.shape().0,
+            matrix.shape().1,
+            "Matrix must be square for Rayleigh quotient computation"
+        );
 
-    for f in 0..n_features {
-        let x = aspace.iter_feature(f);
-        let e_f = energies_f[f];
-        let g_f = dispersions_f[f];
-        for i in 0..n_items {
-            let w = x[i].abs();
-            if w > 0.0 {
-                e_item_raw[i] += w * e_f;
-                g_item_raw[i] += w * g_f;
-                wsum_item[i] += w;
+        // Compute x^T M x (numerator)
+        let mut numerator = 0.0;
+        for i in 0..n {
+            for j in 0..n {
+                numerator += vector[i] * matrix.get((i, j)) * vector[j];
             }
         }
-    }
 
-    for i in 0..n_items {
-        if wsum_item[i] > 0.0 {
-            e_item_raw[i] /= wsum_item[i];
-            g_item_raw[i] /= wsum_item[i];
+        // Compute x^T x (denominator)
+        let denominator: f64 = vector.iter().map(|&x| x * x).sum();
+
+        // Return quotient or 0 for zero vector
+        if denominator > 1e-15 {
+            numerator / denominator
         } else {
-            e_item_raw[i] = 0.0;
-            g_item_raw[i] = 0.0;
+            0.0 // Return 0 for zero vector (convention)
         }
     }
 
-    // 3) Select tau over the per-item energies and map to bounded scores
-    let tau = select_tau(&e_item_raw, tau_mode);
-    let mut synthetic_items = Vec::with_capacity(n_items);
-    for i in 0..n_items {
-        let e_bounded = {
-            let e = e_item_raw[i].max(0.0);
-            e / (e + tau)
-        };
-        let g_clamped = g_item_raw[i].clamp(0.0, 1.0);
-        let s = alpha * e_bounded + (1.0 - alpha) * g_clamped;
-        synthetic_items.push(s);
+    /// Batch computation for multiple vectors (efficient for multiple queries)
+    pub fn compute_rayleigh_quotients_batch(
+        matrix: &DenseMatrix<f64>,
+        vectors: &[Vec<f64>],
+    ) -> Vec<f64> {
+        vectors
+            .iter()
+            .map(|v| Self::compute_rayleigh_quotient_from_matrix(matrix, v))
+            .collect()
     }
-
-    // 4) Store per-item lambdas
-    aspace.update_lambdas(synthetic_items);
 }

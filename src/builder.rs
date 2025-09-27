@@ -1,62 +1,68 @@
-use crate::core::ArrowSpace;
-use crate::graph_factory::{GraphFactory, GraphLaplacian};
-use crate::taumode::{TauMode, compute_synthetic_lambdas};
+use smartcore::linalg::basic::arrays::{Array, Array2};
+
+use crate::core::{ArrowSpace, TAUDEFAULT};
+use crate::graph::{GraphFactory, GraphLaplacian};
+use crate::taumode::TauMode;
+
+// Add logging
+use log::{debug, info, trace};
+
+#[derive(Clone, Debug)]
+pub enum PairingStrategy {
+    FastPair,            // 1-NN union via Smartcore FastPair
+    Default,             // O(n^2) path
+    CoverTreeKNN(usize), // k for k-NN build
+}
 
 pub struct ArrowSpaceBuilder {
     // Data
     arrows: ArrowSpace,
     pub prebuilt_gl: Option<GraphLaplacian>, // use as-is if already built
 
-    // Synthetic index configuration (used `with_synthesis`)
-    synthesis: Option<(f64, TauMode)>, // (alpha, tau_mode)
-
     // Lambda-graph parameters (the canonical path)
     // A good starting point is to choose parameters that keep the λ-graph broadly connected but sparse,
-    // and set the kernel to behave nearly linearly for small gaps so it doesn’t overpower cosine;
+    // and set the kernel to behave nearly linearly for small gaps so it doesn't overpower cosine;
     // a practical default is: lambda_eps ≈ 1e-3, lambda_k ≈ 3–10, lambda_p = 2.0,
     // lambda_sigma = None (which defaults σ to eps)
     lambda_eps: f64,
     lambda_k: usize,
     lambda_p: f64,
     lambda_sigma: Option<f64>,
+    normalise: bool,
+
+    // Synthetic index configuration (used `with_synthesis`)
+    synthesis: Option<TauMode>, // (tau_mode)
 }
 
 impl Default for ArrowSpaceBuilder {
     fn default() -> Self {
+        debug!("Creating ArrowSpaceBuilder with default parameters");
         Self {
             arrows: ArrowSpace::default(),
             prebuilt_gl: None,
 
             // enable synthetic λ with α=0.7 and Median τ by default
-            synthesis: Some((0.7, TauMode::Median)),
+            synthesis: TAUDEFAULT,
 
             // λ-graph parameters
             lambda_eps: 1e-3,
             lambda_k: 6,
             lambda_p: 2.0,
             lambda_sigma: None, // means σ := eps inside the builder
+            normalise: false,
         }
     }
 }
 
 impl ArrowSpaceBuilder {
     pub fn new() -> Self {
+        info!("Initializing new ArrowSpaceBuilder");
         Self::default()
-    }
-
-    // -------------------- Data --------------------
-
-    /// Mandatory.
-    /// Always provide the row-major 2D Vec<Vec<..>> (as per a database, each row is an item).
-    /// The 2D array is automatically transposed to compute Rayleigh.
-    pub fn with_rows(mut self, rows: Vec<Vec<f64>>) -> Self {
-        self.arrows = ArrowSpace::from_items(rows);
-        self
     }
 
     // -------------------- Lambda-graph configuration --------------------
 
-    /// Use this to pass λτ-graph parameters.
+    /// Use this to pass λτ-graph parameters. If not called, use defaults
     /// Configure the base λτ-graph to be built from the provided data matrix:
     /// - eps: threshold for |Δλ| on items
     /// - k: optional cap on neighbors per item
@@ -69,21 +75,35 @@ impl ArrowSpaceBuilder {
         p: f64,
         sigma_override: Option<f64>,
     ) -> Self {
+        info!(
+            "Configuring lambda graph: eps={}, k={}, p={}, sigma={:?}",
+            eps, k, p, sigma_override
+        );
+        debug!(
+            "Lambda graph will use {} for normalization",
+            if self.normalise { "normalized items" } else { "raw item magnitudes" }
+        );
+
         self.lambda_eps = eps;
         self.lambda_k = k;
         self.lambda_p = p;
         self.lambda_sigma = sigma_override;
+        self.normalise = false;
         self
     }
 
     // -------------------- Synthetic index --------------------
 
-    /// Optional: override the default tau policy or alpha for synthetic index.
-    /// Note: when the fallback λτ-graph (priority #3) is chosen, synthesis is always ON.
-    /// If this method is not called, the default is alpha=0.7, TauMode::Median.
-    pub fn with_synthesis(mut self, tau: f64, tau_mode: TauMode) -> Self {
-        assert!((0.0..=1.0).contains(&tau), "alpha must be in [0,1]");
-        self.synthesis = Some((tau, tau_mode));
+    /// Optional: override the default tau policy or tau for synthetic index.
+    pub fn with_synthesis(mut self, tau_mode: TauMode) -> Self {
+        info!("Configuring synthesis with tau mode: {:?}", tau_mode);
+        self.synthesis = Some(tau_mode);
+        self
+    }
+
+    pub fn with_normalisation(mut self, normalise: bool) -> Self {
+        info!("Setting normalization: {}", normalise);
+        self.normalise = normalise;
         self
     }
 
@@ -101,56 +121,90 @@ impl ArrowSpaceBuilder {
     ///   unless with_synthesis was called, in which case the provided tau_mode and alpha are used.
     /// - If prebuilt or hypergraph graph is selected, standard Rayleigh lambdas are computed unless
     ///   with_synthesis was called, in which case synthetic lambdas are computed on that graph.
-    pub fn build(mut self) -> (ArrowSpace, GraphLaplacian) {
-        assert!(self.arrows.shape() != (0, 0));
+    pub fn build(mut self, rows: Vec<Vec<f64>>) -> (ArrowSpace, GraphLaplacian) {
+        let n_items = rows.len();
+        let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
+
+        info!(
+            "Building ArrowSpace from {} items with {} features",
+            n_items, n_features
+        );
+        debug!("Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}", 
+               self.lambda_eps, self.lambda_k, self.lambda_p, self.lambda_sigma,
+               self.normalise, self.synthesis);
+
         // 1) Base graph selection
         assert!(
             self.prebuilt_gl.is_none(),
             "GraphLaplacian already built, should be None at this point"
         );
 
-        // Recreate matrix from ArrowSpace column-major to wor-major
-        let (nrows, _) = self.arrows.shape();
-        let mut data_matrix: Vec<Vec<f64>> = Vec::with_capacity(nrows);
-        for r in 0..self.arrows.ncols {
-            // loop cols number as ArrowSpace is column-major
-            data_matrix.push(self.arrows.get_item(r).item.to_vec());
-        }
+        trace!("Creating ArrowSpace from items");
+        self.arrows = ArrowSpace::from_items(rows, self.synthesis.unwrap());
+        debug!(
+            "ArrowSpace created with {} items and {} features",
+            self.arrows.nitems, self.arrows.nfeatures
+        );
+
+        // Rough way of converting a DenseMatrix to a Vec<Vec<...>>
+        // does its job for now but should be changed (DenseMatrix should be used everywhere)
+        trace!("Converting DenseMatrix to Vec<Vec<f64>> for graph construction");
+        let tmp = {
+            let mut tmp = Vec::with_capacity(self.arrows.nitems);
+            // Extract each column directly from the original matrix
+            for row_idx in 0..self.arrows.nitems {
+                let row_vec: Vec<f64> =
+                    self.arrows.data.get_row(row_idx).iterator(0).copied().collect();
+
+                tmp.push(row_vec);
+            }
+
+            tmp
+        };
+
         // Resolve λτ-graph params with conservative defaults
-        self.prebuilt_gl = Some(GraphFactory::build_lambda_graph(
-            &data_matrix,
+        info!("Building Laplacian matrix with configured parameters");
+        self.prebuilt_gl = Some(GraphFactory::build_laplacian_matrix(
+            tmp,
             self.lambda_eps,
             self.lambda_k,
             self.lambda_p,
             self.lambda_sigma,
+            self.normalise,
         ));
+
+        debug!("Laplacian matrix built successfully");
 
         // 3) Compute synthetic indices on resulting graph
         let mut aspace = self.arrows;
         let gl = self.prebuilt_gl.unwrap();
-        let synth = self.synthesis.unwrap();
-        compute_synthetic_lambdas(&mut aspace, &gl, synth.0, synth.1);
 
-        // aspace.recompute_lambdas(&self.prebuilt_gl.clone().unwrap());
+        // Compute signals FxF laplacian
+        trace!("Building spectral Laplacian for ArrowSpace");
+        aspace = GraphFactory::build_spectral_laplacian(aspace, &gl.graph_params);
+        debug!(
+            "Spectral Laplacian built with signals shape: {:?}",
+            aspace.signals.shape()
+        );
 
+        // Compute taumode lambdas
+        info!("Computing taumode lambdas with synthesis: {:?}", self.synthesis);
+        TauMode::compute_taumode_lambdas(&mut aspace, self.synthesis);
+
+        let lambda_stats = {
+            let lambdas = aspace.lambdas();
+            let min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let max: f64 = lambdas.iter().fold(0.0, |a, &b| a.max(b));
+            let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+            (min, max, mean)
+        };
+
+        debug!(
+            "Lambda computation completed - min: {:.6}, max: {:.6}, mean: {:.6}",
+            lambda_stats.0, lambda_stats.1, lambda_stats.2
+        );
+
+        info!("ArrowSpace build completed successfully");
         (aspace, gl)
     }
-}
-
-/// Transpose N×F → F×N.
-/// the transpose makes each feature become a “graph signal” defined on the item nodes,
-///  which is exactly the shape needed to compute a Rayleigh quotient λ per feature against
-///  a Laplacian whose nodes are the items; without that F×N layout (features over items),
-/// λ can’t be evaluated correctly for each feature row on the item graph
-pub fn transpose_nf_to_fn(nxf: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let n = nxf.len();
-    let f = nxf.first().map(|row| row.len()).unwrap_or(0);
-    let mut fxf = vec![Vec::with_capacity(n); f];
-    for row in nxf {
-        assert_eq!(row.len(), f, "All rows must have same feature length");
-        for (j, &v) in row.iter().enumerate() {
-            fxf[j].push(v);
-        }
-    }
-    fxf
 }

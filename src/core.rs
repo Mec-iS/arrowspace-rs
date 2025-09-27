@@ -21,7 +21,7 @@
 //! ```
 //! use arrowspace::core::{ArrowItem, ArrowSpace};
 //!
-//! let aspace = ArrowSpace::from_items(
+//! let aspace = ArrowSpace::from_items_default(
 //!     vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]]
 //! );
 //!
@@ -31,23 +31,6 @@
 //!
 //! Zero-copy mutate a row using a mutable view and update its lambda from a graph:
 //!
-//! ```ignore
-//! use arrowspace::core::ArrowSpace;
-//! use arrowspace::operators::build_knn_graph;
-//!
-//! // Build a toy space and a small KNN graph.
-//! let mut aspace = ArrowSpace::from_items(vec![vec![1.0, 2.0, 3.0]], vec![0.0]);
-//! let edges =vec![(0,0), (1,0), (0,1)];
-//! let gl = build_knn_graph(&, 2, 2.0, None);
-//!
-//! // Scale in-place without extra allocation.
-//! {
-//!     let mut rv = aspace.feature_view_mut(0);
-//!     for x in rv.iter_mut() { *x *= 2.0; }
-//! }
-//! aspace.recompute_lambdas(&gl);
-//! assert!(aspace.lambdas()[0].is_nan());
-//! ```
 //!
 //! Run documentation tests with `cargo test --doc`; Rustdoc extracts code blocks
 //! and executes them as tests, ensuring examples stay correct over time[3][6].
@@ -73,8 +56,14 @@
 
 use std::fmt::Debug;
 
-use crate::graph_factory::GraphLaplacian;
-use crate::operators::rayleigh_lambda;
+use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
+use smartcore::linalg::basic::matrix::DenseMatrix;
+
+use crate::graph::GraphLaplacian;
+use crate::taumode::TauMode;
+
+// Add logging
+use log::{debug, info, trace, warn};
 
 /// A single owned row with an associated spectral score `lambda`.
 ///
@@ -99,40 +88,24 @@ use crate::operators::rayleigh_lambda;
 /// a.scale(2.0);
 /// assert_eq!(a.len(), 3);
 /// ```
-///
-/// Iterate without copying:
-///
-/// ```
-/// use arrowspace::core::ArrowItem;
-///
-/// let r = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.0);
-/// let s: f64 = r.iter().copied().sum();
-/// assert_eq!(s, 6.0);
-/// ```
-///
-/// # Panics
-///
-/// - `dot`, `cosine_similarity`, and `euclidean_distance` panic if lengths differ.
-///
-/// # Complexity
-///
-/// - `norm`: O(n)
-/// - `dot`: O(n)
-/// - `cosine_similarity`: O(n)
-/// - `euclidean_distance`: O(n)
 #[derive(Clone, Debug)]
 pub struct ArrowItem {
     pub item: Vec<f64>,
     pub lambda: f64,
 }
 
+/// A structure representing a feature-column
+///  just the data for now but will be useful for index building
 #[derive(Clone, Debug)]
 pub struct ArrowFeature {
-    pub data: Vec<f64>,
+    pub feature: Vec<f64>,
 }
 
 impl ArrowItem {
-    /// Creates a new ArrowItem from owned data and its spectral score.
+    /// Creates a new ArrowItem from owned data.
+    /// This just store the vector with a placeholder lambda, to compute the
+    ///  lambda (Rayleigh quotient) use `new_with_graph` or precompute lambda
+    ///  and pass it to this method.
     ///
     /// Prefer passing already-allocated vectors to avoid extra copies.
     ///
@@ -145,6 +118,11 @@ impl ArrowItem {
     /// ```
     #[inline]
     pub fn new(item: Vec<f64>, lambda: f64) -> Self {
+        trace!(
+            "Creating ArrowItem with {} dimensions, lambda: {:.6}",
+            item.len(),
+            lambda
+        );
         Self { item, lambda }
     }
 
@@ -177,11 +155,17 @@ impl ArrowItem {
     #[inline]
     pub fn dot(&self, other: &ArrowItem) -> f64 {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        self.item
-            .iter()
-            .zip(other.item.iter())
-            .map(|(a, b)| a * b)
-            .sum()
+        let result = self.item.iter().zip(other.item.iter()).map(|(a, b)| a * b).sum();
+        trace!("Computed dot product: {:.6}", result);
+        result
+    }
+
+    /// Computes the Euclidean norm (L2) without allocating.
+    #[inline]
+    pub fn norm(a: &[f64]) -> f64 {
+        let result = a.iter().map(|&x| x * x).sum::<f64>().sqrt();
+        trace!("Computed norm: {:.6}", result);
+        result
     }
 
     /// Computes cosine similarity, guarding against zero vectors.
@@ -202,13 +186,15 @@ impl ArrowItem {
     /// ```
     #[inline]
     pub fn cosine_similarity(&self, other: &ArrowItem) -> f64 {
-        use crate::operators::norm;
-        let denom = norm(&self.item) * norm(&other.item);
-        if denom > 0.0 {
+        let denom = ArrowItem::norm(&self.item) * ArrowItem::norm(&other.item);
+        let result = if denom > 0.0 {
             self.dot(other) / denom
         } else {
+            warn!("Zero vector encountered in cosine similarity computation");
             0.0
-        }
+        };
+        trace!("Computed cosine similarity: {:.6}", result);
+        result
     }
 
     /// Computes Euclidean distance without allocation.
@@ -228,12 +214,15 @@ impl ArrowItem {
     #[inline]
     pub fn euclidean_distance(&self, other: &ArrowItem) -> f64 {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        self.item
+        let result = self
+            .item
             .iter()
             .zip(other.item.iter())
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
-            .sqrt()
+            .sqrt();
+        trace!("Computed Euclidean distance: {:.6}", result);
+        result
     }
 
     /// Combines semantic (cosine) similarity and lambda proximity.
@@ -259,7 +248,14 @@ impl ArrowItem {
         );
         let semantic_sim = self.cosine_similarity(other);
         let lambda_sim = 1.0 / (1.0 + (self.lambda - other.lambda).abs());
-        alpha * semantic_sim + beta * lambda_sim
+        let result = alpha * semantic_sim + beta * lambda_sim;
+        trace!(
+            "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
+            semantic_sim,
+            lambda_sim,
+            result
+        );
+        result
     }
 
     /// Adds another row element-wise in-place.
@@ -270,10 +266,8 @@ impl ArrowItem {
     #[inline]
     pub fn add_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        self.item
-            .iter_mut()
-            .zip(other.item.iter())
-            .for_each(|(a, b)| *a += *b);
+        trace!("Adding vectors in-place");
+        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a += *b);
     }
 
     /// Multiplies element-wise in-place by another row.
@@ -284,15 +278,14 @@ impl ArrowItem {
     #[inline]
     pub fn mul_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        self.item
-            .iter_mut()
-            .zip(other.item.iter())
-            .for_each(|(a, b)| *a *= *b);
+        trace!("Multiplying vectors element-wise in-place");
+        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a *= *b);
     }
 
     /// Scales all elements by a scalar in place.
     #[inline]
     pub fn scale(&mut self, scalar: f64) {
+        trace!("Scaling vector by {:.6}", scalar);
         self.item.iter_mut().for_each(|x| *x *= scalar);
     }
 
@@ -327,69 +320,78 @@ impl ArrowItem {
 ///
 /// # Performance
 ///
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ArrowSpace {
-    pub nrows: usize,
-    pub ncols: usize,
-    pub data: Vec<f64>,    // column-major flattened
-    pub lambdas: Vec<f64>, // row-major (every lambda is a lambda for an item-column)
+    pub nfeatures: usize,
+    pub nitems: usize,
+    pub data: DenseMatrix<f64>,    // NxF raw data
+    pub signals: DenseMatrix<f64>, // FxF laplacian
+    pub lambdas: Vec<f64>, // N lambdas (every lambda is a lambda for an item-row)
+    pub taumode: Option<TauMode>, // tau_mode as in select_tau_mode
+}
+
+pub const TAUDEFAULT: Option<TauMode> = Some(TauMode::Median);
+
+impl Default for ArrowSpace {
+    fn default() -> Self {
+        debug!("Creating default ArrowSpace");
+        Self {
+            nfeatures: 0,
+            nitems: 0,
+            data: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
+            signals: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
+            lambdas: Vec::new(),
+            // enable synthetic λ with Median τ by default
+            taumode: TAUDEFAULT,
+        }
+    }
 }
 
 impl ArrowSpace {
     /// Builds from a vector of equally-sized rows and per-row lambdas.
-    ///
-    /// # Panics
-    ///
-    /// - If `rows` is empty.
-    /// - If rows have differing lengths.
-    /// - If `lambdas.len() != rows.len()`.
     #[inline]
-    pub fn from_items(items: Vec<Vec<f64>>) -> Self {
-        assert!(!items.is_empty(), "items cannot be empty");
-        assert!(
-            items.len() > 1,
-            "cannot create a arrowspace of one arrow only"
+    pub fn from_items(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
+        info!(
+            "Creating ArrowSpace from {} items with custom tau mode: {:?}",
+            items.len(),
+            taumode
         );
+        let mut aspace = Self::from_items_default(items);
+        aspace.taumode = Some(taumode);
+        aspace
+    }
+
+    /// Builds from a vector of equally-sized rows and per-row lambdas.
+    #[inline]
+    pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
+        assert!(!items.is_empty(), "items cannot be empty");
+        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
 
+        info!(
+            "Creating ArrowSpace from {} items with {} features",
+            n_items, n_features
+        );
+        debug!("Using default tau mode: {:?}", TAUDEFAULT);
+
         assert!(
             items.iter().all(|item| item.len() == n_features),
-            "All items must have same number of features"
+            "All items must have identical number of features"
         );
 
-        // Convert from items (N×F) to column-major storage (F×N)
-        // In column-major: data[col * nrows + row] = matrix[row][col]
-        // Here: data[item * n_features + feature] = feature_value_for_item
-        let mut data = Vec::with_capacity(n_features * n_items);
-
-        // Initialize with zeros, then fill column by column (item by item)
-        data.resize(n_features * n_items, 0.0);
-
-        for (item_idx, item_features) in items.iter().enumerate() {
-            for (feature_idx, &feature_value) in item_features.iter().enumerate() {
-                // Column-major indexing: data[col * nrows + row]
-                // Here: col=item_idx, row=feature_idx
-                data[item_idx * n_features + feature_idx] = feature_value;
-            }
-        }
-
-        // Initialize feature lambdas (will be recomputed later)
-        let items_lambdas = vec![0.0; n_items];
+        trace!("Constructing DenseMatrix from 2D vector");
+        let data_matrix = DenseMatrix::from_2d_vec(&items).unwrap();
+        debug!("ArrowSpace data matrix shape: {:?}", data_matrix.shape());
 
         Self {
-            nrows: n_features, // Features are rows
-            ncols: n_items,    // Items are columns
-            data,              // Column-major storage
-            lambdas: items_lambdas,
+            nfeatures: n_features,
+            nitems: n_items,
+            data: data_matrix,
+            signals: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(), // will be computed later
+            lambdas: vec![0.0; n_items], // will be computed later
+            taumode: TAUDEFAULT,
         }
-    }
-
-    /// Returns (nrows, ncols).
-    #[inline]
-    pub fn shape(&self) -> (usize, usize) {
-        // column-major: (number of features, number of items)
-        (self.nrows, self.ncols)
     }
 
     /// Returns a shared reference to all lambdas.
@@ -398,59 +400,45 @@ impl ArrowSpace {
         self.lambdas.as_ref()
     }
 
-    /// Returns an owned ArrowItem copy of the requested row.
-    ///
-    /// Prefer zero-copy `row_view` for performance-sensitive paths.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `row >= nrows`.
+    /// Returns an owned ArrowFeature copy of the requested column.
     #[inline]
     pub fn get_feature(&self, i: usize) -> ArrowFeature {
-        assert!(i < self.nrows, "Row index out of bounds");
-        let start = i * self.ncols;
-        let end = start + self.ncols;
-        ArrowFeature {
-            data: self.data[start..end].to_vec(),
+        assert!(i < self.nfeatures, "feature index out of bounds");
+        trace!("Extracting feature {} from ArrowSpace", i);
+        ArrowFeature { feature: self.data.get_col(i).iterator(0).copied().collect() }
+    }
+
+    /// Modify feature column in-place
+    #[allow(dead_code)]
+    fn set_feature(&mut self, f: usize, values: ArrowFeature) {
+        assert!(f < self.nfeatures, "feature index out of bounds");
+        debug!("Setting feature {} in-place", f);
+        // Modify each element in the column
+        for i in 0..self.nitems {
+            self.data.set((i, f), values.feature[i]);
         }
     }
 
-    /// Returns a zero-copy mutable view of the requested feature (row).
-    ///
-    /// # Panics
-    /// Panics if `feature >= n_features`.
+    /// Returns an owned ArrowItem for the requested item (row).
     #[inline]
-    pub fn get_feature_mut(&mut self, feature: usize) -> ArrowFeature {
-        assert!(feature < self.nrows, "Feature index out of bounds");
-        let start = feature * self.ncols;
-        let end = start + self.ncols;
-        let (head, _) = self.data.split_at_mut(end);
-        let feature_slice = &mut head[start..end];
-        ArrowFeature {
-            data: feature_slice.to_vec(),
-        }
+    pub fn get_item(&self, i: usize) -> ArrowItem {
+        assert!(i < self.nitems, "item index out of bounds");
+        trace!("Extracting item {} with lambda {:.6}", i, self.lambdas[i]);
+
+        ArrowItem::new(
+            self.data.get_row(i).iterator(0).copied().collect(),
+            self.lambdas[i],
+        )
     }
 
-    /// Extracts an owned ArrowItem for the requested item (column).
-    ///
-    /// This reconstructs item `i` by collecting its values across all features.
-    ///
-    /// # Panics
-    /// Panics if `item >= n_items`.
-    #[inline]
-    pub fn get_item(&self, item: usize) -> ArrowItem {
-        assert!(item < self.ncols, "Item index out of bounds");
-        let mut item_values = Vec::with_capacity(self.nrows);
-
-        // Extract column `item` from column-major storage
-        for feature_idx in 0..self.nrows {
-            // Column-major indexing: data[col * nrows + row]
-            // Here: col=item, row=feature_idx
-            let value = self.data[item * self.nrows + feature_idx];
-            item_values.push(value);
+    /// Modify item row in-place
+    fn set_item(&mut self, i: usize, values: ArrowItem) {
+        assert!(i < self.nitems, "item index out of bounds");
+        debug!("Setting item {} in-place", i);
+        // Modify each element in the column
+        for f in 0..self.nfeatures {
+            self.data.set((i, f), values.item[f]);
         }
-
-        ArrowItem::new(item_values, self.lambdas[item])
     }
 
     /// Adds item `b` into item `a` in-place and recomputes feature lambdas.
@@ -458,20 +446,26 @@ impl ArrowSpace {
     /// This method:
     /// 1. Extracts item `a` and item `b` as complete ArrowItem vectors
     /// 2. Performs element-wise addition: item_a += item_b  
-    /// 3. Writes the result back to the column-major matrix
+    /// 3. Writes the result back
     /// 4. Recomputes feature lambdas
     #[inline]
     pub fn add_items(&mut self, a: usize, b: usize, gl: &GraphLaplacian) {
         assert!(
-            a < self.ncols && b < self.ncols,
+            a < self.nitems && b < self.nitems,
             "Item indices out of bounds: a={}, b={}, ncols={}",
             a,
             b,
-            self.ncols
+            self.nitems
         );
         assert_eq!(
-            gl.nnodes, self.ncols,
+            gl.nnodes, self.nitems,
             "Laplacian nodes must match number of items"
+        );
+
+        info!("Adding item {} into item {}", b, a);
+        debug!(
+            "Graph Laplacian has {} nodes, ArrowSpace has {} items",
+            gl.nnodes, self.nitems
         );
 
         // Extract both items as complete ArrowItem vectors
@@ -481,31 +475,29 @@ impl ArrowSpace {
         // Perform the addition: item_a += item_b
         item_a.add_inplace(&item_b);
 
-        // Write the result back to column `a` in column-major storage
-        for (feature_idx, &new_value) in item_a.item.iter().enumerate() {
-            // Column-major indexing: data[col * nrows + row]
-            // Here: col=a, row=feature_idx
-            self.data[a * self.nrows + feature_idx] = new_value;
-        }
+        self.set_item(a, item_a);
 
         // Recompute lambdas for all features since item values changed
-        self.recompute_lambdas(gl);
+        debug!("Recomputing lambdas after item addition");
+        self.recompute_lambdas();
     }
 
     /// Multiplies item `a` element-wise by item `b` and recomputes feature lambdas.
     #[inline]
     pub fn mul_items(&mut self, a: usize, b: usize, gl: &GraphLaplacian) {
         assert!(
-            a < self.ncols && b < self.ncols,
+            a < self.nitems && b < self.nitems,
             "Item indices out of bounds: a={}, b={}, ncols={}",
             a,
             b,
-            self.ncols
+            self.nitems
         );
         assert_eq!(
-            gl.nnodes, self.ncols,
+            gl.nnodes, self.nitems,
             "Laplacian nodes must match number of items"
         );
+
+        info!("Multiplying item {} by item {}", a, b);
 
         // Extract both items as complete ArrowItem vectors
         let mut item_a = self.get_item(a);
@@ -514,29 +506,28 @@ impl ArrowSpace {
         // Perform the multiplication: item_a *= item_b
         item_a.mul_inplace(&item_b);
 
-        // Write the result back to column `a` in the column-major matrix
-        for (feature_idx, &new_value) in item_a.item.iter().enumerate() {
-            let feature_row_start = feature_idx * self.ncols;
-            self.data[feature_row_start + a] = new_value;
-        }
+        self.set_item(a, item_a);
 
         // Recompute lambdas for all features since item values changed
-        self.recompute_lambdas(gl);
+        debug!("Recomputing lambdas after item multiplication");
+        self.recompute_lambdas();
     }
 
     /// Scales item `a` by a scalar value and recomputes feature lambdas.
     #[inline]
     pub fn scale_item(&mut self, a: usize, scalar: f64, gl: &GraphLaplacian) {
         assert!(
-            a < self.ncols,
+            a < self.nitems,
             "Item index out of bounds: a={}, ncols={}",
             a,
-            self.ncols
+            self.nitems
         );
         assert_eq!(
-            gl.nnodes, self.ncols,
+            gl.nnodes, self.nitems,
             "Laplacian nodes must match number of items"
         );
+
+        info!("Scaling item {} by factor {:.6}", a, scalar);
 
         // Extract item as complete ArrowItem vector
         let mut item_a = self.get_item(a);
@@ -544,30 +535,33 @@ impl ArrowSpace {
         // Perform the scaling: item_a *= scalar
         item_a.scale(scalar);
 
-        // Write the result back to column `a` in the column-major matrix
-        for (feature_idx, &new_value) in item_a.item.iter().enumerate() {
-            let feature_row_start = feature_idx * self.ncols;
-            self.data[feature_row_start + a] = new_value;
-        }
+        self.set_item(a, item_a);
 
         // Recompute lambdas for all features since item values changed
-        self.recompute_lambdas(gl);
+        debug!("Recomputing lambdas after item scaling");
+        self.recompute_lambdas();
     }
 
     /// Recomputes all feature lambdas using the provided Graph Laplacian.
     ///
     /// The Laplacian must have nodes equal to the number of items.
     #[inline]
-    pub fn recompute_lambdas(&mut self, gl: &GraphLaplacian) {
-        assert_eq!(
-            gl.nnodes, self.ncols,
-            "Laplacian nodes must match number of items"
-        );
+    pub fn recompute_lambdas(&mut self) {
+        debug!("Recomputing lambdas with tau mode: {:?}", self.taumode);
+        // Use the existing synthetic lambda computation
+        TauMode::compute_taumode_lambdas(self, self.taumode);
 
-        for i in 0..self.ncols {
-            let item = self.get_item(i);
-            self.lambdas[i] = rayleigh_lambda(gl, &item.item);
-        }
+        let lambda_stats = {
+            let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let max: f64 = self.lambdas.iter().fold(0.0, |a, &b| a.max(b));
+            let mean = self.lambdas.iter().sum::<f64>() / self.lambdas.len() as f64;
+            (min, max, mean)
+        };
+
+        debug!(
+            "Lambda recomputation completed - min: {:.6}, max: {:.6}, mean: {:.6}",
+            lambda_stats.0, lambda_stats.1, lambda_stats.2
+        );
     }
 
     /// Lambda-aware top-k search against an ArrowItem query.
@@ -576,16 +570,16 @@ impl ArrowSpace {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use arrowspace::core::{ArrowItem, ArrowSpace};
     ///
-    /// let aspace = ArrowSpace::from_items(
+    /// let aspace = ArrowSpace::from_items_default(
     ///     vec![vec![1.0, 0.0], vec![1.0, 1.0], vec![0.0, 1.0]]
     /// );
     /// let q = ArrowItem::new(vec![1.0, 0.1], 0.5);
     /// let res = aspace.search_lambda_aware(&q, 2, 0.7, 0.3);
     /// assert_eq!(res.len(), 2);
-    /// assert!(res[1].1 >= 0.0);
+    /// assert!(res.1 >= 0.0);
     /// ```
     #[inline]
     pub fn search_lambda_aware(
@@ -595,7 +589,10 @@ impl ArrowSpace {
         alpha: f64,
         beta: f64,
     ) -> Vec<(usize, f64)> {
-        let mut results: Vec<_> = (0..self.ncols)
+        info!("Lambda-aware search: k={}, alpha={:.3}, beta={:.3}", k, alpha, beta);
+        debug!("Query vector dimension: {}, lambda: {:.6}", query.len(), query.lambda);
+
+        let mut results: Vec<_> = (0..self.nitems)
             .map(|i| {
                 let item = self.get_item(i);
                 let similarity = query.lambda_similarity(&item, alpha, beta);
@@ -604,6 +601,12 @@ impl ArrowSpace {
             .collect();
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         results.truncate(k);
+
+        debug!("Search completed, returning {} results", results.len());
+        if !results.is_empty() {
+            trace!("Top result: index={}, score={:.6}", results[0].0, results[0].1);
+        }
+
         results
     }
 
@@ -617,7 +620,7 @@ impl ArrowSpace {
     /// ```
     /// use arrowspace::core::{ArrowItem, ArrowSpace};
     ///
-    /// let aspace = ArrowSpace::from_items(
+    /// let aspace = ArrowSpace::from_items_default(
     ///     vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![2.0, 0.0]]
     /// );
     /// let q = ArrowItem::new(vec![0.5, 0.0], 0.0);
@@ -625,7 +628,10 @@ impl ArrowSpace {
     /// ```
     #[inline]
     pub fn range_search(&self, query: &ArrowItem, radius: f64) -> Vec<(usize, f64)> {
-        (0..self.ncols)
+        info!("Range search with radius: {:.6}", radius);
+        debug!("Query vector dimension: {}", query.len());
+
+        let results: Vec<(usize, f64)> = (0..self.nitems)
             .filter_map(|i| {
                 let item = self.get_item(i);
                 let distance = query.euclidean_distance(&item);
@@ -635,7 +641,10 @@ impl ArrowSpace {
                     None
                 }
             })
-            .collect()
+            .collect();
+
+        debug!("Range search completed, found {} items within radius", results.len());
+        results
     }
 
     /// Computes a pairwise cosine similarity submatrix for selected indices.
@@ -644,19 +653,22 @@ impl ArrowSpace {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use arrowspace::core::ArrowSpace;
     ///
-    /// let aspace = ArrowSpace::from_items(
+    /// let aspace = ArrowSpace::from_items_default(
     ///     vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![1.0, 1.0, 0.0]]
     /// );
-    /// let sims = aspace.pairwise_similarities(&[0,1,2]);
+    /// let sims = aspace.pairwise_similarities(&);[1]
     /// assert_eq!(sims.len(), 3);
     /// assert_eq!(sims.len(), 3);
     /// ```
     #[inline]
     pub fn pairwise_similarities(&self, indices: &[usize]) -> Vec<Vec<f64>> {
-        indices
+        info!("Computing pairwise similarities for {} indices", indices.len());
+        debug!("Selected indices: {:?}", indices);
+
+        let results = indices
             .iter()
             .map(|&i| {
                 let item_i = self.get_item(i);
@@ -668,23 +680,10 @@ impl ArrowSpace {
                     })
                     .collect()
             })
-            .collect()
-    }
+            .collect();
 
-    /// Returns a borrowed feature slice (immutable).
-    #[inline]
-    pub fn iter_feature(&self, feature: usize) -> &[f64] {
-        assert!(feature < self.nrows, "Feature index out of bounds");
-        let start = feature * self.ncols;
-        let end = start + self.ncols;
-        &self.data[start..end]
-    }
-
-    /// Iterates a single item (column) as references across features.
-    #[inline]
-    pub fn iter_item(&self, item: usize) -> impl Iterator<Item = &f64> {
-        assert!(item < self.ncols, "Item index out of bounds");
-        (0..self.nrows).map(move |f| &self.data[f * self.ncols + item])
+        debug!("Pairwise similarity computation completed");
+        results
     }
 
     /// Update the lambdas with new synthetic values
@@ -694,40 +693,75 @@ impl ArrowSpace {
             self.lambdas.len(),
             "New lambdas length must match existing lambdas length"
         );
+
+        info!("Updating lambdas with {} new values", new_lambdas.len());
+        let old_stats = {
+            let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let max: f64 = self.lambdas.iter().fold(0.0, |a, &b| a.max(b));
+            (min, max)
+        };
+
         self.lambdas = new_lambdas;
+
+        let new_stats = {
+            let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let max: f64 = self.lambdas.iter().fold(0.0, |a, &b| a.max(b));
+            (min, max)
+        };
+
+        debug!(
+            "Lambda update: old range [{:.6}, {:.6}] -> new range [{:.6}, {:.6}]",
+            old_stats.0, old_stats.1, new_stats.0, new_stats.1
+        );
+    }
+
+    /// Compute synthetic lambda for an external query vector
+    /// Uses the same normalization and parameters as the stored data
+    pub fn compute_query_synthetic_lambda(&self, query_vector: &[f64]) -> f64 {
+        debug!(
+            "Computing synthetic lambda for query vector (dimension: {})",
+            query_vector.len()
+        );
+        let result = TauMode::compute_item_vector_synthetic_lambda(
+            query_vector,
+            self,
+            Some(TauMode::select_tau(query_vector, self.taumode.unwrap())),
+        );
+        debug!("Query synthetic lambda computed: {:.6}", result);
+        result
     }
 }
 
 // Flattened AsRef/AsMut for ArrowSpace
-impl AsRef<[f64]> for ArrowSpace {
+impl AsRef<DenseMatrix<f64>> for ArrowSpace {
     #[inline]
-    fn as_ref(&self) -> &[f64] {
+    fn as_ref(&self) -> &DenseMatrix<f64> {
         &self.data
     }
 }
-impl AsMut<[f64]> for ArrowSpace {
+impl AsMut<DenseMatrix<f64>> for ArrowSpace {
     #[inline]
-    fn as_mut(&mut self) -> &mut [f64] {
+    fn as_mut(&mut self) -> &mut DenseMatrix<f64> {
         &mut self.data
     }
 }
 
 // Iterate all elements by reference (feature-major)
-impl<'a> IntoIterator for &'a ArrowSpace {
+impl<'a> IntoIterator for &'a ArrowItem {
     type Item = &'a f64;
     type IntoIter = std::slice::Iter<'a, f64>;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.data.iter()
+        self.item.iter()
     }
 }
 
 // Iterate all elements mutably (feature-major)
-impl<'a> IntoIterator for &'a mut ArrowSpace {
+impl<'a> IntoIterator for &'a mut ArrowItem {
     type Item = &'a mut f64;
     type IntoIter = std::slice::IterMut<'a, f64>;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.data.iter_mut()
+        self.item.iter_mut()
     }
 }

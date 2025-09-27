@@ -1,6 +1,10 @@
 /// Top k-3 results ids should be 3, 6, 0 for every algorithm used
 use arrowspace::builder::ArrowSpaceBuilder;
 use arrowspace::core::ArrowItem;
+use smartcore::linalg::basic::arrays::Array;
+
+#[path = "./common/lib.rs"]
+mod common;
 
 // Traditional cosine similarity for f64 slices
 fn cosine_sim(a: &[f64], b: &[f64]) -> f64 {
@@ -83,7 +87,7 @@ P0064; 0.28,0.62,0.08,0.25,0.11,0.84,0.03,0.98,0.72,0.19,0.59,0.87,0.05,0.29,0.0
 
 fn main() {
     // Parse items as rows (N×24): each row is one protein with 24 features
-    let (ids, db): (Vec<String>, Vec<Vec<f64>>) = parse_vectors_block();
+    let (ids, db): (Vec<String>, Vec<Vec<f64>>) = common::parse_vectors_string(VECTORS_DATA);
     let n_items = db.len();
 
     // Query similar to item at index 3; scale slightly for testing
@@ -104,29 +108,37 @@ fn main() {
         .map(|(i, v)| (i, cosine_sim(&query, v)))
         .collect();
     base_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    base_scores.truncate(k);
+    base_scores.truncate(k+1);
 
-    println!("Baseline cosine top-{k}:");
+    println!("Baseline cosine top-{k}+1:");
     for (rank, (i, s)) in base_scores.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
 
     // ---------------------------------------------------
     // ArrowSpace: build λ-graph from N×24 data
-    // ArrowSpace auto-transposes to F×N (24×N) internally
+    // ArrowSpace auto-transposes to F×F (24×24) internally
     // ---------------------------------------------------
     // let eps = 1e-3;
     // let cap_k = 3;
     // let p = 2.0;
     let (aspace, _gl) = ArrowSpaceBuilder::new()
-        .with_rows(db.clone()) // N×24 -> auto-transposed to 24×N
-        .build();
+        .with_lambda_graph(1e-3, 5, 2.0, Some(1e-3 * 0.5))
+        .build(db); // N×24 -> auto-transposed to 24×N
+        
 
-    println!("ArrowSpace shape after transpose: {:?}", aspace.shape()); // Should be (24, N)
-    assert_eq!(aspace.shape(), (24, 64));
+    println!("ArrowSpace shape: {:?}", aspace.data.shape()); // Should be (N, 64)
+    assert_eq!(aspace.data.shape(), (64, 24));
 
     // Arrow scoring: query remains in original item format (24 features)
     let query_row = ArrowItem::new(query.clone(), 0.0);
+
+    //
+    // Cosine similarity variant
+    //
+    // Define alpha and beta for the cosine query
+    let alpha = 1.0;
+    let beta = 0.0;
 
     // For ArrowSpace similarity, we need to reconstruct each item from the transposed data
     // Since ArrowSpace stores features as rows, item i is column i across all feature rows
@@ -136,35 +148,40 @@ fn main() {
             let lambda = aspace.lambdas()[i];
             let item_row = ArrowItem::new(item.item.clone(), lambda);
 
-            let score = query_row.lambda_similarity(&item_row, 1.0, 0.0);
+            let score = query_row.lambda_similarity(&item_row, alpha, beta);
             (i, score)
         })
         .collect();
 
     arrow_scores_cos.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    arrow_scores_cos.truncate(k);
+    arrow_scores_cos.truncate(k+1);
 
-    println!("\nArrowSpace (alpha=1, beta=0) top-{k}:");
+    println!("\nArrowSpace (alpha={alpha}, beta={beta}) top-{k}+1:");
     for (rank, (i, s)) in arrow_scores_cos.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
 
+    //
     // λτ-aware variant
+    //
+    // Define alpha and beta for the query
+    let alpha = 0.9;
+    let beta = 0.1;
     let mut arrow_scores_lambda: Vec<(usize, f64)> = (0..n_items)
         .map(|i| {
             let item = aspace.get_item(i);
             let lambda = aspace.lambdas()[i];
             let item_row = ArrowItem::new(item.item.clone(), lambda);
 
-            let score = query_row.lambda_similarity(&item_row, 0.9, 0.1);
+            let score = query_row.lambda_similarity(&item_row, alpha, beta);
             (i, score)
         })
         .collect();
 
     arrow_scores_lambda.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    arrow_scores_lambda.truncate(4);
+    arrow_scores_lambda.truncate(k+1);
 
-    println!("\nArrowSpace (alpha=0.9, beta=0.1) top-{k}:");
+    println!("\nArrowSpace (alpha={alpha}, beta={beta}) top-{k}+1:");
     for (rank, (i, s)) in arrow_scores_lambda.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
@@ -188,32 +205,33 @@ fn main() {
     let union = s1.union(&s2).count() as f64;
     let jaccard = if union > 0.0 { inter / union } else { 1.0 };
     println!("Jaccard(baseline vs λτ-aware): {jaccard:.3}");
+
+    // Define MULTIPLE DESCENDING alphas for the query
+    for a in vec![0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0].iter() {
+
+        let alpha = *a;
+        let beta = 1.0 - alpha;
+        let mut arrow_scores_lambda: Vec<(usize, f64)> = (0..n_items)
+            .map(|i| {
+                let item = aspace.get_item(i);
+                let lambda = aspace.lambdas()[i];
+                let item_row = ArrowItem::new(item.item.clone(), lambda);
+
+                let score = query_row.lambda_similarity(&item_row, alpha, beta);
+                (i, score)
+            })
+            .collect();
+
+        arrow_scores_lambda.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        arrow_scores_lambda.truncate(k+1);
+
+        println!("\nArrowSpace (alpha={alpha}, beta={beta}) top-{k}+1:");
+        for (rank, (i, s)) in arrow_scores_lambda.iter().enumerate() {
+            println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
+        }
+    }
 }
 
-/// Parse block into item IDs and item rows (N×F).
-fn parse_vectors_block() -> (Vec<String>, Vec<Vec<f64>>) {
-    let mut ids = Vec::new();
-    let mut rows = Vec::new();
-    for line in VECTORS_DATA.lines() {
-        let l = line.trim();
-        if l.is_empty() {
-            continue;
-        }
-        let mut parts = l.splitn(2, ';');
-        let id = parts.next().unwrap().trim().to_string();
-        let rest = parts.next().unwrap_or("").trim();
-        if rest.is_empty() {
-            continue;
-        }
-        let vals: Vec<f64> = rest
-            .split(',')
-            .map(|s| s.trim().parse::<f64>().unwrap())
-            .collect();
-        ids.push(id);
-        rows.push(vals);
-    }
-    (ids, rows)
-}
 
 // # the result of comparing lambda-tau with cosine return this printing:
 

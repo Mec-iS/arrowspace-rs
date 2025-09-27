@@ -29,6 +29,7 @@ Take a look to the conventions established by existing code:
 1. After a PR is opened maintainers are notified
 2. Probably changes will be required to comply with the workflow, these commands are run automatically and all tests shall pass:
     * **Formatting**: run `rustfmt src/*.rs` to apply automatic formatting
+    * **Linting**: `clippy` is used with command `cargo clippy --all-features -- -Drust-2018-idioms -Dwarnings`
     * **Testing**: multiple test pipelines are run for different targets
 3. When everything is OK and the PR is accepted, code is merged.
 
@@ -36,8 +37,6 @@ Take a look to the conventions established by existing code:
 ## Contribution Best Practices
 
 * Read this [how-to about Github workflow here](https://guides.github.com/introduction/flow/) if you are not familiar with.
-
-* Read all the texts related to [contributing for an OS community](https://github.com/HTTP-APIs/hydrus/tree/master/.github).
 
 * Read this [how-to about writing a PR](https://github.com/blog/1943-how-to-write-the-perfect-pull-request) and this [other how-to about writing a issue](https://wiredcraft.com/blog/how-we-write-our-github-issues/)
   
