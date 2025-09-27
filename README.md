@@ -90,18 +90,16 @@ let items = vec![
 
 let (aspace, _graph) = ArrowSpaceBuilder::new()
     .with_rows(items)
-    .with_lambda_graph(1e-3, 6, 2.0, None)
+    .with_lambda_graph(0.5, 3, 2.0, sigma: 0.25)
     .build();
 
-// Query with lambda-aware similarity
+// prepare query vector
 let query = ArrowItem::new(vec![1.5, 2.5, 2.0], 0.0);
-// with alpha=1.0 and beta=0.0, same results as cosine similarity
+// search the space
 let results = aspace.search_lambda_aware(&query, 5, alpha, beta);
 println!("{:?}", results);
 
 ```
-
-
 
 ## Main Features (spectral graph construction and search)
 
