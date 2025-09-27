@@ -21,12 +21,12 @@ exclude = [
 
 [dependencies]
 rand = "0.9.2"
-smartcore = "^0.4.3"
+smartcore = "0.4.3"
 ordered-float = "5.0.0"
-approx = "*"
-rayon = "*"
+rayon = "1.11.0"
+approx = "0.5.1"
 log = "0.4.28"
-env_logger = "*"
+env_logger = "0.11.8"
 
 [dev-dependencies]
 criterion = "0.7.0"
