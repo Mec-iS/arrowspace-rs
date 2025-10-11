@@ -624,7 +624,7 @@ fn test_builder_lambdas_with_realistic_data() {
     );
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.2, 6, 2, 2.0, Some(0.15))
+        .with_lambda_graph(0.1, 6, 2, 2.0, Some(0.50))
         .with_normalisation(true)
         .with_spectral(true)
         .with_synthesis(TauMode::Median)
