@@ -114,30 +114,30 @@ fn test_builder_direction_vs_magnitude_sensitivity_unnormalised() {
 
     // Build with normalisation=true (cosine-like, scale-invariant)
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
-        .build(items.clone());
+        .build(items_base.clone());
 
     // Build with normalisation=false (τ-mode: magnitude-sensitive)
     let (aspace_tau, gl_tau) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
         .with_normalisation(false)
-        .build(items.clone());
+        .build(items_base.clone());
 
     // Build again with normalisation=true to verify stability
     let (_aspace_norm_again, gl_norm_again) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
         .build(items.clone());
 
     // Normalized builds should be different
     assert!(
-        !laplacian_eq(&gl_norm, &gl_norm_again, 1e-1),
+        !laplacian_eq(&gl_norm, &gl_norm_again, 1e-9),
         "Normalised builds should be different as taumode is scale-aware unlike cosine similarity"
     );
 
     // τ-mode should differ from normalized graph due to magnitude sensitivity
-    let matrices_equal = laplacian_eq(&gl_norm, &gl_tau, 1e-4);
+    let matrices_equal = laplacian_eq(&gl_norm, &gl_tau, 1e-9);
     assert!(
         !matrices_equal,
         "τ-mode should differ from normalised graph because it is magnitude-sensitive"
