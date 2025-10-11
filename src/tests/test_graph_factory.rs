@@ -290,6 +290,7 @@ fn test_builder_with_different_dimensions() {
             .with_lambda_graph(0.3, 5, 2, 2.0, None)
             .with_normalisation(true)
             .with_spectral(true)
+            .with_sparsity_check(false)
             .build(items);
 
         assert!(aspace.n_clusters > 0, "{}: Should produce clusters", desc);

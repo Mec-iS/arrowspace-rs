@@ -20,7 +20,6 @@ use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
-use std::sync::Mutex;
 
 /// Fixed seed for deterministic clustering
 const CLUSTERING_SEED: u64 = 128;
@@ -148,7 +147,7 @@ pub trait ClusteringHeuristic {
         id_clamped
     }
 
-    // Step 2: Calinski-Harabasz for optimal K (DETERMINISTIC)
+    // Step 2: Calinski-Harabasz for optimal K (DETERMINISTIC with full parallelism)
     fn step2_calinski_harabasz(&self, rows: &[Vec<f64>], k_min: usize, k_max: usize) -> usize
     where
         Self: Sync,
@@ -157,8 +156,6 @@ pub trait ClusteringHeuristic {
         if n < 10 {
             return k_min;
         }
-
-        let best = Mutex::new((k_min, f64::NEG_INFINITY));
 
         let k_range = k_max - k_min;
         let k_step = if k_range <= 5 {
@@ -176,10 +173,10 @@ pub trait ClusteringHeuristic {
         );
 
         // Parallel evaluation with deterministic seeds
-        k_candidates
+        let k_scores: Vec<(usize, f64)> = k_candidates
             .par_iter()
             .filter(|&&k| k < n && k >= 2)
-            .for_each(|&k| {
+            .map(|&k| {
                 let best_ch_for_k: f64 = (0..3)
                     .into_par_iter()
                     .map(|trial| {
@@ -202,15 +199,26 @@ pub trait ClusteringHeuristic {
                     k, best_ch_for_k, penalized_score
                 );
 
-                let mut best_guard = best.lock().unwrap();
-                if penalized_score > best_guard.1 {
-                    *best_guard = (k, penalized_score);
+                (k, penalized_score)
+            })
+            .collect();
+
+        // DETERMINISTIC: Sequential max with conservative tiebreaker (prefer LARGER k)
+        let (mut best_k, mut best_score) = k_scores
+            .iter()
+            .max_by(|(k_a, score_a), (k_b, score_b)| {
+                // Primary: compare scores
+                match score_a.partial_cmp(score_b) {
+                    Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
+                    Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,
+                    // Tiebreaker: prefer LARGER k (conservative for randomness)
+                    _ => k_a.cmp(k_b),
                 }
-            });
+            })
+            .map(|&(k, s)| (k, s))
+            .unwrap_or((k_min, f64::NEG_INFINITY));
 
-        let (mut best_k, mut best_score) = *best.lock().unwrap();
-
-        // Fine-tune around best_k
+        // Fine-tune around best_k (if needed)
         if k_step > 1 {
             let fine_range: Vec<usize> = vec![
                 best_k.saturating_sub(k_step - 1),
@@ -223,42 +231,61 @@ pub trait ClusteringHeuristic {
             .filter(|&k| k >= k_min && k <= k_max && k < n && !k_candidates.contains(&k))
             .collect();
 
-            fine_range.par_iter().for_each(|&k| {
-                let best_ch_for_k: f64 = (0..3)
-                    .into_par_iter()
-                    .map(|trial| {
-                        // Fine-tuning seed: base + k*10000 + trial
-                        let trial_seed = CLUSTERING_SEED
-                            .wrapping_add((k as u64) * 10000)
-                            .wrapping_add(trial as u64);
+            // Parallel fine-tuning
+            let fine_scores: Vec<(usize, f64)> = fine_range
+                .par_iter()
+                .map(|&k| {
+                    let best_ch_for_k: f64 = (0..3)
+                        .into_par_iter()
+                        .map(|trial| {
+                            // Fine-tuning seed: base + k*10000 + trial
+                            let trial_seed = CLUSTERING_SEED
+                                .wrapping_add((k as u64) * 10000)
+                                .wrapping_add(trial as u64);
 
-                        let assignments = kmeans_lloyd(rows, k, 20, trial_seed);
-                        self.calinski_harabasz_score(rows, &assignments, k)
-                    })
-                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .unwrap_or(0.0);
+                            let assignments = kmeans_lloyd(rows, k, 20, trial_seed);
+                            self.calinski_harabasz_score(rows, &assignments, k)
+                        })
+                        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .unwrap_or(0.0);
 
-                let penalty = 0.8;
-                let penalized_score = best_ch_for_k - penalty * (k as f64) * (n as f64).ln();
+                    let penalty = 0.8;
+                    let penalized_score = best_ch_for_k - penalty * (k as f64) * (n as f64).ln();
 
-                debug!(
-                    "K={} (fine): CH={:.4}, penalized={:.4}",
-                    k, best_ch_for_k, penalized_score
-                );
+                    debug!(
+                        "K={} (fine): CH={:.4}, penalized={:.4}",
+                        k, best_ch_for_k, penalized_score
+                    );
 
-                let mut best_guard = best.lock().unwrap();
-                if penalized_score > best_guard.1 {
-                    *best_guard = (k, penalized_score);
+                    (k, penalized_score)
+                })
+                .collect();
+
+            // DETERMINISTIC: Sequential max for fine-tuning results
+            if let Some(&(fine_k, fine_score)) = fine_scores
+                .iter()
+                .max_by(|(k_a, score_a), (k_b, score_b)| {
+                    match score_a.partial_cmp(score_b) {
+                        Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
+                        Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,
+                        // Tiebreaker: prefer LARGER k (conservative)
+                        _ => k_a.cmp(k_b),
+                    }
+                })
+            {
+                if fine_score > best_score {
+                    best_k = fine_k;
+                    best_score = fine_score;
                 }
-            });
-
-            let final_best = *best.lock().unwrap();
-            best_k = final_best.0;
-            best_score = final_best.1;
+            }
         }
 
-        info!("Best K={} with penalized score={:.4}", best_k, best_score);
-        best_k
+        debug!("Best K={} with penalized score={:.4}", best_k, best_score);
+        if best_k < k_max {
+            best_k
+        } else {
+            k_max
+        }
     }
 
     /// Calinski-Harabasz index (parallelized).

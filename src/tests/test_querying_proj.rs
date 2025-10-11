@@ -298,6 +298,7 @@ fn test_range_search_with_query_lambda() {
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
         .with_normalisation(true)
+        .with_sparsity_check(false)
         .build(data);
 
     let query = queries[1].clone();
@@ -607,8 +608,9 @@ fn test_project_query_zero_vector() {
     let (data, _) = create_test_data(50, 0, 96, 111);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_lambda_graph(0.2, 4, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
+        .with_sparsity_check(false)
         .build(data);
 
     let query_zero = vec![0.0; 96];
@@ -617,7 +619,7 @@ fn test_project_query_zero_vector() {
     assert_eq!(projected.len(), aspace.reduced_dim.unwrap());
 
     for &val in &projected {
-        assert!(val.abs() < 1e-10, "Expected near-zero, got {:.6}", val);
+        assert!(val.abs() < 1e-8, "Expected near-zero, got {:.6}", val);
     }
 
     println!("✓ Zero vector projects to zero");

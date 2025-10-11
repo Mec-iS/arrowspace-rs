@@ -253,13 +253,13 @@ fn test_builder_spectral_laplacian_computation() {
 
     // Build WITHOUT spectral computation
     let (aspace_no_spectral, _) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(false)
         .build(items.clone());
 
     // Build WITH spectral computation
     let (aspace_spectral, _) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(true)
         .build(items.clone());
 
@@ -294,13 +294,13 @@ fn test_builder_lambda_computation_with_different_tau_modes() {
     // Build with Median tau mode
     let (aspace_median, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Median)
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .build(items.clone());
 
     // Build with Max tau mode
     let (aspace_fixed, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Fixed(0.5))
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .build(items.clone());
 
     let lambdas_median = aspace_median.lambdas();
@@ -338,14 +338,14 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
 
     // Build with normalized data
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(true)
         .with_spectral(true)
         .build(items.clone());
 
     // Build with unnormalized data (no normalization flag)
     let (aspace_unnorm, gl_unnorm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 2, 1, 2.0, None)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(false)
         .with_spectral(true)
         .build(items_unnormalized);

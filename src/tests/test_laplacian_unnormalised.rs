@@ -114,19 +114,19 @@ fn test_builder_direction_vs_magnitude_sensitivity_unnormalised() {
 
     // Build with normalisation=true (cosine-like, scale-invariant)
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
         .build(items_base.clone());
 
     // Build with normalisation=false (τ-mode: magnitude-sensitive)
     let (aspace_tau, gl_tau) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
         .with_normalisation(false)
         .build(items_base.clone());
 
     // Build again with normalisation=true to verify stability
     let (_aspace_norm_again, gl_norm_again) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.1, 5, 2, 2.0, Some(0.1))
+        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
         .build(items.clone());
 
