@@ -64,62 +64,10 @@ pub struct GraphFactory;
 
 impl GraphFactory {
     /// This is a lower level method: use `ArrowSpaceBuilder::build`
-    /// Transpose the items matrix and build a graph Laplacian matrix
-    ///  so to be ready to be used to analyse signal features
-    pub fn build_laplacian_matrix_from_items(
-        items: Vec<Vec<f64>>,        // N×F: N items, each with F features
-        eps: f64,                    // maximum rectified cosine distance (see `docs/`)
-        k: usize,                    // max number of neighbours for node
-        topk: usize, // number of results to be considered for closest neighbors
-        p: f64,      // kernel parameter
-        sigma_override: Option<f64>, // tolerance for eps
-        normalise: bool, // pre-normalisation before laplacian computation
-        sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
-    ) -> GraphLaplacian {
-        info!("Building Laplacian matrix for {} items", items.len());
-        debug!(
-            "Laplacian parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
-            eps, k, p, sigma_override, normalise
-        );
-
-        let result = crate::laplacian::build_laplacian_matrix(
-            // items are transposed here
-            DenseMatrix::from_2d_vec(&items).unwrap().transpose(),
-            &GraphParams {
-                eps,
-                k,
-                topk,
-                p,
-                sigma: sigma_override,
-                normalise,
-                sparsity_check,
-            },
-            Some(items.len()),
-        );
-
-        if sparsity_check {
-            let sparsity_input = GraphLaplacian::sparsity(&result.matrix);
-            if sparsity_input > 0.95 {
-                panic!("Resulting laplacian matrix is too sparse {:?}", sparsity_input)
-            }
-        }
-        assert!(result.nnodes == items.len());
-
-        info!(
-            "Laplacian matrix built: {}×{} with {} nodes, {} non-zeros",
-            result.matrix.shape().0,
-            result.matrix.shape().1,
-            result.nnodes,
-            result.matrix.nnz()
-        );
-        result
-    }
-
-    /// This is a lower level method: use `ArrowSpaceBuilder::build`
     /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
     ///  so to be ready to be used to analyse signal features
     pub fn build_laplacian_matrix_from_k_cluster(
-        clustered: DenseMatrix<f64>, // X×F: X centroids of cluisters, each with F features
+        clustered: DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
         eps: f64,                    // maximum rectified cosine distance (see `docs/`)
         k: usize,                    // max number of neighbours for node
         topk: usize, // number of results to be considered for closest neighbors
@@ -139,7 +87,7 @@ impl GraphFactory {
         );
         assert!(clustered.shape().0 <= n_items);
 
-        let result = crate::laplacian::build_laplacian_matrix(
+        let result: GraphLaplacian = crate::laplacian::build_laplacian_matrix(
             // items are transposed here
             clustered.transpose(),
             &GraphParams {
@@ -201,15 +149,22 @@ impl GraphFactory {
 
         let sparsity_output = GraphLaplacian::sparsity(&aspace.signals);
         println!("sparsity {:?}", sparsity_output);
-        if sparsity_output > 0.95 {
+        if sparsity_output > 0.95 && graph_laplacian.graph_params.sparsity_check {
             panic!("Resulting spectral matrix is too sparse {:?}", sparsity_output)
         }
 
-        assert!(
-            aspace.signals.shape().0 == aspace.nfeatures
-                && aspace.nfeatures == aspace.signals.shape().1,
-            "result should be a FxF matrix"
-        );
+        if aspace.reduced_dim.is_some() {
+            assert!(
+                aspace.signals.shape().0 == aspace.reduced_dim.unwrap()
+                    && aspace.reduced_dim.unwrap() == aspace.signals.shape().1,
+                "result should be a FxF matrix with reduced dimensions F"
+            );
+        } else {
+            assert!(
+                aspace.signals.shape().0 == aspace.signals.shape().1,
+                "result should be a FxF matrix"
+            );
+        }
 
         info!("Built F×F feature matrix: {}×{}", aspace.nfeatures, aspace.nfeatures);
         let stats = {

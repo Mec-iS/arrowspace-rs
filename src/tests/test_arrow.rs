@@ -1,10 +1,10 @@
 use approx::assert_relative_eq;
-use log::debug;
 
 use crate::{
     builder::ArrowSpaceBuilder,
     graph::GraphLaplacian,
     taumode::TauMode,
+    tests::test_data::make_moons_hd,
 };
 
 /// Helper to compare two GraphLaplacian matrices for equality
@@ -44,7 +44,7 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
     // and all items already have ||x|| = 1)
     
     // Generate high-dimensional moons dataset and manually normalize to unit vectors
-    let items_raw: Vec<Vec<f64>> = crate::tests::test_data::make_moons_hd(
+    let items_raw: Vec<Vec<f64>> = make_moons_hd(
         150,    // Sufficient samples for meaningful graph structure
         0.15,   // Moderate noise - not too high to maintain clear structure
         0.4,    // Good separation between moons
@@ -158,14 +158,7 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
 #[test]
 fn test_builder_direction_vs_magnitude_sensitivity() {
     // Construct vectors where two have the same direction but vastly different magnitudes
-    let items = vec![
-        vec![1.0, 0.0, 0.0, 0.0],
-        vec![0.6, 0.8, 0.0, 0.0],
-        vec![60.0, 80.0, 0.0, 0.0], // same direction as item 1, 100x magnitude
-        vec![0.8, 0.6, 0.0, 0.0],
-        vec![0.0, 1.0, 0.0, 0.0],
-        vec![0.0, 0.0, 1.0, 0.0],
-    ];
+    let items = make_moons_hd(6, 0.0, 1.0, 4, 42);
 
     // Build with normalisation=true (cosine-like, scale-invariant)
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
@@ -199,11 +192,7 @@ fn test_builder_direction_vs_magnitude_sensitivity() {
 #[test]
 fn test_builder_normalisation_flag_is_preserved() {
     // Verify that normalisation flag is properly propagated through the builder
-    let items = vec![
-        vec![1.0, 2.0, 3.0],
-        vec![3.0, 4.0, 5.0],
-        vec![2.0, 1.0, 3.0],
-    ];
+    let items = make_moons_hd(3, 0.1, 0.5, 3, 123);
 
     let (_aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.25, 2, 1, 2.0, None)
@@ -216,11 +205,7 @@ fn test_builder_normalisation_flag_is_preserved() {
 #[test]
 fn test_builder_clustering_produces_valid_assignments() {
     // Test that the builder produces valid cluster assignments
-    let items = vec![
-        vec![1.0, 0.0, 0.0], vec![1.1, 0.1, 0.0], // cluster 1
-        vec![0.0, 1.0, 0.0], vec![0.1, 1.1, 0.0], // cluster 2
-        vec![0.0, 0.0, 1.0], vec![0.0, 0.1, 1.1], // cluster 3
-    ];
+    let items = make_moons_hd(6, 0.1, 0.3, 3, 456);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 3, 2, 2.0, None)
@@ -240,12 +225,7 @@ fn test_builder_clustering_produces_valid_assignments() {
 #[test]
 fn test_builder_spectral_laplacian_computation() {
     // Test that spectral Laplacian is computed when requested
-    let items = vec![
-        vec![0.82, 0.11, 0.43, 0.28, 0.64],
-        vec![0.79, 0.12, 0.45, 0.29, 0.61],
-        vec![0.85, 0.09, 0.41, 0.31, 0.67],
-        vec![0.77, 0.14, 0.47, 0.26, 0.59],
-    ];
+    let items = make_moons_hd(4, 0.12, 0.4, 5, 789);
 
     // Build WITHOUT spectral computation
     let (aspace_no_spectral, _) = ArrowSpaceBuilder::default()
@@ -279,11 +259,7 @@ fn test_builder_spectral_laplacian_computation() {
 
 #[test]
 fn test_builder_lambda_computation_with_different_tau_modes() {
-    let items = vec![
-        vec![0.82, 0.11, 0.43, 0.28],
-        vec![0.79, 0.12, 0.45, 0.29],
-        vec![0.85, 0.09, 0.41, 0.31],
-    ];
+    let items = make_moons_hd(3, 0.15, 0.35, 4, 321);
 
     // Build with Median tau mode
     let (aspace_median, _) = ArrowSpaceBuilder::default()
@@ -320,12 +296,7 @@ fn test_builder_lambda_computation_with_different_tau_modes() {
 #[test]
 fn test_builder_with_normalized_vs_unnormalized_items() {
     // Test how normalization affects clustering and spectral properties
-    let items = vec![
-        vec![0.82, 0.11, 0.43, 0.28, 0.64, 0.32],
-        vec![0.79, 0.12, 0.45, 0.29, 0.61, 0.33],
-        vec![0.85, 0.09, 0.41, 0.31, 0.67, 0.29],
-        vec![0.77, 0.14, 0.47, 0.26, 0.59, 0.35],
-    ];
+    let items = make_moons_hd(4, 0.18, 0.4, 6, 654);
 
     // Create unnormalized items with different scales
     let scales = vec![1.0, 3.0, 0.5, 2.5];
@@ -373,21 +344,14 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
 #[test]
 fn test_builder_with_inline_sampling() {
     // Test builder with inline sampling enabled
-    let mut items = Vec::new();
-    for i in 0..100 {
-        items.push(vec![
-            (i as f64 * 0.01).sin(),
-            (i as f64 * 0.01).cos(),
-            (i as f64 * 0.02).sin(),
-        ]);
-    }
+    let items = make_moons_hd(100, 0.2, 0.3, 3, 987);
 
-    let (aspace_sampling, _gl) = ArrowSpaceBuilder::default()
+    let (_aspace_sampling, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_inline_sampling(true)
         .build(items.clone());
 
-    let (aspace_no_sampling, _) = ArrowSpaceBuilder::default()
+    let (_aspace_no_sampling, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_inline_sampling(false)
         .build(items);
@@ -396,23 +360,18 @@ fn test_builder_with_inline_sampling() {
 #[test]
 fn test_builder_dimensionality_reduction() {
     // Test builder with dimensionality reduction enabled
-    let mut items = Vec::new();
-    for i in 0..50 {
-        let mut item = Vec::new();
-        for j in 0..128 {
-            item.push((i as f64 * 0.01 + j as f64 * 0.001).sin());
-        }
-        items.push(item);
-    }
+    let items = make_moons_hd(50, 0.15, 0.35, 128, 111);
 
     let (aspace_reduced, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
+        .with_sparsity_check(false)
         .build(items.clone());
 
     let (aspace_full, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_dims_reduction(false, None)
+        .with_sparsity_check(false)
         .build(items);
 
     println!("Original dimension: {}", aspace_full.nfeatures);
@@ -435,7 +394,7 @@ fn test_builder_lambda_statistics() {
     // Test that lambda statistics show reasonable variance using high-dimensional moons data
     // Use make_moons_hd with high noise to create natural clusters with distinct spectral properties
     
-    let items: Vec<Vec<f64>> = crate::tests::test_data::make_moons_hd(
+    let items: Vec<Vec<f64>> = make_moons_hd(
         200,    // Sufficient samples for meaningful statistics
         0.3,    // High noise for variance - standard deviation of Gaussian noise
         0.5,    // Moderate separation between moons
@@ -519,11 +478,7 @@ fn test_builder_lambda_statistics() {
 #[test]
 fn test_builder_cluster_radius_impact() {
     // Test how cluster radius affects clustering
-    let items = vec![
-        vec![1.0, 0.0, 0.0], vec![1.1, 0.0, 0.0], vec![1.2, 0.0, 0.0],
-        vec![0.0, 1.0, 0.0], vec![0.0, 1.1, 0.0], vec![0.0, 1.2, 0.0],
-        vec![0.0, 0.0, 1.0], vec![0.0, 0.0, 1.1], vec![0.0, 0.0, 1.2],
-    ];
+    let items = make_moons_hd(9, 0.1, 0.25, 3, 222);
 
     // This test verifies that the auto-computed cluster parameters
     // produce reasonable clustering behavior

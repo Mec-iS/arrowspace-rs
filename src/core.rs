@@ -44,6 +44,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 use std::fmt::Debug;
 
+use approx::relative_eq;
 use rayon::prelude::*;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
@@ -359,6 +360,7 @@ pub struct ArrowSpace {
     pub lambdas: Vec<f64>,      // N lambdas (every lambda is a lambda for an item-row)
     pub taumode: TauMode,       // tau_mode as in select_tau_mode
 
+    pub n_clusters: usize,
     /// Cluster assignment per original row (N entries, each in 0..X or None for outliers)
     pub cluster_assignments: Vec<Option<usize>>,
     /// Cluster sizes (X entries)
@@ -385,6 +387,7 @@ impl Default for ArrowSpace {
             // enable synthetic λ with Median τ by default
             taumode: TAUDEFAULT,
             // Clustering defaults
+            n_clusters: 0,
             cluster_assignments: Vec::new(),
             cluster_sizes: Vec::new(),
             cluster_radius: 0.0,
@@ -411,6 +414,7 @@ impl ArrowSpace {
             lambdas: vec![0.0; n_items],        // will be computed later
             taumode,
             // Clustering defaults
+            n_clusters: 0,
             cluster_assignments: Vec::new(),
             cluster_sizes: Vec::new(),
             cluster_radius: 0.0,
@@ -467,6 +471,7 @@ impl ArrowSpace {
             lambdas: vec![0.0; n_items],        // will be computed later
             taumode: TAUDEFAULT,
             // Clustering defaults
+            n_clusters: 0,
             cluster_assignments: Vec::new(),
             cluster_sizes: Vec::new(),
             cluster_radius: 0.0,
@@ -912,14 +917,20 @@ impl ArrowSpace {
     /// let hits = aspace.range_search(&q, 0.6);
     /// ```
     #[inline]
-    pub fn range_search(&self, query: &ArrowItem, eps: f64) -> Vec<(usize, f64)> {
+    pub fn range_search(&self, query: &ArrowItem, gl: &GraphLaplacian, eps: f64) -> Vec<(usize, f64)> {
         info!("Range search with radius: {:.6}", eps);
         debug!("Query vector dimension: {}", query.len());
+
+        let query: ArrowItem = if relative_eq!(query.lambda, 0.0, epsilon = 1e-9) {
+            ArrowItem::new(query.item.clone(), self.prepare_query_item(&query.item, gl))
+        } else {
+            query.clone()
+        };
 
         let results: Vec<(usize, f64)> = (0..self.nitems)
             .filter_map(|i| {
                 let item = self.get_item(i);
-                let distance = query.euclidean_distance(&item);
+                let distance = query.lambda - item.lambda;
                 if distance <= eps {
                     Some((i, distance))
                 } else {

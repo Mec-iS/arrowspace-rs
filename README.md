@@ -57,6 +57,7 @@ cargo run --example proteins_lookup
 
 ### Running Tests
 ```bash
+export RUST_TEST_NOCAPTURE=1
 cargo test
 ```
 

@@ -1,15 +1,14 @@
-use crate::builder::ArrowSpaceBuilder;
-use crate::core::ArrowSpace;
-use crate::graph::{dense_to_sparse, GraphFactory, GraphParams};
-use crate::taumode::{TauMode, TAU_FLOOR};
-use crate::tests::test_data::make_moons_hd;
-use crate::tests::GRAPH_PARAMS;
+use crate::{
+    builder::ArrowSpaceBuilder,
+    graph::dense_to_sparse,
+    taumode::{TauMode, TAU_FLOOR},
+    tests::test_data::make_moons_hd,
+};
 
 use approx::relative_eq;
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use ordered_float::Float;
+use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
-
-use log::debug;
 
 #[test]
 fn test_select_tau_fixed() {
@@ -21,10 +20,9 @@ fn test_select_tau_fixed() {
     assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(-0.1)), TAU_FLOOR);
     assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(0.0)), TAU_FLOOR);
     assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(f64::NAN)), TAU_FLOOR);
-    assert_eq!(
-        TauMode::select_tau(&energies, TauMode::Fixed(f64::INFINITY)),
-        TAU_FLOOR
-    );
+    assert_eq!(TauMode::select_tau(&energies, TauMode::Fixed(f64::INFINITY)), TAU_FLOOR);
+    
+    println!("✓ Fixed tau mode validated");
 }
 
 #[test]
@@ -32,19 +30,12 @@ fn test_select_tau_mean() {
     // Normal case
     let energies = vec![1.0, 2.0, 3.0];
     let expected_mean = 2.0;
-    assert!(
-        (TauMode::select_tau(&energies, TauMode::Mean) - expected_mean).abs() < 1e-12
-    );
+    assert!((TauMode::select_tau(&energies, TauMode::Mean) - expected_mean).abs() < 1e-12);
 
     // With NaN/Inf values - should filter them out
     let energies_with_nan = vec![1.0, f64::NAN, 3.0, f64::INFINITY, 2.0];
     let expected_filtered_mean = 2.0; // (1.0 + 3.0 + 2.0) / 3
-    assert!(
-        (TauMode::select_tau(&energies_with_nan, TauMode::Mean)
-            - expected_filtered_mean)
-            .abs()
-            < 1e-12
-    );
+    assert!((TauMode::select_tau(&energies_with_nan, TauMode::Mean) - expected_filtered_mean).abs() < 1e-12);
 
     // All NaN/Inf should return floor
     let all_invalid = vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
@@ -53,6 +44,8 @@ fn test_select_tau_mean() {
     // Empty array should return floor
     let empty: Vec<f64> = vec![];
     assert_eq!(TauMode::select_tau(&empty, TauMode::Mean), TAU_FLOOR);
+    
+    println!("✓ Mean tau mode validated");
 }
 
 #[test]
@@ -64,10 +57,7 @@ fn test_select_tau_median() {
     // Even number of elements
     let energies_even = vec![1.0, 2.0, 3.0, 4.0];
     let expected_median = 2.5; // (2.0 + 3.0) / 2
-    assert!(
-        (TauMode::select_tau(&energies_even, TauMode::Median) - expected_median).abs()
-            < 1e-12
-    );
+    assert!((TauMode::select_tau(&energies_even, TauMode::Median) - expected_median).abs() < 1e-12);
 
     // Single element
     let single = vec![5.0];
@@ -84,6 +74,8 @@ fn test_select_tau_median() {
     // Empty should return floor
     let empty: Vec<f64> = vec![];
     assert_eq!(TauMode::select_tau(&empty, TauMode::Median), TAU_FLOOR);
+    
+    println!("✓ Median tau mode validated");
 }
 
 #[test]
@@ -106,6 +98,8 @@ fn test_select_tau_percentile() {
     // Empty array should return floor
     let empty: Vec<f64> = vec![];
     assert_eq!(TauMode::select_tau(&empty, TauMode::Percentile(0.5)), TAU_FLOOR);
+    
+    println!("✓ Percentile tau mode validated");
 }
 
 #[test]
@@ -121,140 +115,43 @@ fn test_select_tau_floor_enforcement() {
     // Zero should be raised to floor
     let zero = vec![0.0];
     assert_eq!(TauMode::select_tau(&zero, TauMode::Mean), TAU_FLOOR);
+    
+    println!("✓ TAU_FLOOR enforcement validated");
 }
 
 #[test]
-fn test_compute_synthetic_lambdas_basic() {
-    // Create a realistic high-dimensional ArrowSpace with meaningful feature patterns
-    let items = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
-        ],
-    ];
+fn test_builder_compute_lambdas_basic() {
+    // Test lambda computation through builder with clustered data
+    let items = make_moons_hd(100, 0.18, 0.4, 12, 42);
 
-    let aspace = ArrowSpace::from_items_default(items.clone());
-
-    // Create a graph based on item similarity
-    let gl = GraphFactory::build_laplacian_matrix_from_items(
-        items,
-        GRAPH_PARAMS.eps,
-        GRAPH_PARAMS.k,
-        GRAPH_PARAMS.topk,
-        GRAPH_PARAMS.p,
-        GRAPH_PARAMS.sigma,
-        GRAPH_PARAMS.normalise,
-        GRAPH_PARAMS.sparsity_check,
-    );
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
-
-    // Apply synthetic lambda computation
-    let tau_mode = TauMode::Fixed(0.9);
-    TauMode::compute_taumode_lambdas(&mut aspace, &gl, tau_mode);
+    let (aspace, _gl) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+        .with_normalisation(true)
+        .with_spectral(true)  // Enable spectral for lambda computation
+        .with_synthesis(TauMode::Fixed(0.9))
+        .build(items);
 
     let lambdas = aspace.lambdas();
-    assert_eq!(lambdas.len(), 2);
+    
+    println!("Computed {} lambdas for {} clusters", lambdas.len(), aspace.n_clusters);
 
     // All lambdas should be finite and non-negative
-    assert!(lambdas.iter().all(|&l| l.is_finite() && l >= 0.0));
+    assert!(lambdas.iter().all(|&l| l.is_finite()), "All lambdas should be finite");
+    assert!(lambdas.iter().all(|&l| l >= 0.0), "All lambdas should be non-negative");
 
-    // Lambdas should be bounded between 0 and 1 due to the bounded transform
-    assert!(lambdas.iter().all(|&l| l <= 1.0));
+    // Lambdas should be bounded between 0 and 1 due to bounded transform
+    assert!(lambdas.iter().all(|&l| l <= 1.0), "All lambdas should be <= 1.0");
+    
+    println!("✓ Lambda computation validated: min={:.6}, max={:.6}", 
+           lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+           lambdas.iter().fold(0.0, |a, &b| a.max(b)));
 }
 
 #[test]
-fn test_compute_synthetic_lambdas_different_alpha() {
-    let items = vec![
-        vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
-        ],
-        vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
-        ],
-        vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
-        ],
-    ];
+fn test_builder_lambdas_different_tau_modes() {
+    // Test that different tau modes produce different lambda distributions
+    let items = make_moons_hd(120, 0.16, 0.35, 15, 123);
 
-    let gl = GraphFactory::build_laplacian_matrix_from_items(
-        items.clone(),
-        GRAPH_PARAMS.eps,
-        GRAPH_PARAMS.k,
-        GRAPH_PARAMS.topk,
-        GRAPH_PARAMS.p,
-        GRAPH_PARAMS.sigma,
-        GRAPH_PARAMS.normalise,
-        GRAPH_PARAMS.sparsity_check,
-    );
-
-    // Test with alpha = 1.0 (pure energy term)
-    let aspace1 = ArrowSpace::from_items_default(items.clone());
-    let mut aspace1 = GraphFactory::build_spectral_laplacian(aspace1, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace1, &gl, TauMode::Fixed(0.9));
-    let lambdas1 = aspace1.lambdas().to_vec();
-
-    // Test with alpha = 0.0 (pure dispersion term)
-    let aspace2 = ArrowSpace::from_items_default(items.clone());
-    let mut aspace2 = GraphFactory::build_spectral_laplacian(aspace2, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace2, &gl, TauMode::Fixed(0.9));
-    let lambdas2 = aspace2.lambdas().to_vec();
-
-    // Test with alpha = 0.5 (balanced)
-    let aspace3 = ArrowSpace::from_items_default(items);
-    let mut aspace3 = GraphFactory::build_spectral_laplacian(aspace3, &gl);
-    TauMode::compute_taumode_lambdas(&mut aspace3, &gl, TauMode::Fixed(0.9));
-    let lambdas3 = aspace3.lambdas().to_vec();
-
-    // All should be different (unless edge case)
-    assert_eq!(lambdas1.len(), lambdas2.len());
-    assert_eq!(lambdas2.len(), lambdas3.len());
-
-    // All should be finite and bounded
-    for lambdas in [&lambdas1, &lambdas2, &lambdas3] {
-        assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
-    }
-}
-
-#[test]
-#[should_panic]
-fn test_compute_synthetic_lambdas_zero_vectors() {
-    // Test with zero vectors (should handle gracefully)
-    let items = vec![vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0]];
-
-    let aspace = ArrowSpace::from_items_default(items.clone());
-    let gl = GraphFactory::build_laplacian_matrix_from_items(
-        items, 1e-3, 2, 2, 2.0, None, true, true,
-    );
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
-
-    TauMode::compute_taumode_lambdas(&mut aspace, &gl, TauMode::Median);
-}
-
-#[test]
-fn test_compute_synthetic_lambdas_different_tau_modes() {
-    let dims = 10;
-
-    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims, 42);
-
-    let gl = GraphFactory::build_laplacian_matrix_from_items(
-        items.clone(),
-        1e-3,
-        5,
-        GRAPH_PARAMS.topk,
-        GRAPH_PARAMS.p,
-        Some(1e-3 * 0.50),
-        GRAPH_PARAMS.normalise,
-        GRAPH_PARAMS.sparsity_check,
-    );
-
-    // Test different tau modes and collect results for comparison
     let tau_modes = vec![
         TauMode::Fixed(0.9),
         TauMode::Mean,
@@ -264,245 +161,251 @@ fn test_compute_synthetic_lambdas_different_tau_modes() {
 
     let mut all_lambdas = Vec::new();
 
-    for tau_mode in tau_modes {
-        let aspace = ArrowSpace::from_items_default(items.clone());
-        let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
-        TauMode::compute_taumode_lambdas(&mut aspace, &gl, tau_mode);
+    for tau_mode in &tau_modes {
+        let (aspace, _) = ArrowSpaceBuilder::default()
+            .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
+            .with_normalisation(true)
+            .with_spectral(true)
+            .with_synthesis(*tau_mode)
+            .build(items.clone());
 
         let lambdas = aspace.lambdas().to_vec();
 
         // All modes should produce valid results
-        assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)));
-        assert_eq!(lambdas.len(), 300); // One lambda per item
+        assert!(lambdas.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)),
+                "TauMode {:?} produced invalid lambdas", tau_mode);
+
+        let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+        println!("TauMode {:?}: mean={:.6}, count={}", tau_mode, lambda_mean, lambdas.len());
 
         all_lambdas.push(lambdas);
-
-        debug!("TauMode {:?} lambdas: {:?}", tau_mode, aspace.lambdas());
     }
 
-    // Assertions about different taumode strategies
-    let fixed_lambdas = &all_lambdas[0]; // Fixed(0.9)
-    let mean_lambdas = &all_lambdas[1]; // Mean
-    let median_lambdas = &all_lambdas[2]; // Median
-    let percentile_lambdas = &all_lambdas[3]; // Percentile(0.25)
-
-    // Fixed mode should produce consistent values influenced by the fixed tau
-    // With tau=0.9 (high), lambdas should generally be higher than adaptive modes
-    let fixed_mean = fixed_lambdas.iter().sum::<f64>() / fixed_lambdas.len() as f64;
-
-    // Mean mode should balance across all Rayleigh quotients
-    let mean_mean = mean_lambdas.iter().sum::<f64>() / mean_lambdas.len() as f64;
-
-    // Different modes should produce different results (unless degenerate case)
-    let mut modes_are_different = false;
+    // Verify different modes produce different results
+    let mut modes_differ = false;
     for i in 1..all_lambdas.len() {
-        for j in 0..all_lambdas[i].len() {
+        for j in 0..all_lambdas[i].len().min(all_lambdas[0].len()) {
             if (all_lambdas[0][j] - all_lambdas[i][j]).abs() > 1e-10 {
-                modes_are_different = true;
+                modes_differ = true;
                 break;
             }
         }
-        if modes_are_different {
+        if modes_differ {
             break;
         }
     }
-    assert!(
-        modes_are_different,
-        "Different tau modes should produce different lambda values"
-    );
 
-    // Percentile(0.25) should generally produce lower values than Mean
-    // since it uses the 25th percentile as threshold
-    let percentile_mean =
-        percentile_lambdas.iter().sum::<f64>() / percentile_lambdas.len() as f64;
-
-    // Statistical properties: different modes should have different central tendencies
-    debug!("Lambda means by mode:");
-    debug!("  Fixed(0.9): {:.6}", fixed_mean);
-    debug!("  Mean: {:.6}", mean_mean);
-    debug!(
-        "  Median: {:.6}",
-        median_lambdas.iter().sum::<f64>() / median_lambdas.len() as f64
-    );
-    debug!("  Percentile(0.25): {:.6}", percentile_mean);
-
-    // Verify that modes produce meaningfully different distributions
-    let lambda_variances: Vec<f64> = all_lambdas
-        .iter()
-        .map(|lambdas| {
-            let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-            lambdas.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
-                / lambdas.len() as f64
-        })
-        .collect();
-
-    // All modes should have some variance (indicating feature discrimination)
-    assert!(
-        lambda_variances.iter().all(|&v| v >= 0.0),
-        "Lambda variances should be non-negative"
-    );
-
-    debug!("Lambda variances by mode: {:?}", lambda_variances);
+    assert!(modes_differ, "Different tau modes should produce different lambda values");
+    println!("✓ Different tau modes produce distinct lambda distributions");
 }
 
 #[test]
 #[should_panic]
-fn test_compute_synthetic_lambdas_graph_mismatch_panics() {
-    let items = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
-    let aspace = ArrowSpace::from_items_default(items.clone());
+fn test_builder_zero_vectors_panic() {
+    // Test with zero vectors (should panic during graph construction)
+    let items = vec![vec![0.0; 10]; 50];
 
-    // Create a graph with wrong number of features
-    let wrong_items = vec![vec![1.0], vec![2.0], vec![3.0]]; // 3 items instead of 2
-    let wrong_gl = GraphFactory::build_laplacian_matrix_from_items(
-        wrong_items,
-        1e-3,
-        2,
-        2,
-        2.0,
-        None,
-        true,
-        true,
-    );
+    let _ = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_spectral(true)
+        .build(items);
+}
 
-    let aspace = GraphFactory::build_spectral_laplacian(aspace, &wrong_gl);
+#[test]
+fn test_builder_lambdas_statistical_properties() {
+    // Test statistical properties of lambda distributions
+    let items = make_moons_hd(150, 0.2, 0.3, 18, 456);
 
-    // This should panic due to node count mismatch
-    TauMode::compute_taumode_lambdas(&mut aspace.clone(), &wrong_gl, TauMode::Median);
+    let (aspace, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 6, 2, 2.0, Some(0.12))
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
+        .build(items);
+
+    let lambdas = aspace.lambdas();
+
+    // Compute statistics
+    let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+    let lambda_variance = lambdas.iter()
+        .map(|&x| (x - lambda_mean).powi(2))
+        .sum::<f64>() / lambdas.len() as f64;
+    let lambda_min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let lambda_max = lambdas.iter().fold(0.0, |a, &b| a.max(b));
+
+    println!("Lambda statistics:");
+    println!("  Mean: {:.6}", lambda_mean);
+    println!("  Variance: {:.6}", lambda_variance);
+    println!("  Std Dev: {:.6}", lambda_variance.sqrt());
+    println!("  Min: {:.6}", lambda_min);
+    println!("  Max: {:.6}", lambda_max);
+    println!("  Range: {:.6}", lambda_max - lambda_min);
+
+    // Validate statistical properties
+    assert!(lambda_mean >= 0.0 && lambda_mean <= 1.0, "Mean should be in [0,1]");
+    assert!(lambda_variance >= 0.0, "Variance should be non-negative");
+    assert!(lambda_max > lambda_min, "Should have variation across clusters");
+
+    println!("✓ Lambda statistical properties validated");
 }
 
 #[test]
 fn test_tau_floor_constant() {
     // Verify TAU_FLOOR is a reasonable small positive value
-    assert!(TAU_FLOOR > 0.0);
-    assert!(TAU_FLOOR < 1e-6);
-    assert!(TAU_FLOOR.is_finite());
+    assert!(TAU_FLOOR > 0.0, "TAU_FLOOR should be positive");
+    assert!(TAU_FLOOR < 1e-6, "TAU_FLOOR should be small");
+    assert!(TAU_FLOOR.is_finite(), "TAU_FLOOR should be finite");
+    
+    println!("TAU_FLOOR = {:.2e}", TAU_FLOOR);
+    println!("✓ TAU_FLOOR constant validated");
 }
 
 #[test]
-fn test_synthetic_lambda_properties() {
-    // Test that synthetic lambdas satisfy expected mathematical properties
-    let items = vec![
-        // Vector 1: High values in first half, low in second half
-        vec![
-            0.95, 0.88, 0.92, 0.85, 0.90, 0.87, 0.93, // High region
-            0.12, 0.08, 0.15, 0.10, 0.05, 0.11,       // Low region
-        ],
-        // Vector 2: Mid-range values throughout
-        vec![
-            0.45, 0.50, 0.48, 0.52, 0.47, 0.53, 0.49,
-            0.46, 0.51, 0.48, 0.50, 0.49, 0.52,
-        ],
-        // Vector 3: Low values in first half, high in second half
-        vec![
-            0.15, 0.10, 0.12, 0.18, 0.08, 0.14, 0.11, // Low region
-            0.88, 0.92, 0.85, 0.90, 0.95, 0.87,       // High region
-        ],
-    ];
+fn test_builder_lambdas_consistency_properties() {
+    // Test that lambda computation produces CONSISTENT PROPERTIES (not exact values)
+    // across multiple builds, since clustering and projection involve randomness
+    let items = make_moons_hd(80, 0.15, 0.4, 11, 789);
 
-    let (aspace, _) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(
-            GRAPH_PARAMS.eps,
-            GRAPH_PARAMS.k,
-            GRAPH_PARAMS.topk,
-            GRAPH_PARAMS.p,
-            GRAPH_PARAMS.sigma,
-        )
-        // to have 100% replicable build, sampling and reduction should be off
-        .with_dims_reduction(false, None)
-        .with_inline_sampling(false)
+    println!("=== LAMBDA CONSISTENCY TEST (Non-Deterministic Build) ===");
+
+    let (aspace1, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 5, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
         .build(items.clone());
 
-    debug!("Synthetic lambdas: {:?}", aspace.lambdas);
-    debug!("Number of items: {}", aspace.lambdas.len());
-
-    // Properties that should hold:
-    // 1. All lambdas are in [0, 1] due to bounded transform
-    assert!(aspace.lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)));
-    debug!("✓ All lambdas bounded in [0,1]");
-
-    // 2. Lambdas are deterministic (same input -> same output)
-    let (aspace2, _) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(
-            GRAPH_PARAMS.eps,
-            GRAPH_PARAMS.k,
-            GRAPH_PARAMS.topk,
-            GRAPH_PARAMS.p,
-            GRAPH_PARAMS.sigma,
-        )
-        // to have 100% replicable build, sampling and reduction should be off
-        .with_dims_reduction(false, None)
-        .with_inline_sampling(false)
+    let (aspace2, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 5, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
         .build(items.clone());
 
-    for (i, (l1, l2)) in aspace.lambdas.iter().zip(aspace2.lambdas.iter()).enumerate() {
-        assert!(
-            relative_eq!(*l1, *l2, epsilon = 1e-9),
-            "Synthetic lambdas should be deterministic at feature {}: {} != {}",
-            i,
-            l1,
-            l2
-        );
-    }
-    debug!("✓ Deterministic computation verified");
+    let lambdas1 = aspace1.lambdas();
+    let lambdas2 = aspace2.lambdas();
 
-    // 3. All values are finite
-    assert!(aspace.lambdas.iter().all(|l| l.is_finite()));
-    debug!("✓ All lambdas are finite");
+    println!("Build 1: {} clusters, {} lambdas", aspace1.n_clusters, lambdas1.len());
+    println!("Build 2: {} clusters, {} lambdas", aspace2.n_clusters, lambdas2.len());
 
-    // 4. Statistical properties for high-dimensional data
-    let lambda_mean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
-    let lambda_variance =
-        aspace.lambdas.iter().map(|&x| (x - lambda_mean).powi(2)).sum::<f64>()
-            / aspace.lambdas.len() as f64;
-    let lambda_min = aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-    let lambda_max: f64 = aspace.lambdas.iter().fold(0.0, |a, &b| a.max(b));
+    // IMPORTANT: Lambda counts may differ due to random clustering
+    // But both should be in reasonable range relative to input size
+    assert!(lambdas1.len() > 0, "Build 1 should produce lambdas");
+    assert!(lambdas2.len() > 0, "Build 2 should produce lambdas");
+    assert!(lambdas1.len() <= items.len(), "Build 1 clusters <= items");
+    assert!(lambdas2.len() <= items.len(), "Build 2 clusters <= items");
 
-    debug!("Lambda statistics:");
-    debug!("  Mean: {:.6}", lambda_mean);
-    debug!("  Variance: {:.6}", lambda_variance);
-    debug!("  Min: {:.6}", lambda_min);
-    debug!("  Max: {:.6}", lambda_max);
-    debug!("  Range: {:.6}", lambda_max - lambda_min);
+    // Verify STATISTICAL CONSISTENCY (not exact values)
+    let compute_stats = |lambdas: &[f64]| -> (f64, f64, f64, f64) {
+        let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+        let variance = lambdas.iter()
+            .map(|&x| (x - mean).powi(2))
+            .sum::<f64>() / lambdas.len() as f64;
+        let min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let max = lambdas.iter().fold(0.0, |a, &b| a.max(b));
+        (mean, variance, min, max)
+    };
 
-    // 5. Non-degenerate behavior (should have some variation across features)
-    assert!(
-        lambda_variance > 0.0,
-        "Lambda variance should be positive, indicating feature discrimination"
-    );
-    assert!(lambda_max > lambda_min, "Should have variation across features");
-    debug!("✓ Non-degenerate feature discrimination confirmed");
+    let (mean1, var1, min1, max1) = compute_stats(lambdas1);
+    let (mean2, var2, min2, max2) = compute_stats(lambdas2);
 
-    // 6. Median mode specific property: values should be influenced by median threshold
-    // Test with different tau modes to verify median produces different results
-    let (aspace3, _) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(
-            GRAPH_PARAMS.eps,
-            GRAPH_PARAMS.k,
-            GRAPH_PARAMS.topk,
-            GRAPH_PARAMS.p,
-            GRAPH_PARAMS.sigma,
-        )
-        .with_synthesis(TauMode::Mean)
+    println!("Build 1 stats: mean={:.6}, var={:.6}, min={:.6}, max={:.6}", 
+           mean1, var1, min1, max1);
+    println!("Build 2 stats: mean={:.6}, var={:.6}, min={:.6}, max={:.6}", 
+           mean2, var2, min2, max2);
+
+    // Both builds should produce lambdas with SIMILAR STATISTICAL PROPERTIES
+    // (not exact values, but within reasonable bounds)
+    
+    // All lambdas should be valid
+    assert!(lambdas1.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)),
+            "Build 1 lambdas should be in [0,1]");
+    assert!(lambdas2.iter().all(|&l| l.is_finite() && (0.0..=1.0).contains(&l)),
+            "Build 2 lambdas should be in [0,1]");
+
+    // Both builds should have non-degenerate distributions
+    assert!(max1 > min1, "Build 1 should have lambda variation");
+    assert!(max2 > min2, "Build 2 should have lambda variation");
+    assert!(var1 > 0.0, "Build 1 should have positive variance");
+    assert!(var2 > 0.0, "Build 2 should have positive variance");
+
+    // Means should be in similar ballpark (within 50% due to different clusterings)
+    let mean_ratio = mean1.max(mean2) / mean1.min(mean2);
+    assert!(mean_ratio < 2.0, 
+            "Means should be within 2x of each other: {:.6} vs {:.6} (ratio {:.2})",
+            mean1, mean2, mean_ratio);
+
+    println!("✓ Lambda computation produces consistent statistical properties");
+    println!("  (Values are non-deterministic due to random clustering/projection)");
+}
+
+#[test]
+fn test_builder_lambdas_nondeterministic_with_projection() {
+    // When random projection is ENABLED, even with same clustering,
+    // the projected space is random, so lambdas will differ
+    let items = make_moons_hd(80, 0.15, 0.4, 120, 555);
+
+    println!("=== LAMBDA NON-DETERMINISM TEST (Random Projection) ===");
+
+    let (aspace1, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.1, 5, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
+        .with_dims_reduction(true, Some(0.3))   // Enable random projection
+        .with_inline_sampling(false)             // Disable sampling for clearer test
+        .with_sparsity_check(false)
+        .build(items.clone());
+
+    let (aspace2, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.1, 5, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
+        .with_dims_reduction(true, Some(0.3))   // Enable random projection
+        .with_inline_sampling(false)             // Disable sampling for clearer test
+        .with_sparsity_check(false)
         .build(items);
 
-    let modes_differ = aspace
-        .lambdas
-        .iter()
-        .zip(aspace3.lambdas.iter())
-        .any(|(&median, &mean)| (median - mean).abs() > 1e-10);
+    let lambdas1 = aspace1.lambdas();
+    let lambdas2 = aspace2.lambdas();
 
-    assert!(modes_differ, "Median and Mean tau modes should produce different results");
-    debug!("✓ Tau mode sensitivity verified");
+    println!("Build 1: {} clusters, reduced_dim={:?}", 
+           aspace1.n_clusters, aspace1.reduced_dim);
+    println!("Build 2: {} clusters, reduced_dim={:?}", 
+           aspace2.n_clusters, aspace2.reduced_dim);
 
-    // 7. Consistency with spectral properties
-    assert_eq!(aspace.lambdas.len(), 3, "Should have one lambda per item");
-    debug!("✓ Correct dimensionality maintained");
+    // Reduced dimensions should match (deterministic from JL formula)
+    assert_eq!(aspace1.reduced_dim, aspace2.reduced_dim,
+               "JL target dimension should be deterministic");
+
+    // But lambda values should DIFFER due to random projection matrix
+    let mut values_differ = false;
+    let min_len = lambdas1.len().min(lambdas2.len());
+    
+    for i in 0..min_len {
+        if (lambdas1[i] - lambdas2[i]).abs() > 1e-9 {
+            values_differ = true;
+            println!("Lambda difference at cluster {}: {:.12} != {:.12}", 
+                   i, lambdas1[i], lambdas2[i]);
+            break;
+        }
+    }
+
+    assert!(values_differ, 
+            "Random projection should cause lambda values to differ between builds");
+
+    println!("✓ Lambda computation IS non-deterministic with random projection enabled");
 }
 
 #[test]
 fn test_rayleigh_quotient_basic() {
     // Create a simple 3x3 tridiagonal Laplacian
-    let matrix_data = vec![2.0, -1.0, 0.0, -1.0, 2.0, -1.0, 0.0, -1.0, 2.0];
+    let matrix_data = vec![
+        2.0, -1.0, 0.0,
+        -1.0, 2.0, -1.0,
+        0.0, -1.0, 2.0
+    ];
     let matrix = DenseMatrix::from_iterator(matrix_data.into_iter(), 3, 3, 0);
 
     // Test with constant vector
@@ -514,7 +417,7 @@ fn test_rayleigh_quotient_basic() {
 
     assert!(
         (quotient - 2.0 / 3.0).abs() < 1e-10,
-        "Constant vector should give 2/3 for this tridiagonal matrix, got {}",
+        "Constant vector should give 2/3 for tridiagonal matrix, got {:.12}",
         quotient
     );
 
@@ -526,20 +429,20 @@ fn test_rayleigh_quotient_basic() {
     );
 
     assert!(alt_quotient > quotient, "Alternating vector should have higher energy");
-    assert!(alt_quotient > 0.0, "Should be positive for this matrix");
-
     assert!(
         (alt_quotient - 10.0 / 3.0).abs() < 1e-10,
-        "Alternating vector should give 10/3, got {}",
+        "Alternating vector should give 10/3, got {:.12}",
         alt_quotient
     );
 
-    debug!("Constant quotient: {:.6}", quotient);
-    debug!("Alternating quotient: {:.6}", alt_quotient);
+    println!("Constant quotient: {:.6}", quotient);
+    println!("Alternating quotient: {:.6}", alt_quotient);
+    println!("✓ Rayleigh quotient computation validated");
 }
 
 #[test]
-fn test_scale_invariance() {
+fn test_rayleigh_quotient_scale_invariance() {
+    // Rayleigh quotient should be scale-invariant
     let matrix_data = vec![1.0, 0.5, 0.5, 1.0];
     let matrix = DenseMatrix::from_iterator(matrix_data.into_iter(), 2, 2, 0);
 
@@ -557,14 +460,16 @@ fn test_scale_invariance() {
 
     assert!(
         relative_eq!(quotient1, quotient2, epsilon = 1e-10),
-        "Rayleigh quotient should be scale-invariant: {} vs {}",
-        quotient1,
-        quotient2
+        "Rayleigh quotient should be scale-invariant: {:.12} vs {:.12}",
+        quotient1, quotient2
     );
+
+    println!("✓ Rayleigh quotient is scale-invariant");
 }
 
 #[test]
-fn test_zero_vector() {
+fn test_rayleigh_quotient_zero_vector() {
+    // Zero vector should give zero quotient
     let matrix_data = vec![1.0, 0.0, 0.0, 1.0];
     let matrix = DenseMatrix::from_iterator(matrix_data.into_iter(), 2, 2, 0);
 
@@ -575,102 +480,85 @@ fn test_zero_vector() {
     );
 
     assert_eq!(quotient, 0.0, "Zero vector should give zero quotient");
+    println!("✓ Zero vector handling validated");
 }
 
 #[test]
-fn test_batch_computation() {
+fn test_rayleigh_quotient_batch_computation() {
+    // Test batch computation of Rayleigh quotients
     let matrix_data = vec![2.0, -1.0, -1.0, 2.0];
     let matrix = DenseMatrix::from_iterator(matrix_data.into_iter(), 2, 2, 0);
 
-    let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![1.0, 1.0], vec![1.0, -1.0]];
+    let vectors = vec![
+        vec![1.0, 0.0],
+        vec![0.0, 1.0],
+        vec![1.0, 1.0],
+        vec![1.0, -1.0]
+    ];
 
-    let quotients =
-        TauMode::compute_rayleigh_quotients_batch(&dense_to_sparse(&matrix), &vectors);
-
-    assert_eq!(quotients.len(), 4);
-    for (i, &q) in quotients.iter().enumerate() {
-        debug!("Vector {}: quotient = {:.6}", i, q);
-        assert!(q.is_finite(), "All quotients should be finite");
-    }
-}
-
-/// Test on an embeddings dataset, see `test_data.rs`
-#[test]
-fn test_lambda_verification_quora_embeddings() {
-    let dims = 10;
-
-    let items: Vec<Vec<f64>> = make_moons_hd(300, 0.12, 0.01, dims, 42);
-
-    let aspace = ArrowSpace::from_items_default(items.clone());
-
-    // Graph parameters as specified
-    let graph_params = GraphParams {
-        eps: 1e-3,
-        k: 5,
-        topk: GRAPH_PARAMS.topk,
-        p: GRAPH_PARAMS.p,
-        sigma: Some(1e-3 * 0.50),
-        normalise: true,
-        sparsity_check: true,
-    };
-
-    debug!("=== GRAPH PARAMETERS ===");
-    debug!("eps: {}", graph_params.eps);
-    debug!("k: {}", graph_params.k);
-    debug!("p: {}", graph_params.p);
-    debug!("sigma: {:?}", graph_params.sigma);
-
-    // Build Laplacian with specified parameters
-    let gl = GraphFactory::build_laplacian_matrix_from_items(
-        items.clone(),
-        graph_params.eps,
-        graph_params.k,
-        graph_params.topk,
-        graph_params.p,
-        graph_params.sigma,
-        graph_params.normalise,
-        GRAPH_PARAMS.sparsity_check,
+    let quotients = TauMode::compute_rayleigh_quotients_batch(
+        &dense_to_sparse(&matrix),
+        &vectors
     );
 
-    // Build spectral ArrowSpace
-    let mut aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
+    assert_eq!(quotients.len(), 4, "Should have 4 quotients");
+    
+    for (i, &q) in quotients.iter().enumerate() {
+        println!("Vector {}: quotient = {:.6}", i, q);
+        assert!(q.is_finite(), "All quotients should be finite");
+        assert!(q >= 0.0, "All quotients should be non-negative for PSD matrix");
+    }
 
-    debug!("\n=== INITIAL STATE ===");
-    debug!("Graph nodes: {}", gl.nnodes);
-    debug!("ArrowSpace shape: {:?}", aspace.data.shape());
-    debug!("Signals shape: {:?}", aspace.signals.shape());
+    println!("✓ Batch Rayleigh quotient computation validated");
+}
 
-    // Compute initial lambdas
-    aspace.recompute_lambdas(&gl);
+#[test]
+fn test_builder_lambdas_with_realistic_data() {
+    // Comprehensive test with realistic high-dimensional data
+    let items = make_moons_hd(200, 0.18, 0.35, 50, 42);
+
+    println!("=== REALISTIC DATA LAMBDA TEST ===");
+    println!("Dataset: {} items, {} dimensions", items.len(), items[0].len());
+
+    let (aspace, gl) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.1, 6, 2, 2.0, Some(0.15))
+        .with_normalisation(true)
+        .with_spectral(true)
+        .with_synthesis(TauMode::Median)
+        .with_sparsity_check(false)
+        .build(items.clone());
+
+    println!("Built index with {} clusters", aspace.n_clusters);
+    println!("Graph has {} nodes", gl.nnodes);
+
     let lambdas = aspace.lambdas();
-
-    debug!("\n=== LAMBDA COMPUTATION RESULTS ===");
-    debug!("Number of lambdas: {}", lambdas.len());
-    debug!("Lambda values (first 10): {:?}", &lambdas[..10.min(lambdas.len())]);
-
-    // Basic validation
-    assert_eq!(lambdas.len(), 300, "Should have one lambda per item dimension");
-    assert!(lambdas.iter().all(|&l| l.is_finite()), "All lambdas should be finite");
-    assert!(lambdas.iter().all(|&l| l >= 0.0), "All lambdas should be non-negative");
 
     // Statistical analysis
     let lambda_min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-    let lambda_max: f64 = lambdas.iter().fold(0.0, |a, &b| a.max(b));
+    let lambda_max = lambdas.iter().fold(0.0, |a, &b| a.max(b));
     let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-    let lambda_variance =
-        lambdas.iter().map(|&x| (x - lambda_mean).powi(2)).sum::<f64>()
-            / lambdas.len() as f64;
+    let lambda_variance = lambdas.iter()
+        .map(|&x| (x - lambda_mean).powi(2))
+        .sum::<f64>() / lambdas.len() as f64;
 
-    debug!("\n=== LAMBDA STATISTICS ===");
-    debug!("Min lambda: {:.6}", lambda_min);
-    debug!("Max lambda: {:.6}", lambda_max);
-    debug!("Mean lambda: {:.6}", lambda_mean);
-    debug!("Lambda variance: {:.6}", lambda_variance);
-    debug!("Lambda std dev: {:.6}", lambda_variance.sqrt());
-    debug!("Range: {:.6}", lambda_max - lambda_min);
+    println!("\n=== LAMBDA STATISTICS ===");
+    println!("Count: {}", lambdas.len());
+    println!("Min: {:.6}", lambda_min);
+    println!("Max: {:.6}", lambda_max);
+    println!("Mean: {:.6}", lambda_mean);
+    println!("Variance: {:.6}", lambda_variance);
+    println!("Std Dev: {:.6}", lambda_variance.sqrt());
+    println!("Range: {:.6}", lambda_max - lambda_min);
 
-    // Test with different tau modes for comprehensive validation
-    debug!("\n=== TAU MODE TESTING ===");
+    // Validation
+    assert_eq!(lambdas.len(), aspace.nitems, "One lambda per cluster");
+    assert!(lambdas.iter().all(|&l| l.is_finite()), "All lambdas finite");
+    assert!(lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)), "All lambdas in [0,1]");
+    assert!(lambda_variance > 0.0, "Should have variance across clusters");
+    assert!(lambda_max > lambda_min, "Should have range in lambda values");
+
+    // Test different tau modes on same data
+    println!("\n=== TAU MODE COMPARISON ===");
     let tau_modes = vec![
         TauMode::Fixed(0.1),
         TauMode::Fixed(0.5),
@@ -680,41 +568,25 @@ fn test_lambda_verification_quora_embeddings() {
     ];
 
     for tau_mode in tau_modes {
-        let mut test_aspace = GraphFactory::build_spectral_laplacian(
-            ArrowSpace::from_items_default(items.clone()),
-            &gl,
-        );
+        let (test_aspace, _) = ArrowSpaceBuilder::default()
+            .with_lambda_graph(0.3, 6, 2, 2.0, Some(0.15))
+            .with_normalisation(true)
+            .with_spectral(true)
+            .with_synthesis(tau_mode)
+            .with_sparsity_check(false)
+            .build(items.clone());
 
-        TauMode::compute_taumode_lambdas(&mut test_aspace, &gl, tau_mode);
         let tau_lambdas = test_aspace.lambdas();
-
         let tau_mean = tau_lambdas.iter().sum::<f64>() / tau_lambdas.len() as f64;
-        debug!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
+        
+        println!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
 
-        // Validate tau mode results
-        assert!(
-            tau_lambdas.iter().all(|&l| l.is_finite()),
-            "TauMode lambdas should be finite"
-        );
-        assert!(
-            tau_lambdas.iter().all(|&l| l >= 0.0),
-            "TauMode lambdas should be non-negative"
-        );
-        assert!(
-            tau_lambdas.iter().all(|&l| l <= 1.0),
-            "TauMode lambdas should be bounded by 1.0"
-        );
+        // Validate each tau mode
+        assert!(tau_lambdas.iter().all(|&l| l.is_finite()), "Finite lambdas");
+        assert!(tau_lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)), "Bounded lambdas");
     }
 
-    // Verify extreme parameters behavior
-    debug!("\n=== EXTREME PARAMETERS ANALYSIS ===");
-    debug!("With eps=1e-12 and sigma=5e-13, the graph should be very sparse");
-    debug!("Only very similar vectors (within 1e-12 distance) will be connected");
-    debug!("This may result in isolated nodes and specific spectral properties");
-
-    // Success message
-    debug!("\n✓ Lambda verification completed successfully for 384-dimensional vector");
-    debug!("✓ All mathematical properties validated");
-    debug!("✓ TauMode computations verified");
-    debug!("✓ Extreme parameter behavior analyzed");
+    println!("\n✓ Realistic data lambda computation validated");
+    println!("✓ All mathematical properties satisfied");
+    println!("✓ Multiple tau modes tested successfully");
 }

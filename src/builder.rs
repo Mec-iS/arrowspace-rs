@@ -251,6 +251,7 @@ impl ArrowSpaceBuilder {
             );
 
         // Store clustering results in ArrowSpace
+        aspace.n_clusters = clustered_dm.shape().0;
         aspace.cluster_assignments = assignments;
         aspace.cluster_sizes = sizes;
         aspace.cluster_radius = self.cluster_radius;
