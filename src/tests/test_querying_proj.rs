@@ -7,20 +7,21 @@
 //! 4. Lambda-aware similarity search in clustered space
 //! 5. Hybrid search combining semantic and spectral scoring
 
-use crate::{
-    builder::ArrowSpaceBuilder,
-    core::ArrowItem,
-    tests::test_data::make_moons_hd,
-};
+use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::test_data::make_moons_hd};
 
 /// Helper: return test data (training + query split from same distribution)
-fn create_test_data(n_train: usize, n_query: usize, dims: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
+fn create_test_data(
+    n_train: usize,
+    n_query: usize,
+    dims: usize,
+    seed: u64,
+) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let total = n_train + n_query;
     let all_data = make_moons_hd(total, 0.15, 0.4, dims, seed);
-    
+
     let train = all_data[0..n_train].to_vec();
     let queries = all_data[n_train..].to_vec();
-    
+
     (train, queries)
 }
 
@@ -29,12 +30,16 @@ fn test_query_without_projection() {
     // Build clustered index without dimensionality reduction
     let (data, queries) = create_test_data(100, 5, 50, 42);
 
-    println!("Building index with {} items, {} dims", data.len(), data[0].len());
+    println!(
+        "Building index with {} items, {} dims",
+        data.len(),
+        data[0].len()
+    );
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
-        .with_dims_reduction(false, None)  // No projection
+        .with_dims_reduction(false, None) // No projection
         .with_sparsity_check(false)
         .build(data);
 
@@ -59,7 +64,10 @@ fn test_query_without_projection() {
         );
     }
 
-    println!("✓ Query without projection: found {} results", results.len());
+    println!(
+        "✓ Query without projection: found {} results",
+        results.len()
+    );
 }
 
 #[test]
@@ -72,23 +80,37 @@ fn test_query_with_projection_enabled() {
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 6, 2, 2.0, None)
         .with_normalisation(true)
-        .with_dims_reduction(true, Some(0.3))  // Enable JL projection
+        .with_dims_reduction(true, Some(0.3)) // Enable JL projection
         .with_sparsity_check(false)
         .build(data);
 
     // Verify projection was applied
-    assert!(aspace.projection_matrix.is_some(), "Projection matrix should exist");
-    assert!(aspace.reduced_dim.is_some(), "Reduced dimension should be set");
+    assert!(
+        aspace.projection_matrix.is_some(),
+        "Projection matrix should exist"
+    );
+    assert!(
+        aspace.reduced_dim.is_some(),
+        "Reduced dimension should be set"
+    );
 
     let reduced_dim = aspace.reduced_dim.unwrap();
-    println!("Projection: {} → {} dimensions ({:.1}x compression)",
-           aspace.nfeatures, reduced_dim, aspace.nfeatures as f64 / reduced_dim as f64);
+    println!(
+        "Projection: {} → {} dimensions ({:.1}x compression)",
+        aspace.nfeatures,
+        reduced_dim,
+        aspace.nfeatures as f64 / reduced_dim as f64
+    );
 
     // Query must be projected to match index space
     let query_original = queries[1].clone();
     let query_projected = aspace.project_query(&query_original);
 
-    assert_eq!(query_projected.len(), reduced_dim, "Projected query should match reduced dimension");
+    assert_eq!(
+        query_projected.len(),
+        reduced_dim,
+        "Projected query should match reduced dimension"
+    );
 
     // Compute lambda on projected query
     let query_lambda = aspace.prepare_query_item(&query_original, &gl);
@@ -104,11 +126,18 @@ fn test_query_with_projection_enabled() {
     for (idx, score) in &results {
         assert!(*idx < aspace.nitems, "Index should be valid cluster");
         assert!(score.is_finite(), "Score should be finite");
-        assert!(*score >= -1.0 && *score <= 1.0, "Score should be in [-1, 1]");
+        assert!(
+            *score >= -1.0 && *score <= 1.0,
+            "Score should be in [-1, 1]"
+        );
     }
 
-    println!("✓ Query with projection: {} → {} dims, found {} results",
-           aspace.nfeatures, reduced_dim, results.len());
+    println!(
+        "✓ Query with projection: {} → {} dims, found {} results",
+        aspace.nfeatures,
+        reduced_dim,
+        results.len()
+    );
 }
 
 #[test]
@@ -129,8 +158,14 @@ fn test_prepare_query_item_consistency() {
     let lambda2 = aspace.prepare_query_item(&query, &gl);
     let lambda3 = aspace.prepare_query_item(&query, &gl);
 
-    assert_eq!(lambda1, lambda2, "Lambda computation should be deterministic");
-    assert_eq!(lambda2, lambda3, "Lambda computation should be deterministic");
+    assert_eq!(
+        lambda1, lambda2,
+        "Lambda computation should be deterministic"
+    );
+    assert_eq!(
+        lambda2, lambda3,
+        "Lambda computation should be deterministic"
+    );
     assert!(lambda1 >= 0.0, "Lambda should be non-negative");
 
     println!("✓ Consistent lambda: {:.6}", lambda1);
@@ -144,7 +179,7 @@ fn test_search_lambda_aware_alpha_effect() {
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
         .with_normalisation(true)
-        .with_spectral(true)  // Enable spectral for lambda computation
+        .with_spectral(true) // Enable spectral for lambda computation
         .with_sparsity_check(false)
         .build(data);
 
@@ -162,17 +197,25 @@ fn test_search_lambda_aware_alpha_effect() {
     assert_eq!(results_high_alpha.len(), 5);
     assert_eq!(results_low_alpha.len(), 5);
 
-    println!("High alpha top result: idx={}, score={:.4}", 
-           results_high_alpha[0].0, results_high_alpha[0].1);
-    println!("Low alpha top result: idx={}, score={:.4}", 
-           results_low_alpha[0].0, results_low_alpha[0].1);
+    println!(
+        "High alpha top result: idx={}, score={:.4}",
+        results_high_alpha[0].0, results_high_alpha[0].1
+    );
+    println!(
+        "Low alpha top result: idx={}, score={:.4}",
+        results_low_alpha[0].0, results_low_alpha[0].1
+    );
 
     // Verify top result has high semantic similarity with high alpha
     let top_idx_high = results_high_alpha[0].0;
     let top_item_high = aspace.get_item(top_idx_high);
     let semantic_sim = query_item.cosine_similarity(&top_item_high.item);
 
-    assert!(semantic_sim > 0.7, "High alpha should favor semantic match: {:.4}", semantic_sim);
+    assert!(
+        semantic_sim > 0.7,
+        "High alpha should favor semantic match: {:.4}",
+        semantic_sim
+    );
 
     println!("✓ Alpha effect verified: semantic_sim={:.4}", semantic_sim);
 }
@@ -208,8 +251,11 @@ fn test_search_lambda_aware_hybrid() {
         assert!(score.is_finite(), "Score should be finite");
     }
 
-    println!("✓ Hybrid search: regular={} results, hybrid={} results",
-           results_regular.len(), results_hybrid.len());
+    println!(
+        "✓ Hybrid search: regular={} results, hybrid={} results",
+        results_regular.len(),
+        results_hybrid.len()
+    );
 }
 
 #[test]
@@ -271,11 +317,18 @@ fn test_range_search_with_query_lambda() {
     // Verify all results are within radius
     for (idx, dist) in &results {
         assert!(*idx < aspace.nitems, "Index should be valid cluster");
-        assert!(*dist <= 0.5, "Distance should be within radius: {:.4}", dist);
+        assert!(
+            *dist <= 0.5,
+            "Distance should be within radius: {:.4}",
+            dist
+        );
         assert!(dist.is_finite(), "Distance should be finite");
     }
 
-    println!("✓ Range search found {} clusters within radius 0.5", results.len());
+    println!(
+        "✓ Range search found {} clusters within radius 0.5",
+        results.len()
+    );
 }
 
 #[test]
@@ -296,8 +349,13 @@ fn test_lambda_values_reasonable_range() {
 
         assert!(lambda >= 0.0, "Lambda should be non-negative: query {}", i);
         assert!(lambda.is_finite(), "Lambda should be finite: query {}", i);
-        assert!(lambda < 100.0, "Lambda unusually large for query {}: {:.4}", i, lambda);
-        
+        assert!(
+            lambda < 100.0,
+            "Lambda unusually large for query {}: {:.4}",
+            i,
+            lambda
+        );
+
         println!("Query {} lambda: {:.6}", i, lambda);
     }
 
@@ -325,7 +383,13 @@ fn test_search_returns_top_k_exactly() {
     // Test various k values
     for k in [1, 3, 5, 10] {
         let results = aspace.search_lambda_aware(&query_item, k, 0.1);
-        assert_eq!(results.len(), k, "Should return exactly {} results for k={}", results.len(), k);
+        assert_eq!(
+            results.len(),
+            k,
+            "Should return exactly {} results for k={}",
+            results.len(),
+            k
+        );
     }
 
     println!("✓ k-NN returns correct number of results");
@@ -341,21 +405,28 @@ fn test_projection_preserves_relative_distances() {
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
         .with_normalisation(true)
-        .with_dims_reduction(true, Some(0.3))  // 30% of original dimension
+        .with_dims_reduction(true, Some(0.3)) // 30% of original dimension
         .with_sparsity_check(false)
         .build(data);
 
     // Verify projection was applied
-    assert!(aspace.projection_matrix.is_some(), "Projection should be enabled");
+    assert!(
+        aspace.projection_matrix.is_some(),
+        "Projection should be enabled"
+    );
     let reduced_dim = aspace.reduced_dim.unwrap();
-    
-    println!("Projection: {} → {} dimensions ({:.1}x compression)",
-           aspace.nfeatures, reduced_dim, aspace.nfeatures as f64 / reduced_dim as f64);
+
+    println!(
+        "Projection: {} → {} dimensions ({:.1}x compression)",
+        aspace.nfeatures,
+        reduced_dim,
+        aspace.nfeatures as f64 / reduced_dim as f64
+    );
 
     // Create three queries with known relationships
     let query1_orig = vec![0.5; 200];
-    let query2_orig = vec![0.51; 200];  // Very close to q1
-    let query3_orig = vec![5.0; 200];   // Far from q1
+    let query2_orig = vec![0.51; 200]; // Very close to q1
+    let query3_orig = vec![5.0; 200]; // Far from q1
 
     // Project all three queries
     let query1_proj = aspace.project_query(&query1_orig);
@@ -368,53 +439,74 @@ fn test_projection_preserves_relative_distances() {
     assert_eq!(query3_proj.len(), reduced_dim);
 
     // Compute L2 distances in original space
-    let dist_12_orig: f64 = query1_orig.iter()
+    let dist_12_orig: f64 = query1_orig
+        .iter()
         .zip(&query2_orig)
         .map(|(a, b)| (a - b).powi(2))
         .sum::<f64>()
         .sqrt();
 
-    let dist_13_orig: f64 = query1_orig.iter()
+    let dist_13_orig: f64 = query1_orig
+        .iter()
         .zip(&query3_orig)
         .map(|(a, b)| (a - b).powi(2))
         .sum::<f64>()
         .sqrt();
 
     // Compute L2 distances in projected space
-    let dist_12_proj: f64 = query1_proj.iter()
+    let dist_12_proj: f64 = query1_proj
+        .iter()
         .zip(&query2_proj)
         .map(|(a, b)| (a - b).powi(2))
         .sum::<f64>()
         .sqrt();
 
-    let dist_13_proj: f64 = query1_proj.iter()
+    let dist_13_proj: f64 = query1_proj
+        .iter()
         .zip(&query3_proj)
         .map(|(a, b)| (a - b).powi(2))
         .sum::<f64>()
         .sqrt();
 
-    println!("Original space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}", 
-           dist_12_orig, dist_13_orig);
-    println!("Projected space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}", 
-           dist_12_proj, dist_13_proj);
+    println!(
+        "Original space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
+        dist_12_orig, dist_13_orig
+    );
+    println!(
+        "Projected space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
+        dist_12_proj, dist_13_proj
+    );
 
     // CRITICAL: Verify relative ordering is preserved (JL property)
-    assert!(dist_12_orig < dist_13_orig,
-            "In original space, q1 should be closer to q2 than q3");
-    assert!(dist_12_proj < dist_13_proj,
-            "In projected space, q1 should STILL be closer to q2 than q3 (ordering preserved)");
+    assert!(
+        dist_12_orig < dist_13_orig,
+        "In original space, q1 should be closer to q2 than q3"
+    );
+    assert!(
+        dist_12_proj < dist_13_proj,
+        "In projected space, q1 should STILL be closer to q2 than q3 (ordering preserved)"
+    );
 
     // Verify approximate distance preservation with 20% tolerance
     let epsilon = 0.2;
     let ratio_12 = dist_12_proj / dist_12_orig;
     let ratio_13 = dist_13_proj / dist_13_orig;
-    
-    println!("Distance preservation ratios: q1-q2={:.3}, q1-q3={:.3}", ratio_12, ratio_13);
-    
-    assert!(ratio_12 > 1.0 - epsilon && ratio_12 < 1.0 + epsilon,
-            "Distance q1-q2 not preserved: ratio {:.3} outside tolerance", ratio_12);
-    assert!(ratio_13 > 1.0 - epsilon && ratio_13 < 1.0 + epsilon,
-            "Distance q1-q3 not preserved: ratio {:.3} outside tolerance", ratio_13);
+
+    println!(
+        "Distance preservation ratios: q1-q2={:.3}, q1-q3={:.3}",
+        ratio_12, ratio_13
+    );
+
+    assert!(
+        ratio_12 > 1.0 - epsilon && ratio_12 < 1.0 + epsilon,
+        "Distance q1-q2 not preserved: ratio {:.3} outside tolerance",
+        ratio_12
+    );
+    assert!(
+        ratio_13 > 1.0 - epsilon && ratio_13 < 1.0 + epsilon,
+        "Distance q1-q3 not preserved: ratio {:.3} outside tolerance",
+        ratio_13
+    );
 
     // Verify lambda computation works on projected queries
     let lambda1 = aspace.prepare_query_item(&query1_orig, &gl);
@@ -424,8 +516,11 @@ fn test_projection_preserves_relative_distances() {
     assert!(lambda1.is_finite() && lambda1 >= 0.0);
     assert!(lambda2.is_finite() && lambda2 >= 0.0);
     assert!(lambda3.is_finite() && lambda3 >= 0.0);
-    
-    println!("Query lambdas: q1={:.6}, q2={:.6}, q3={:.6}", lambda1, lambda2, lambda3);
+
+    println!(
+        "Query lambdas: q1={:.6}, q2={:.6}, q3={:.6}",
+        lambda1, lambda2, lambda3
+    );
     println!("✓ Projection preserves relative distances and enables lambda computation");
 }
 
@@ -436,7 +531,7 @@ fn test_project_query_no_projection() {
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_dims_reduction(false, None)  // No projection
+        .with_dims_reduction(false, None) // No projection
         .build(data);
 
     let query = queries[0].clone();
@@ -497,7 +592,9 @@ fn test_project_query_linearity() {
         assert!(
             (expected - actual).abs() < 1e-9,
             "Linearity violation at index {}: expected {:.6}, got {:.6}",
-            i, expected, actual
+            i,
+            expected,
+            actual
         );
     }
 
@@ -518,7 +615,7 @@ fn test_project_query_zero_vector() {
     let projected = aspace.project_query(&query_zero);
 
     assert_eq!(projected.len(), aspace.reduced_dim.unwrap());
-    
+
     for &val in &projected {
         assert!(val.abs() < 1e-10, "Expected near-zero, got {:.6}", val);
     }
@@ -546,12 +643,17 @@ fn test_project_query_preserves_scale_approximately() {
 
     // JL preserves norms approximately - ratio should be within reasonable bounds
     let ratio = proj_norm / orig_norm;
-    
-    println!("Norm preservation: original={:.4}, projected={:.4}, ratio={:.3}",
-           orig_norm, proj_norm, ratio);
-    
-    assert!(ratio > 0.5 && ratio < 2.0, 
-            "Norm ratio {:.3} out of expected range [0.5, 2.0]", ratio);
+
+    println!(
+        "Norm preservation: original={:.4}, projected={:.4}, ratio={:.3}",
+        orig_norm, proj_norm, ratio
+    );
+
+    assert!(
+        ratio > 0.5 && ratio < 2.0,
+        "Norm ratio {:.3} out of expected range [0.5, 2.0]",
+        ratio
+    );
 
     println!("✓ Projection preserves scale approximately");
 }
@@ -603,7 +705,11 @@ fn test_project_query_preserves_dot_product_sign() {
     // Their projections should have negative dot product (opposite directions)
     let dot: f64 = proj_pos.iter().zip(&proj_neg).map(|(a, b)| a * b).sum();
 
-    assert!(dot < 0.0, "Projection should preserve opposite directions: dot={:.6}", dot);
+    assert!(
+        dot < 0.0,
+        "Projection should preserve opposite directions: dot={:.6}",
+        dot
+    );
 
     println!("✓ Projection preserves opposite directions (dot product sign)");
 }

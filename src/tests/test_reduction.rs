@@ -295,7 +295,9 @@ fn test_full_pipeline_implicit_projection() {
     let reduced_dim = 15;
 
     // Create test data
-    let data: Vec<f64> = (0..n_samples * orig_dim).map(|i| (i as f64) * 0.01).collect();
+    let data: Vec<f64> = (0..n_samples * orig_dim)
+        .map(|i| (i as f64) * 0.01)
+        .collect();
     let matrix = DenseMatrix::from_iterator(data.into_iter(), n_samples, orig_dim, 0);
 
     // Create projection

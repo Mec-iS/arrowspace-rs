@@ -41,27 +41,24 @@ fn simple_build() {
 fn build_from_rows_with_lambda_graph() {
     let rows = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.55, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.55, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
     ];
 
     // Build a lambda-proximity Laplacian over items from the data matrix
     // Parameters mirror the old intent: small eps, k=2 cap, p=2.0 kernel, default sigma
-    let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 2, 2, 2.0, None).build(rows);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1e-3, 2, 2, 2.0, None)
+        .build(rows);
 
     assert_eq!(aspace.data.shape(), (4, 13));
     assert_eq!(gl.nnodes, 4);
@@ -74,25 +71,22 @@ fn build_with_lambda_graph_over_product_like_rows() {
     // These represent meaningful data patterns commonly found in ML applications
     let rows = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.81, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.22, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.22, 0.70, 0.08, 0.37, 0.56,
         ],
     ];
 
-    let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 3, 2.0, None).build(rows);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .build(rows);
 
     assert_eq!(aspace.data.shape(), (4, 13));
     assert_eq!(gl.nnodes, 4);
@@ -105,22 +99,20 @@ fn lambda_graph_shape_matches_rows() {
     // with realistic high-dimensional feature vectors
     let items = vec![
         vec![
-            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36,
-            0.58,
+            0.82, 0.11, 0.43, 0.28, 0.64, 0.32, 0.55, 0.48, 0.19, 0.73, 0.07, 0.36, 0.58,
         ],
         vec![
-            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37,
-            0.56,
+            0.79, 0.12, 0.45, 0.29, 0.61, 0.33, 0.54, 0.47, 0.21, 0.70, 0.08, 0.37, 0.56,
         ],
         vec![
-            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38,
-            0.60,
+            0.85, 0.09, 0.41, 0.31, 0.67, 0.29, 0.53, 0.52, 0.17, 0.76, 0.05, 0.38, 0.60,
         ],
     ];
     let len_items = items.len();
 
-    let (aspace, gl) =
-        ArrowSpaceBuilder::new().with_lambda_graph(1e-3, 3, 3, 2.0, None).build(items);
+    let (aspace, gl) = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .build(items);
 
     assert_eq!(aspace.data.shape(), (len_items, 13));
     assert_eq!(gl.nnodes, len_items);
@@ -175,8 +167,9 @@ fn test_density_adaptive_preserves_outliers() {
         rows.push(vec![10.0 + i as f64, 10.0 + i as f64, 10.0]);
     }
 
-    let (aspace, _gl) =
-        ArrowSpaceBuilder::new().with_inline_sampling(true).build(rows.clone());
+    let (aspace, _gl) = ArrowSpaceBuilder::new()
+        .with_inline_sampling(true)
+        .build(rows.clone());
 
     // Check that at least some outlier region is represented
     // by looking for points with large coordinates
@@ -256,7 +249,10 @@ fn test_density_adaptive_aggressive_sampling() {
     );
 
     // Despite aggressive sampling, should still create valid Laplacian
-    assert!(sampled_count >= 4, "Should keep at least 4 points for valid graph");
+    assert!(
+        sampled_count >= 4,
+        "Should keep at least 4 points for valid graph"
+    );
     assert_eq!(aspace.data.shape().1, 10);
     assert_eq!(aspace.data.shape(), (50, 10));
     assert!(gl.nnodes == 50);
@@ -300,8 +296,7 @@ fn test_density_adaptive_sampling_statistics() {
 
     // Run multiple times and check consistency
     for i in 1..6 {
-        let rows: Vec<Vec<f64>> =
-            make_moons_hd(50 * i, 0.5, 0.2, 10 * i, 42 * (i as u64));
+        let rows: Vec<Vec<f64>> = make_moons_hd(50 * i, 0.5, 0.2, 10 * i, 42 * (i as u64));
 
         let (aspace, gl) = ArrowSpaceBuilder::new()
             .with_inline_sampling(true)
@@ -351,8 +346,7 @@ fn test_density_adaptive_maintains_lambda_quality() {
     // Test that density-adaptive sampling preserves lambda quality
 
     for i in 1..5 {
-        let rows: Vec<Vec<f64>> =
-            make_moons_hd(50 * i, 0.5, 0.5, 100 * i, 42 * (i as u64));
+        let rows: Vec<Vec<f64>> = make_moons_hd(50 * i, 0.5, 0.5, 100 * i, 42 * (i as u64));
 
         let (aspace, _gl) = ArrowSpaceBuilder::new()
             .with_lambda_graph(1e-1, 3, 3, 2.0, None)

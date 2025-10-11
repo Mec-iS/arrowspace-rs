@@ -191,7 +191,12 @@ impl ArrowItem {
     #[inline]
     pub fn dot(&self, other: &ArrowItem) -> f64 {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
-        let result = self.item.iter().zip(other.item.iter()).map(|(a, b)| a * b).sum();
+        let result = self
+            .item
+            .iter()
+            .zip(other.item.iter())
+            .map(|(a, b)| a * b)
+            .sum();
         trace!("Computed dot product: {:.6}", result);
         result
     }
@@ -270,7 +275,10 @@ impl ArrowItem {
     pub fn add_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Adding vectors in-place");
-        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a += *b);
+        self.item
+            .iter_mut()
+            .zip(other.item.iter())
+            .for_each(|(a, b)| *a += *b);
     }
 
     /// Multiplies element-wise in-place by another row.
@@ -282,7 +290,10 @@ impl ArrowItem {
     pub fn mul_inplace(&mut self, other: &ArrowItem) {
         assert_eq!(self.len(), other.len(), "Dimension mismatch");
         trace!("Multiplying vectors element-wise in-place");
-        self.item.iter_mut().zip(other.item.iter()).for_each(|(a, b)| *a *= *b);
+        self.item
+            .iter_mut()
+            .zip(other.item.iter())
+            .for_each(|(a, b)| *a *= *b);
     }
 
     /// Scales all elements by a scalar in place.
@@ -403,7 +414,10 @@ impl ArrowSpace {
     /// Only to be used in tests. `ArrowSpaceBuilder`
     pub fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
+        assert!(
+            items.len() > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
         Self {
@@ -444,7 +458,10 @@ impl ArrowSpace {
     #[cfg(test)]
     pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
-        assert!(items.len() > 1, "cannot create a arrowspace of one arrow only");
+        assert!(
+            items.len() > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
 
@@ -556,7 +573,9 @@ impl ArrowSpace {
     pub fn get_feature(&self, i: usize) -> ArrowFeature {
         assert!(i < self.nfeatures, "feature index out of bounds");
         trace!("Extracting feature {} from ArrowSpace", i);
-        ArrowFeature { feature: self.data.get_col(i).iterator(0).copied().collect() }
+        ArrowFeature {
+            feature: self.data.get_col(i).iterator(0).copied().collect(),
+        }
     }
 
     /// Modify feature column in-place
@@ -753,7 +772,11 @@ impl ArrowSpace {
         alpha: f64,
     ) -> Vec<(usize, f64)> {
         info!("Lambda-aware search: k={}", k);
-        debug!("Query vector dimension: {}, lambda: {:.6}", query.len(), query.lambda);
+        debug!(
+            "Query vector dimension: {}, lambda: {:.6}",
+            query.len(),
+            query.lambda
+        );
 
         assert_ne!(
             query.lambda, 0.0,
@@ -772,7 +795,11 @@ impl ArrowSpace {
 
         debug!("Search completed, returning {} results", results.len());
         if !results.is_empty() {
-            trace!("Top result: index={}, score={:.6}", results[0].0, results[0].1);
+            trace!(
+                "Top result: index={}, score={:.6}",
+                results[0].0,
+                results[0].1
+            );
         }
 
         results
@@ -826,11 +853,17 @@ impl ArrowSpace {
 
                     // Maintain lambda top-k heap
                     if heap.len() < k {
-                        heap.push(ScoredItem { index: i, score: lambda_score });
+                        heap.push(ScoredItem {
+                            index: i,
+                            score: lambda_score,
+                        });
                     } else if let Some(&min) = heap.peek() {
                         if lambda_score > min.score {
                             heap.pop();
-                            heap.push(ScoredItem { index: i, score: lambda_score });
+                            heap.push(ScoredItem {
+                                index: i,
+                                score: lambda_score,
+                            });
                         }
                     }
 
@@ -871,8 +904,7 @@ impl ArrowSpace {
 
         // Union: high semantic + lambda top-k
         let mut result_set = HashSet::with_capacity(k + high_semantic_vec.len());
-        let mut score_map =
-            std::collections::HashMap::with_capacity(result_set.capacity());
+        let mut score_map = std::collections::HashMap::with_capacity(result_set.capacity());
 
         // Add high semantic matches
         for (idx, score) in high_semantic_vec {
@@ -917,7 +949,12 @@ impl ArrowSpace {
     /// let hits = aspace.range_search(&q, 0.6);
     /// ```
     #[inline]
-    pub fn range_search(&self, query: &ArrowItem, gl: &GraphLaplacian, eps: f64) -> Vec<(usize, f64)> {
+    pub fn range_search(
+        &self,
+        query: &ArrowItem,
+        gl: &GraphLaplacian,
+        eps: f64,
+    ) -> Vec<(usize, f64)> {
         info!("Range search with radius: {:.6}", eps);
         debug!("Query vector dimension: {}", query.len());
 
@@ -939,7 +976,10 @@ impl ArrowSpace {
             })
             .collect();
 
-        debug!("Range search completed, found {} items within radius", results.len());
+        debug!(
+            "Range search completed, found {} items within radius",
+            results.len()
+        );
         results
     }
 
@@ -1009,5 +1049,7 @@ impl<'a> IntoIterator for &'a mut ArrowItem {
 
 pub fn densematrix_to_vecvec(matrix: &DenseMatrix<f64>) -> Vec<Vec<f64>> {
     let (rows, cols) = matrix.shape();
-    (0..rows).map(|r| (0..cols).map(|c| matrix.get((r, c)).clone()).collect()).collect()
+    (0..rows)
+        .map(|r| (0..cols).map(|c| matrix.get((r, c)).clone()).collect())
+        .collect()
 }

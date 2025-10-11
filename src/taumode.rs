@@ -103,8 +103,7 @@ impl TauMode {
                 m.max(TAU_FLOOR)
             }
             TauMode::Median | TauMode::Percentile(_) => {
-                let mut v: Vec<f64> =
-                    energies.iter().copied().filter(|x| x.is_finite()).collect();
+                let mut v: Vec<f64> = energies.iter().copied().filter(|x| x.is_finite()).collect();
                 if v.is_empty() {
                     return TAU_FLOOR;
                 }
@@ -195,7 +194,10 @@ impl TauMode {
         //     graph.shape().0,
         // );
 
-        if item_vector.iter().all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-10)) {
+        if item_vector
+            .iter()
+            .all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-10))
+        {
             panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
         }
 
@@ -297,10 +299,7 @@ impl TauMode {
     ///
     /// # Panics
     /// Panics if vector length doesn't match matrix dimensions
-    pub fn compute_rayleigh_quotient_from_matrix(
-        matrix: &CsMat<f64>,
-        vector: &[f64],
-    ) -> f64 {
+    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
         let n = matrix.shape().0;
         // assert_eq!(
         //     vector.len(),
@@ -338,10 +337,7 @@ impl TauMode {
     }
 
     /// Batch computation for multiple vectors (efficient for multiple queries)
-    pub fn compute_rayleigh_quotients_batch(
-        matrix: &CsMat<f64>,
-        vectors: &[Vec<f64>],
-    ) -> Vec<f64> {
+    pub fn compute_rayleigh_quotients_batch(matrix: &CsMat<f64>, vectors: &[Vec<f64>]) -> Vec<f64> {
         vectors
             .iter()
             .map(|v| Self::compute_rayleigh_quotient_from_matrix(matrix, v))

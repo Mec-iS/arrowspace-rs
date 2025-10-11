@@ -143,8 +143,12 @@ fn test_laplacian_mathematical_properties() {
         "CSR data length should match nnz"
     );
 
-    println!("✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros", 
-             n, n, laplacian.matrix.nnz());
+    println!(
+        "✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros",
+        n,
+        n,
+        laplacian.matrix.nnz()
+    );
 }
 
 #[test]
@@ -167,8 +171,7 @@ fn test_cosine_similarity_based_construction() {
         sparsity_check: true,
     };
 
-    let (_, adjacency) =
-        test_helpers::build_laplacian_matrix_with_adjacency(&items, &params);
+    let (_, adjacency) = test_helpers::build_laplacian_matrix_with_adjacency(&items, &params);
 
     // Check that similar vectors have higher adjacency weights
     let adj_01 = *adjacency.get(0, 1).unwrap(); // Should be highest (45° angle)
@@ -227,10 +230,7 @@ fn test_eps_parameter_constraint() {
     };
 
     let (_, adjacency_restrictive) =
-        test_helpers::build_laplacian_matrix_with_adjacency(
-            &items,
-            &restrictive_params,
-        );
+        test_helpers::build_laplacian_matrix_with_adjacency(&items, &restrictive_params);
 
     // Test with permissive eps
     let permissive_params = GraphParams {
@@ -439,7 +439,9 @@ fn test_performance_with_larger_dataset() {
 
     let start = std::time::Instant::now();
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&large_items).unwrap().transpose(),
+        DenseMatrix::<f64>::from_2d_vec(&large_items)
+            .unwrap()
+            .transpose(),
         &params,
         None,
     );
@@ -488,7 +490,9 @@ fn test_arrowspace_integration_pattern_sparse() {
     };
 
     let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&protein_like_data).unwrap().transpose(),
+        DenseMatrix::<f64>::from_2d_vec(&protein_like_data)
+            .unwrap()
+            .transpose(),
         &arrowspace_params,
         None,
     );
@@ -580,7 +584,10 @@ fn test_optimized_sparse_matrix_laplacian() {
     assert_eq!(laplacian.matrix.shape().1, 3);
 
     // Verify sparse matrix properties
-    assert!(laplacian.matrix.nnz() > 0, "Matrix should have some non-zero entries");
+    assert!(
+        laplacian.matrix.nnz() > 0,
+        "Matrix should have some non-zero entries"
+    );
     assert!(
         laplacian.matrix.nnz() <= 16, // 4x4 matrix
         "Matrix cannot have more than 16 entries"
@@ -694,7 +701,11 @@ fn test_with_adjacency_output() {
     // Verify adjacency has zero diagonal
     for i in 0..3 {
         let diag_val = adjacency.get(i, i).copied().unwrap_or(0.0);
-        assert_eq!(diag_val, 0.0, "Adjacency diagonal [{},{}] should be zero", i, i);
+        assert_eq!(
+            diag_val, 0.0,
+            "Adjacency diagonal [{},{}] should be zero",
+            i, i
+        );
     }
 
     // Verify Laplacian = Degree - Adjacency

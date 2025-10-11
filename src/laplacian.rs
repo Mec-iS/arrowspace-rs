@@ -126,9 +126,17 @@ pub fn build_laplacian_matrix(
     n_items: Option<usize>,
 ) -> GraphLaplacian {
     let (d, n) = transposed.shape();
-    assert!(n >= 2 && d >= 2, "items should be at least of shape (2,2): ({},{})", d, n);
+    assert!(
+        n >= 2 && d >= 2,
+        "items should be at least of shape (2,2): ({},{})",
+        d,
+        n
+    );
 
-    info!("Building Laplacian matrix for {} items with {} features", n, d);
+    info!(
+        "Building Laplacian matrix for {} items with {} features",
+        n, d
+    );
     debug!(
         "Graph parameters: eps={}, k={}, p={}, sigma={:?}, normalise={}",
         params.eps, params.k, params.p, params.sigma, params.normalise
@@ -137,9 +145,7 @@ pub fn build_laplacian_matrix(
     // Step 1: Conditional normalization based on params.normalise flag
     let mut items = if params.normalise {
         debug!("Normalizing items to unit norm");
-        let scaler =
-            StandardScaler::fit(&transposed, StandardScalerParameters::default())
-                .unwrap();
+        let scaler = StandardScaler::fit(&transposed, StandardScalerParameters::default()).unwrap();
         let scaled = scaler.transform(&transposed).unwrap();
         trace!("Items normalized successfully");
         scaled
@@ -220,7 +226,10 @@ fn _build_adjacency(
     let sparsify = avg_degree > 10.0; // Only sparsify if dense enough
 
     if sparsify {
-        info!("Inline sparsification enabled (avg degree {:.1})", avg_degree);
+        info!(
+            "Inline sparsification enabled (avg degree {:.1})",
+            avg_degree
+        );
     } else {
         debug!("Skipping sparsification (avg degree {:.1})", avg_degree);
     }
@@ -237,10 +246,8 @@ fn _build_adjacency(
                 .iter()
                 .filter_map(|(distance, j)| {
                     if i != *j && *distance <= params.eps {
-                        let weight = 1.0
-                            / (1.0
-                                + (distance / params.sigma.unwrap_or(1.0))
-                                    .powf(params.p));
+                        let weight =
+                            1.0 / (1.0 + (distance / params.sigma.unwrap_or(1.0)).powf(params.p));
                         if weight > 1e-12 {
                             // **INLINE SPARSIFICATION SCORE**
                             // Score = weight * sqrt(degree_i * degree_j)
@@ -269,7 +276,10 @@ fn _build_adjacency(
             }
 
             // Return (neighbor, weight) pairs
-            valid_neighbors.into_iter().map(|(j, w, _)| (j, w)).collect()
+            valid_neighbors
+                .into_iter()
+                .map(|(j, w, _)| (j, w))
+                .collect()
         })
         .collect();
 
@@ -291,7 +301,9 @@ pub(crate) fn _symmetrise_adjancency(
         .enumerate()
         .flat_map(|(i, row)| {
             // Convert to owned data for parallel processing
-            row.par_iter().map(move |&(j, w)| (i, j, w)).collect::<Vec<_>>()
+            row.par_iter()
+                .map(move |&(j, w)| (i, j, w))
+                .collect::<Vec<_>>()
         })
         .collect();
 
@@ -367,7 +379,11 @@ pub(crate) fn _build_sparse_laplacian(
         .sum::<usize>();
 
     trace!("DashMap population completed in {:?}", start.elapsed());
-    debug!("Total triplets: {}, edges: {}", triplet_map.len(), total_edges);
+    debug!(
+        "Total triplets: {}, edges: {}",
+        triplet_map.len(),
+        total_edges
+    );
 
     // Convert to sorted vectors for more efficient TriMat insertion
     let conversion_start = std::time::Instant::now();
@@ -376,7 +392,11 @@ pub(crate) fn _build_sparse_laplacian(
     // Sort by (row, col) for better cache locality during insertion
     triplets.par_sort_unstable_by_key(|&((i, j), _)| (i, j));
 
-    trace!("Sorted {} triplets in {:?}", triplets.len(), conversion_start.elapsed());
+    trace!(
+        "Sorted {} triplets in {:?}",
+        triplets.len(),
+        conversion_start.elapsed()
+    );
 
     // Sequential: Build TriMat from sorted triplets
     let insert_start = std::time::Instant::now();

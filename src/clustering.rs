@@ -14,12 +14,12 @@
 //! **DETERMINISTIC**: All random operations use fixed seed 128 for reproducibility.
 
 use log::{debug, info, warn};
-use rand::SeedableRng;
 use rand::seq::SliceRandom;
+use rand::SeedableRng;
 use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
-use smartcore::linalg::basic::matrix::DenseMatrix;
 use smartcore::linalg::basic::arrays::Array2;
+use smartcore::linalg::basic::matrix::DenseMatrix;
 use std::sync::Mutex;
 
 /// Fixed seed for deterministic clustering
@@ -29,21 +29,19 @@ const CLUSTERING_SEED: u64 = 128;
 pub trait ClusteringHeuristic {
     /// Compute optimal number of clusters K, squared-distance threshold radius,
     /// and estimated intrinsic dimension from NxF data matrix.
-    fn compute_optimal_k(
-        &self,
-        rows: &[Vec<f64>],
-        n: usize,
-        f: usize,
-    ) -> (usize, f64, usize)
+    fn compute_optimal_k(&self, rows: &[Vec<f64>], n: usize, f: usize) -> (usize, f64, usize)
     where
         Self: Sync,
     {
         info!("Computing optimal K for clustering: N={}, F={}", n, f);
-        
+
         // Step 1: Establish bounds
         let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f);
-        info!("step 1 bounds: K in [{}, {}], intrinsic_dim ≈ {}", k_min, k_max, id_est);
-        
+        info!(
+            "step 1 bounds: K in [{}, {}], intrinsic_dim ≈ {}",
+            k_min, k_max, id_est
+        );
+
         // Step 2: Spectral gap via Calinski-Harabasz
         let sample_size = n.min(1000);
         let sample_indices: Vec<usize> = if n > sample_size {
@@ -54,39 +52,31 @@ pub trait ClusteringHeuristic {
         } else {
             (0..n).collect()
         };
-        
-        let sampled_rows: Vec<Vec<f64>> =
-            sample_indices.par_iter().map(|&i| rows[i].clone()).collect();
-        
+
+        let sampled_rows: Vec<Vec<f64>> = sample_indices
+            .par_iter()
+            .map(|&i| rows[i].clone())
+            .collect();
+
         let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max);
         info!("step 2 Calinski-Harabasz suggests K = {}", k_optimal);
-        
+
         // Step 3: Derive radius threshold
         let radius = self.compute_threshold_from_pilot(&sampled_rows, k_optimal);
         info!("Computed radius threshold: {:.6}", radius);
-        
+
         (k_optimal, radius, id_est)
     }
 
     // Step 1: Bounds via N/F and intrinsic dimension
-    fn step1_bounds(
-        &self,
-        rows: &[Vec<f64>],
-        n: usize,
-        f: usize,
-    ) -> (usize, usize, usize) {
+    fn step1_bounds(&self, rows: &[Vec<f64>], n: usize, f: usize) -> (usize, usize, usize) {
         let id_est = self.estimate_intrinsic_dimension(rows, n, f);
         debug!("Intrinsic dimension estimate: {}", id_est);
-        
+
         let k_min = ((n as f64 / 10.0).sqrt().ceil() as usize).max(2);
-        
-        let k_max_candidates = vec![
-            f,
-            n / 10,
-            5 * id_est,
-            (n as f64).powf(0.5) as usize,
-        ];
-        
+
+        let k_max_candidates = vec![f, n / 10, 5 * id_est, (n as f64).powf(0.5) as usize];
+
         let k_max = k_max_candidates
             .iter()
             .copied()
@@ -94,17 +84,12 @@ pub trait ClusteringHeuristic {
             .unwrap_or(f)
             .max(k_min + 1)
             .min(n / 2);
-        
+
         (k_min, k_max, id_est)
     }
 
     /// Estimate intrinsic dimension via Two-NN ratio method (DETERMINISTIC).
-    fn estimate_intrinsic_dimension(
-        &self,
-        rows: &[Vec<f64>],
-        n: usize,
-        f: usize,
-    ) -> usize {
+    fn estimate_intrinsic_dimension(&self, rows: &[Vec<f64>], n: usize, f: usize) -> usize {
         if n < 10 {
             return f.min(2);
         }
@@ -130,9 +115,9 @@ pub trait ClusteringHeuristic {
                         (j, d2.sqrt())
                     })
                     .collect();
-                
+
                 dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                
+
                 if dists.len() >= 2 {
                     let d1 = dists[0].1;
                     let d2 = dists[1].1;
@@ -149,20 +134,22 @@ pub trait ClusteringHeuristic {
         }
 
         let mean_ratio: f64 = ratios.iter().sum::<f64>() / ratios.len() as f64;
-        let id = if mean_ratio > 1.001 { 1.0 / mean_ratio.ln() } else { f as f64 };
+        let id = if mean_ratio > 1.001 {
+            1.0 / mean_ratio.ln()
+        } else {
+            f as f64
+        };
         let id_clamped = (id.round() as usize).clamp(1, f);
-        
-        debug!("Two-NN mean ratio: {:.4}, estimated ID: {}", mean_ratio, id_clamped);
+
+        debug!(
+            "Two-NN mean ratio: {:.4}, estimated ID: {}",
+            mean_ratio, id_clamped
+        );
         id_clamped
     }
 
     // Step 2: Calinski-Harabasz for optimal K (DETERMINISTIC)
-    fn step2_calinski_harabasz(
-        &self,
-        rows: &[Vec<f64>],
-        k_min: usize,
-        k_max: usize,
-    ) -> usize
+    fn step2_calinski_harabasz(&self, rows: &[Vec<f64>], k_min: usize, k_max: usize) -> usize
     where
         Self: Sync,
     {
@@ -172,7 +159,7 @@ pub trait ClusteringHeuristic {
         }
 
         let best = Mutex::new((k_min, f64::NEG_INFINITY));
-        
+
         let k_range = k_max - k_min;
         let k_step = if k_range <= 5 {
             1
@@ -181,36 +168,45 @@ pub trait ClusteringHeuristic {
         } else {
             3
         };
-        
+
         let k_candidates: Vec<usize> = (k_min..=k_max).step_by(k_step).collect();
-        debug!("Testing K in range [{}, {}] with step {}", k_min, k_max, k_step);
+        debug!(
+            "Testing K in range [{}, {}] with step {}",
+            k_min, k_max, k_step
+        );
 
         // Parallel evaluation with deterministic seeds
-        k_candidates.par_iter().filter(|&&k| k < n && k >= 2).for_each(|&k| {
-            let best_ch_for_k: f64 = (0..3)
-                .into_par_iter()
-                .map(|trial| {
-                    // Derive unique seed: base + k*1000 + trial
-                    let trial_seed = CLUSTERING_SEED
-                        .wrapping_add((k as u64) * 1000)
-                        .wrapping_add(trial as u64);
-                    
-                    let assignments = kmeans_lloyd(rows, k, 20, trial_seed);
-                    self.calinski_harabasz_score(rows, &assignments, k)
-                })
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap_or(0.0);
+        k_candidates
+            .par_iter()
+            .filter(|&&k| k < n && k >= 2)
+            .for_each(|&k| {
+                let best_ch_for_k: f64 = (0..3)
+                    .into_par_iter()
+                    .map(|trial| {
+                        // Derive unique seed: base + k*1000 + trial
+                        let trial_seed = CLUSTERING_SEED
+                            .wrapping_add((k as u64) * 1000)
+                            .wrapping_add(trial as u64);
 
-            let penalty = 0.8;
-            let penalized_score = best_ch_for_k - penalty * (k as f64) * (n as f64).ln();
-            
-            debug!("K={}: CH={:.4}, penalized={:.4}", k, best_ch_for_k, penalized_score);
+                        let assignments = kmeans_lloyd(rows, k, 20, trial_seed);
+                        self.calinski_harabasz_score(rows, &assignments, k)
+                    })
+                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .unwrap_or(0.0);
 
-            let mut best_guard = best.lock().unwrap();
-            if penalized_score > best_guard.1 {
-                *best_guard = (k, penalized_score);
-            }
-        });
+                let penalty = 0.8;
+                let penalized_score = best_ch_for_k - penalty * (k as f64) * (n as f64).ln();
+
+                debug!(
+                    "K={}: CH={:.4}, penalized={:.4}",
+                    k, best_ch_for_k, penalized_score
+                );
+
+                let mut best_guard = best.lock().unwrap();
+                if penalized_score > best_guard.1 {
+                    *best_guard = (k, penalized_score);
+                }
+            });
 
         let (mut best_k, mut best_score) = *best.lock().unwrap();
 
@@ -235,7 +231,7 @@ pub trait ClusteringHeuristic {
                         let trial_seed = CLUSTERING_SEED
                             .wrapping_add((k as u64) * 10000)
                             .wrapping_add(trial as u64);
-                        
+
                         let assignments = kmeans_lloyd(rows, k, 20, trial_seed);
                         self.calinski_harabasz_score(rows, &assignments, k)
                     })
@@ -244,8 +240,11 @@ pub trait ClusteringHeuristic {
 
                 let penalty = 0.8;
                 let penalized_score = best_ch_for_k - penalty * (k as f64) * (n as f64).ln();
-                
-                debug!("K={} (fine): CH={:.4}, penalized={:.4}", k, best_ch_for_k, penalized_score);
+
+                debug!(
+                    "K={} (fine): CH={:.4}, penalized={:.4}",
+                    k, best_ch_for_k, penalized_score
+                );
 
                 let mut best_guard = best.lock().unwrap();
                 if penalized_score > best_guard.1 {
@@ -263,15 +262,10 @@ pub trait ClusteringHeuristic {
     }
 
     /// Calinski-Harabasz index (parallelized).
-    fn calinski_harabasz_score(
-        &self,
-        rows: &[Vec<f64>],
-        assignments: &[usize],
-        k: usize,
-    ) -> f64 {
+    fn calinski_harabasz_score(&self, rows: &[Vec<f64>], assignments: &[usize], k: usize) -> f64 {
         let n = rows.len();
         let f = rows[0].len();
-        
+
         if k <= 1 || k >= n {
             return 0.0;
         }
@@ -286,7 +280,7 @@ pub trait ClusteringHeuristic {
             .map(|c| {
                 let mut centroid = vec![0.0; f];
                 let mut count = 0;
-                
+
                 for (i, &cluster) in assignments.iter().enumerate() {
                     if cluster == c {
                         for j in 0..f {
@@ -295,7 +289,7 @@ pub trait ClusteringHeuristic {
                         count += 1;
                     }
                 }
-                
+
                 if count > 0 {
                     for val in &mut centroid {
                         *val /= count as f64;
@@ -348,7 +342,7 @@ pub trait ClusteringHeuristic {
             .map(|c| {
                 let mut centroid = vec![0.0; f];
                 let mut count = 0;
-                
+
                 for (i, &cluster) in assignments.iter().enumerate() {
                     if cluster == c {
                         for j in 0..f {
@@ -357,7 +351,7 @@ pub trait ClusteringHeuristic {
                         count += 1;
                     }
                 }
-                
+
                 if count > 0 {
                     for val in &mut centroid {
                         *val /= count as f64;
@@ -375,7 +369,11 @@ pub trait ClusteringHeuristic {
             .enumerate()
             .filter(|(_, c)| **c < k)
             .map(|(i, &c)| {
-                rows[i].iter().zip(&centroids[c]).map(|(a, b)| (a - b).powi(2)).sum()
+                rows[i]
+                    .iter()
+                    .zip(&centroids[c])
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum()
             })
             .collect();
 
@@ -417,18 +415,19 @@ pub trait ClusteringHeuristic {
             f64::INFINITY
         };
 
-        let threshold_ratio = if min_inter_centroid_dist2.is_finite() && min_inter_centroid_dist2 > 0.0 {
-            percentile_90 / min_inter_centroid_dist2
-        } else {
-            1.0
-        };
+        let threshold_ratio =
+            if min_inter_centroid_dist2.is_finite() && min_inter_centroid_dist2 > 0.0 {
+                percentile_90 / min_inter_centroid_dist2
+            } else {
+                1.0
+            };
 
         if percentile_90 < 1e-8 || threshold_ratio < 0.01 {
             debug!(
                 "Within-cluster variance very small (p90={:.3e}, ratio={:.3e}); using inter-centroid fallback",
                 percentile_90, threshold_ratio
             );
-            
+
             if !inter_dists.is_empty() {
                 let radius = min_inter_centroid_dist2 * 0.15;
                 debug!("Inter-centroid fallback: radius={:.6}", radius);
@@ -459,23 +458,24 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
     if rows.is_empty() {
         return Vec::new();
     }
-    
+
     let (n, f) = (rows.len(), rows[0].len());
     let k = k.min(n);
-    
+
     // Flatten row-major data
-    let x: DenseMatrix<f64> = DenseMatrix::from_iterator(rows.into_iter().flatten().map(|x| *x), n, f, 0);
-    
+    let x: DenseMatrix<f64> =
+        DenseMatrix::from_iterator(rows.into_iter().flatten().map(|x| *x), n, f, 0);
+
     // Create parameters with explicit seed
     let params = KMeansParameters {
         k,
         max_iter,
         seed: Some(seed),
     };
-    
+
     // Fit the model
     let km = KMeans::fit(&x, params).expect("Failed to fit K-Means model");
-    
+
     // Predict cluster assignments
     let labels = km.predict(&x).expect("Failed to predict labels");
 
@@ -485,23 +485,27 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
 pub fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f64) {
     let mut best_idx = 0;
     let mut best_dist2 = f64::INFINITY;
-    
+
     for (i, c) in centroids.iter().enumerate() {
         let mut d2 = 0.0;
         for (a, b) in row.iter().zip(c.iter()) {
             let diff = a - b;
             d2 += diff * diff;
         }
-        
+
         if d2 < best_dist2 {
             best_dist2 = d2;
             best_idx = i;
         }
     }
-    
+
     (best_idx, best_dist2)
 }
 
 pub fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum::<f64>().sqrt()
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).powi(2))
+        .sum::<f64>()
+        .sqrt()
 }

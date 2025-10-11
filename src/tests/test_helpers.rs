@@ -17,7 +17,10 @@ pub fn build_laplacian_matrix_with_adjacency(
         panic!("Matrix too small")
     }
 
-    info!("Building Laplacian with adjacency matrix output for {} items", n_items);
+    info!(
+        "Building Laplacian with adjacency matrix output for {} items",
+        n_items
+    );
 
     let adjacency_matrix = build_adjacency_matrix(items, params);
 
@@ -25,8 +28,12 @@ pub fn build_laplacian_matrix_with_adjacency(
     let mut laplacian_triplets = TriMat::new((n_items, n_items));
 
     for i in 0..n_items {
-        let degree: f64 =
-            adjacency_matrix.outer_view(i).unwrap().iter().map(|(_, &w)| w).sum();
+        let degree: f64 = adjacency_matrix
+            .outer_view(i)
+            .unwrap()
+            .iter()
+            .map(|(_, &w)| w)
+            .sum();
         laplacian_triplets.add_triplet(i, i, degree);
 
         for (j, &weight) in adjacency_matrix.outer_view(i).unwrap().iter() {
@@ -85,8 +92,11 @@ fn build_adjacency_matrix(items: &[Vec<f64>], params: &GraphParams) -> CsMat<f64
 
             let denom = norms[i] * norms[j];
             let cosine_sim = if denom > 1e-12 {
-                let dot: f64 =
-                    items[i].iter().zip(items[j].iter()).map(|(a, b)| a * b).sum();
+                let dot: f64 = items[i]
+                    .iter()
+                    .zip(items[j].iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
                 (dot / denom).clamp(-1.0, 1.0)
             } else {
                 0.0

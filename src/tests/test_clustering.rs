@@ -8,9 +8,7 @@
 //! - OptimalKHeuristic end-to-end
 //! - Edge cases (small N, high-dimensional, degenerate data)
 
-use crate::clustering::{
-    euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic,
-};
+use crate::clustering::{euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic};
 
 pub struct OptimalKHeuristic;
 
@@ -195,7 +193,10 @@ fn test_calinski_harabasz_well_separated() {
 
     // Two well-separated Gaussian clusters
     for _ in 0..50 {
-        rows.push(vec![rng.random_range(-0.5..0.5), rng.random_range(-0.5..0.5)]);
+        rows.push(vec![
+            rng.random_range(-0.5..0.5),
+            rng.random_range(-0.5..0.5),
+        ]);
     }
     for _ in 0..50 {
         rows.push(vec![
@@ -207,7 +208,10 @@ fn test_calinski_harabasz_well_separated() {
     let heuristic = OptimalKHeuristic;
     let k_suggested = heuristic.step2_calinski_harabasz(&rows, 2, 10);
 
-    println!("Calinski-Harabasz suggested K: {} (expected 2)", k_suggested);
+    println!(
+        "Calinski-Harabasz suggested K: {} (expected 2)",
+        k_suggested
+    );
     assert!(
         k_suggested >= 2 && k_suggested <= 4,
         "Expected K around 2, got {}",
@@ -222,7 +226,10 @@ fn test_calinski_harabasz_three_clusters() {
     let mut rows = Vec::new();
 
     for _ in 0..50 {
-        rows.push(vec![rng.random_range(-0.5..0.5), rng.random_range(-0.5..0.5)]);
+        rows.push(vec![
+            rng.random_range(-0.5..0.5),
+            rng.random_range(-0.5..0.5),
+        ]);
     }
     for _ in 0..50 {
         rows.push(vec![
@@ -240,7 +247,10 @@ fn test_calinski_harabasz_three_clusters() {
     let heuristic = OptimalKHeuristic;
     let k_suggested = heuristic.step2_calinski_harabasz(&rows, 2, 10);
 
-    println!("Calinski-Harabasz suggested K: {} (expected 3)", k_suggested);
+    println!(
+        "Calinski-Harabasz suggested K: {} (expected 3)",
+        k_suggested
+    );
     assert!(
         k_suggested >= 2 && k_suggested <= 5,
         "Expected K around 3, got {}",
@@ -302,7 +312,11 @@ fn test_threshold_from_pilot_large_variance() {
     let radius = heuristic.compute_threshold_from_pilot(&rows, 3);
 
     println!("Threshold radius for spread cluster: {:.6}", radius);
-    assert!(radius > 1.0, "Expected larger threshold for spread data, got {}", radius);
+    assert!(
+        radius > 1.0,
+        "Expected larger threshold for spread data, got {}",
+        radius
+    );
 }
 
 #[test]
@@ -315,14 +329,25 @@ fn test_threshold_from_pilot_single_point_per_cluster() {
 
 #[test]
 fn test_threshold_zero_variance_clusters() {
-    let rows = vec![vec![0.0, 0.0], vec![0.0, 0.0], vec![10.0, 10.0], vec![10.0, 10.0]];
+    let rows = vec![
+        vec![0.0, 0.0],
+        vec![0.0, 0.0],
+        vec![10.0, 10.0],
+        vec![10.0, 10.0],
+    ];
 
     let heuristic = OptimalKHeuristic;
     let radius = heuristic.compute_threshold_from_pilot(&rows, 2);
 
     println!("Threshold for zero-variance clusters: {:.6}", radius);
-    assert!(radius > 0.0, "Should use inter-centroid fallback for zero variance");
-    assert!(radius > 1.0, "Inter-centroid fallback should give meaningful threshold");
+    assert!(
+        radius > 0.0,
+        "Should use inter-centroid fallback for zero variance"
+    );
+    assert!(
+        radius > 1.0,
+        "Inter-centroid fallback should give meaningful threshold"
+    );
 }
 
 #[test]
@@ -332,7 +357,10 @@ fn test_threshold_all_points_identical() {
     let radius = heuristic.compute_threshold_from_pilot(&rows, 3);
 
     println!("Threshold for identical points: {:.6}", radius);
-    assert!(radius >= 1e-6, "Should return minimum threshold for degenerate data");
+    assert!(
+        radius >= 1e-6,
+        "Should return minimum threshold for degenerate data"
+    );
 }
 
 #[test]
@@ -394,7 +422,11 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
         k, radius, id
     );
-    assert!(k >= 2 && k <= 7, "Expected K around 3 for three clusters, got {}", k);
+    assert!(
+        k >= 2 && k <= 7,
+        "Expected K around 3 for three clusters, got {}",
+        k
+    );
     assert!(radius > 0.0, "radius should be positive");
     assert!(id >= 1 && id <= 3, "Intrinsic dimension should be 1-3");
 }
@@ -405,8 +437,12 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     let mut rng = rand::rng();
     let mut rows = Vec::new();
 
-    let centers =
-        vec![vec![0.0, 0.0], vec![10.0, 0.0], vec![0.0, 10.0], vec![10.0, 10.0]];
+    let centers = vec![
+        vec![0.0, 0.0],
+        vec![10.0, 0.0],
+        vec![0.0, 10.0],
+        vec![10.0, 10.0],
+    ];
 
     for center in centers {
         for _ in 0..75 {
@@ -424,7 +460,11 @@ fn test_optimal_k_heuristic_spherical_clusters() {
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
         k, radius, id
     );
-    assert!(k >= 3 && k <= 6, "Expected K around 4 for four clusters, got {}", k);
+    assert!(
+        k >= 3 && k <= 6,
+        "Expected K around 4 for four clusters, got {}",
+        k
+    );
     assert!(radius > 0.0, "radius should be positive");
     assert!(id >= 1 && id <= 2, "Intrinsic dimension should be 1-2");
 }
@@ -448,7 +488,10 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     let heuristic = OptimalKHeuristic;
     let (k, radius, id) = heuristic.compute_optimal_k(&rows, rows.len(), 8);
 
-    println!("Optimal K={}, radius={:.6}, ID={} for 8D random", k, radius, id);
+    println!(
+        "Optimal K={}, radius={:.6}, ID={} for 8D random",
+        k, radius, id
+    );
     assert!(k >= 2, "K should be at least 2");
     assert!(k <= 100, "K should respect N/10 constraint");
     assert!(radius > 0.0);
@@ -457,7 +500,12 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
 
 #[test]
 fn test_optimal_k_heuristic_small_n() {
-    let rows = vec![vec![1.0, 2.0], vec![1.1, 2.1], vec![5.0, 6.0], vec![5.1, 6.1]];
+    let rows = vec![
+        vec![1.0, 2.0],
+        vec![1.1, 2.1],
+        vec![5.0, 6.0],
+        vec![5.1, 6.1],
+    ];
 
     let heuristic = OptimalKHeuristic;
     let (k, radius, id) = heuristic.compute_optimal_k(&rows, 4, 2);
@@ -489,7 +537,10 @@ fn test_optimal_k_heuristic_single_feature() {
     let heuristic = OptimalKHeuristic;
     let (k, radius, id) = heuristic.compute_optimal_k(&rows, 100, 1);
 
-    println!("Optimal K={}, radius={:.6}, ID={} for 1D uniform", k, radius, id);
+    println!(
+        "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
+        k, radius, id
+    );
     assert!(k >= 2, "K should be at least 2");
     assert_eq!(id, 1, "Intrinsic dimension should be 1 for 1D data");
     assert!(radius > 0.0);
@@ -514,7 +565,10 @@ fn test_optimal_k_very_high_dimensional() {
     let heuristic = OptimalKHeuristic;
     let (k, radius, id) = heuristic.compute_optimal_k(&rows, 20, 1000);
 
-    println!("Optimal K={}, radius={:.6}, ID={} for N=20, F=1000", k, radius, id);
+    println!(
+        "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
+        k, radius, id
+    );
     assert!(k >= 2);
     assert!(k <= 10, "K should not exceed N/2");
     assert!(id <= 1000);
@@ -530,7 +584,10 @@ fn test_optimal_k_mixed_scale_features() {
     let heuristic = OptimalKHeuristic;
     let (k, radius, _id) = heuristic.compute_optimal_k(&rows, 100, 2);
 
-    println!("Optimal K={}, radius={:.6} for mixed-scale features", k, radius);
+    println!(
+        "Optimal K={}, radius={:.6} for mixed-scale features",
+        k, radius
+    );
     assert!(k >= 2);
     assert!(radius > 0.0);
 }
@@ -552,7 +609,10 @@ fn test_kmeans_k_greater_than_n() {
 fn test_kmeans_k_equals_zero() {
     let rows = vec![vec![1.0], vec![2.0]];
     let assignments = kmeans_lloyd(&rows, 0, 10, 128);
-    assert!(assignments.is_empty(), "k=0 should return empty assignments");
+    assert!(
+        assignments.is_empty(),
+        "k=0 should return empty assignments"
+    );
 }
 
 #[test]
@@ -591,7 +651,12 @@ fn test_kmeans_convergence_early_stop() {
 
 #[test]
 fn test_clustering_heuristic_trait_interface() {
-    let rows = vec![vec![0.0, 0.0], vec![0.1, 0.1], vec![10.0, 10.0], vec![10.1, 10.1]];
+    let rows = vec![
+        vec![0.0, 0.0],
+        vec![0.1, 0.1],
+        vec![10.0, 10.0],
+        vec![10.1, 10.1],
+    ];
 
     let heuristic = OptimalKHeuristic;
     let (k, radius, id) = heuristic.compute_optimal_k(&rows, 4, 2);
@@ -635,14 +700,22 @@ fn test_optimal_k_performance_large_dataset() {
 
 #[test]
 fn test_consistent_results_with_seed() {
-    let rows = vec![vec![0.0, 0.0], vec![0.1, 0.1], vec![5.0, 5.0], vec![5.1, 5.1]];
+    let rows = vec![
+        vec![0.0, 0.0],
+        vec![0.1, 0.1],
+        vec![5.0, 5.0],
+        vec![5.1, 5.1],
+    ];
 
     let heuristic = OptimalKHeuristic;
     let (k1, radius_1, id1) = heuristic.compute_optimal_k(&rows, 4, 2);
     let (k2, radius_2, id2) = heuristic.compute_optimal_k(&rows, 4, 2);
 
     assert_eq!(k1, k2, "K should be consistent");
-    assert!((radius_1 - radius_2).abs() < radius_1 * 0.5, "radius should be similar");
+    assert!(
+        (radius_1 - radius_2).abs() < radius_1 * 0.5,
+        "radius should be similar"
+    );
     assert_eq!(id1, id2, "ID should be consistent");
 }
 

@@ -1,9 +1,6 @@
-use approx::assert_relative_eq;
 use crate::graph::GraphLaplacian;
-use crate::{
-    builder::ArrowSpaceBuilder,
-    tests::test_data::make_moons_hd,
-};
+use crate::{builder::ArrowSpaceBuilder, tests::test_data::make_moons_hd};
+use approx::assert_relative_eq;
 
 /// Helper to compare two GraphLaplacian matrices for equality
 fn laplacian_eq(a: &GraphLaplacian, b: &GraphLaplacian, eps: f64) -> bool {
@@ -40,11 +37,11 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle_unnorm() {
     // All items already unit-normalized; toggling normalisation must not change Laplacian
     // Generate realistic data and manually normalize to unit vectors
     let items_raw: Vec<Vec<f64>> = make_moons_hd(
-        100,    // Sufficient samples
-        0.12,   // Low noise for stable structure
-        0.45,   // Good separation
-        10,     // Higher dimensionality
-        42
+        100,  // Sufficient samples
+        0.12, // Low noise for stable structure
+        0.45, // Good separation
+        10,   // Higher dimensionality
+        42,
     );
 
     // Normalize all items to unit L2 norm (||x|| = 1)
@@ -68,7 +65,8 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle_unnorm() {
         assert!(
             (norm - 1.0).abs() < 1e-10,
             "Item {} should be unit-normalized: norm = {:.12}",
-            i, norm
+            i,
+            norm
         );
     }
 
@@ -89,8 +87,10 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle_unnorm() {
         "When items are unit-normalized, Laplacians should be different as taumode is not scale-invariant"
     );
 
-    println!("✓ Unit-norm invariance verified: norm={} clusters, raw={} clusters",
-           aspace_norm.n_clusters, aspace_raw.n_clusters);
+    println!(
+        "✓ Unit-norm invariance verified: norm={} clusters, raw={} clusters",
+        aspace_norm.n_clusters, aspace_raw.n_clusters
+    );
 }
 
 #[test]
@@ -143,8 +143,10 @@ fn test_builder_direction_vs_magnitude_sensitivity_unnormalised() {
         "τ-mode should differ from normalised graph because it is magnitude-sensitive"
     );
 
-    println!("✓ Normalized: {} clusters, Tau: {} clusters",
-           aspace_norm.n_clusters, aspace_tau.n_clusters);
+    println!(
+        "✓ Normalized: {} clusters, Tau: {} clusters",
+        aspace_norm.n_clusters, aspace_tau.n_clusters
+    );
     println!("✓ Cosine (normalized) is scale-invariant, τ-mode is magnitude-sensitive");
 }
 
@@ -163,7 +165,10 @@ fn test_builder_graph_params_preservation() {
     assert_eq!(gl.graph_params.topk, 3 + 1, "topk must match");
     assert_eq!(gl.graph_params.p, 2.5, "p must match");
     assert_eq!(gl.graph_params.sigma, Some(0.15), "sigma must match");
-    assert_eq!(gl.graph_params.normalise, false, "normalise flag must match");
+    assert_eq!(
+        gl.graph_params.normalise, false,
+        "normalise flag must match"
+    );
 
     println!("✓ Graph parameters correctly preserved");
 }
@@ -172,7 +177,7 @@ fn test_builder_graph_params_preservation() {
 fn test_builder_unit_norm_diagonal_similarity() {
     // Test that unit-normalized data produces SIMILAR graph properties
     // under both normalization modes (not identical due to clustering randomness)
-    
+
     let items_raw: Vec<Vec<f64>> = make_moons_hd(80, 0.14, 0.42, 9, 789);
 
     // Normalize to unit vectors
@@ -191,16 +196,16 @@ fn test_builder_unit_norm_diagonal_similarity() {
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_normalisation(true)
-        .with_dims_reduction(false, None)  // Disable for more deterministic clustering
-        .with_inline_sampling(false)        // Disable for more deterministic clustering
+        .with_dims_reduction(false, None) // Disable for more deterministic clustering
+        .with_inline_sampling(false) // Disable for more deterministic clustering
         .build(items.clone());
 
     let (aspace_raw, gl_raw) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)  // SAME parameters
+        .with_lambda_graph(0.3, 4, 2, 2.0, None) // SAME parameters
         .with_normalisation(false)
         .with_dims_reduction(false, None)
         .with_inline_sampling(false)
-        .build(items_raw.clone());  // SAME input
+        .build(items_raw.clone()); // SAME input
 
     println!("Normalized build: {} clusters", aspace_norm.n_clusters);
     println!("Raw build: {} clusters", aspace_raw.n_clusters);
@@ -210,7 +215,9 @@ fn test_builder_unit_norm_diagonal_similarity() {
     assert!(
         cluster_diff <= 2,
         "Unit-norm data should produce similar cluster counts: {} vs {} (diff={})",
-        aspace_norm.n_clusters, aspace_raw.n_clusters, cluster_diff
+        aspace_norm.n_clusters,
+        aspace_raw.n_clusters,
+        cluster_diff
     );
 
     // Compare diagonal statistics (not exact values)
@@ -231,8 +238,11 @@ fn test_builder_unit_norm_diagonal_similarity() {
         mean_diag_norm, mean_diag_raw, mean_ratio
     );
 
-    println!("✓ Unit-norm data produces similar diagonal statistics: {} vs {} clusters", 
-             d_norm.len(), d_raw.len());
+    println!(
+        "✓ Unit-norm data produces similar diagonal statistics: {} vs {} clusters",
+        d_norm.len(),
+        d_raw.len()
+    );
 }
 
 fn compute_cosine_similarity(item1: &[f64], item2: &[f64]) -> f64 {
@@ -293,7 +303,7 @@ fn test_hybrid_similarity_scale_sensitivity() {
     let item2 = &items[1];
 
     let alpha = 0.7; // Weight for cosine component
-    let beta = 0.3;  // Weight for magnitude component
+    let beta = 0.3; // Weight for magnitude component
 
     // Test with original items
     let hybrid_original = compute_hybrid_similarity(item1, item2, alpha, beta);
@@ -366,7 +376,10 @@ fn test_builder_normalized_vs_unnormalized_clustering() {
         max_cosine_diff
     );
 
-    println!("✓ Cosine similarities verified identical (max diff: {:.2e})", max_cosine_diff);
+    println!(
+        "✓ Cosine similarities verified identical (max diff: {:.2e})",
+        max_cosine_diff
+    );
 }
 
 #[test]
@@ -403,13 +416,19 @@ fn test_builder_lambda_comparison_normalized_vs_unnormalized() {
     let lambdas_unnorm = aspace_unnorm.lambdas();
 
     println!("=== LAMBDA SPECTRAL ANALYSIS ===");
-    println!("Normalized lambdas (first 5): {:?}", &lambdas_norm[..5.min(lambdas_norm.len())]);
-    println!("Unnormalized lambdas (first 5): {:?}", &lambdas_unnorm[..5.min(lambdas_unnorm.len())]);
+    println!(
+        "Normalized lambdas (first 5): {:?}",
+        &lambdas_norm[..5.min(lambdas_norm.len())]
+    );
+    println!(
+        "Unnormalized lambdas (first 5): {:?}",
+        &lambdas_unnorm[..5.min(lambdas_unnorm.len())]
+    );
 
     // Count differences
     let min_len = lambdas_norm.len().min(lambdas_unnorm.len());
     let mut significant_diffs = 0;
-    
+
     for i in 0..min_len {
         if (lambdas_norm[i] - lambdas_unnorm[i]).abs() > 1e-6 {
             significant_diffs += 1;
@@ -442,22 +461,28 @@ fn test_magnitude_penalty_computation() {
     assert!(
         (penalty_same - expected_same).abs() < 1e-12,
         "penalty_same mismatch: got {:.12}, expected {:.12}",
-        penalty_same, expected_same
+        penalty_same,
+        expected_same
     );
     assert!(
         (penalty_diff - expected_diff).abs() < 1e-12,
         "penalty_diff mismatch: got {:.12}, expected {:.12}",
-        penalty_diff, expected_diff
+        penalty_diff,
+        expected_diff
     );
 
     // Qualitative property: similar scale > different scale
     assert!(
         penalty_same > penalty_diff,
         "Similar magnitude should yield higher penalty: same={:.6} diff={:.6}",
-        penalty_same, penalty_diff
+        penalty_same,
+        penalty_diff
     );
 
-    println!("✓ Magnitude penalty: same_scale={:.6}, diff_scale={:.6}", penalty_same, penalty_diff);
+    println!(
+        "✓ Magnitude penalty: same_scale={:.6}, diff_scale={:.6}",
+        penalty_same, penalty_diff
+    );
 }
 
 #[test]
@@ -499,7 +524,11 @@ fn test_hybrid_similarity_components() {
 
             println!(
                 "{:8.1} {:8.1} {:12.6} {:12.6} {:12.6} {:12.8}",
-                scale1, scale2, cosine, mag_penalty, hybrid,
+                scale1,
+                scale2,
+                cosine,
+                mag_penalty,
+                hybrid,
                 (hybrid - hybrid_manual).abs()
             );
 

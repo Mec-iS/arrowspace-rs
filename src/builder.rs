@@ -114,7 +114,11 @@ impl ArrowSpaceBuilder {
         );
         debug!(
             "Lambda graph will use {} for normalization",
-            if self.normalise { "normalized items" } else { "raw item magnitudes" }
+            if self.normalise {
+                "normalized items"
+            } else {
+                "raw item magnitudes"
+            }
         );
 
         self.lambda_eps = eps;
@@ -207,14 +211,23 @@ impl ArrowSpaceBuilder {
             "Building ArrowSpace from {} items with {} features",
             n_items, n_features
         );
-        debug!("Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}", 
-               self.lambda_eps, self.lambda_k, self.lambda_p, self.lambda_sigma,
-               self.normalise, self.synthesis);
+        debug!(
+            "Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}",
+            self.lambda_eps,
+            self.lambda_k,
+            self.lambda_p,
+            self.lambda_sigma,
+            self.normalise,
+            self.synthesis
+        );
 
         // 1) Create starting `ArrowSpace`
         trace!("Creating ArrowSpace from items");
         let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
-        debug!("ArrowSpace created with {} items and {} features", n_items, n_features);
+        debug!(
+            "ArrowSpace created with {} items and {} features",
+            n_items, n_features
+        );
 
         // ---- Compute optimal K automatically ----
         let (_, _, intrinsic_dim) = {
@@ -237,18 +250,16 @@ impl ArrowSpaceBuilder {
         );
 
         // Initialize sampler
-        let sampler: Mutex<DensityAdaptiveSampler> =
-            Mutex::new(DensityAdaptiveSampler::new(0.5));
+        let sampler: Mutex<DensityAdaptiveSampler> = Mutex::new(DensityAdaptiveSampler::new(0.5));
 
         // Run incremental clustering
-        let (clustered_dm, assignments, sizes) = self
-            .run_incremental_clustering_with_sampling(
-                &rows,
-                n_features,
-                self.cluster_max_clusters.unwrap(),
-                self.cluster_radius,
-                sampler,
-            );
+        let (clustered_dm, assignments, sizes) = self.run_incremental_clustering_with_sampling(
+            &rows,
+            n_features,
+            self.cluster_max_clusters.unwrap(),
+            self.cluster_radius,
+            sampler,
+        );
 
         // Store clustering results in ArrowSpace
         aspace.n_clusters = clustered_dm.shape().0;
@@ -259,12 +270,14 @@ impl ArrowSpaceBuilder {
         info!(
             "Clustering complete: {} centroids, {} items assigned",
             aspace.cluster_sizes.len(),
-            aspace.cluster_assignments.iter().filter(|x| x.is_some()).count()
+            aspace
+                .cluster_assignments
+                .iter()
+                .filter(|x| x.is_some())
+                .count()
         );
 
-        let (laplacian_input, reduced_dim) = if self.use_dims_reduction
-            && n_features > 64
-        {
+        let (laplacian_input, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
             let n_centroids = clustered_dm.shape().0;
 
             // Compute target dimension using JL bound
@@ -281,8 +294,7 @@ impl ArrowSpaceBuilder {
                 let implicit_proj = ImplicitProjection::new(n_features, target_dim);
 
                 // Project centroids using the implicit projection
-                let projected =
-                    crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
+                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 let compression = n_features as f64 / target_dim as f64;
                 info!(
@@ -343,7 +355,10 @@ impl ArrowSpaceBuilder {
         }
 
         // Compute taumode lambdas
-        info!("Computing taumode lambdas with synthesis: {:?}", self.synthesis);
+        info!(
+            "Computing taumode lambdas with synthesis: {:?}",
+            self.synthesis
+        );
         TauMode::compute_taumode_lambdas(&mut aspace, &gl, self.synthesis);
 
         let lambda_stats = {
@@ -380,7 +395,10 @@ impl ArrowSpaceBuilder {
         let nrows = rows.len();
 
         info!("Starting incremental clustering with inline sampling");
-        debug!("Parameters: max_clusters={}, radius={:.4}", max_clusters, radius);
+        debug!(
+            "Parameters: max_clusters={}, radius={:.4}",
+            max_clusters, radius
+        );
 
         // Shared clustering state
         let centroids = Mutex::new(Vec::<Vec<f64>>::new());
@@ -408,12 +426,7 @@ impl ArrowSpaceBuilder {
 
             if self.inline_sampling {
                 let mut smp = sampler.lock().unwrap();
-                let keep = smp.should_keep(
-                    row,
-                    best_dist_sq,
-                    current_cent_count,
-                    max_clusters,
-                );
+                let keep = smp.should_keep(row, best_dist_sq, current_cent_count, max_clusters);
 
                 if !keep {
                     smp.discarded_count.fetch_add(1, Ordering::Relaxed);
@@ -496,9 +509,7 @@ impl ArrowSpaceBuilder {
             flat.extend_from_slice(c);
         }
 
-        let centroids_dm: DenseMatrix<f64> = if *x_out > 0
-            && !final_centroids.is_empty()
-        {
+        let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
             debug!(
                 "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
                 flat, x_out, nfeatures
@@ -509,8 +520,7 @@ impl ArrowSpaceBuilder {
             let inline_sampling = self.inline_sampling;
             panic!("No clusters created from data, sampling: {inline_sampling}");
             #[allow(unreachable_code)]
-            DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out])
-                .unwrap()
+            DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out]).unwrap()
         };
 
         if self.inline_sampling {

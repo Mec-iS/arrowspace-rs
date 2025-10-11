@@ -1,20 +1,21 @@
-use crate::{
-    builder::ArrowSpaceBuilder,
-    tests::test_data::make_moons_hd,
-};
+use crate::{builder::ArrowSpaceBuilder, tests::test_data::make_moons_hd};
 
 #[test]
 fn test_builder_basic_clustering_with_synthetic_data() {
     // Test basic clustering functionality with high-dimensional moons data
     let items: Vec<Vec<f64>> = make_moons_hd(
-        100,    // Moderate number of samples
-        0.15,   // Moderate noise
-        0.4,    // Good separation
-        10,     // 10-dimensional data
-        42      // Reproducible seed
+        100,  // Moderate number of samples
+        0.15, // Moderate noise
+        0.4,  // Good separation
+        10,   // 10-dimensional data
+        42,   // Reproducible seed
     );
 
-    println!("Generated {} items with {} features", items.len(), items[0].len());
+    println!(
+        "Generated {} items with {} features",
+        items.len(),
+        items[0].len()
+    );
 
     let (_aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
@@ -30,11 +31,11 @@ fn test_builder_basic_clustering_with_synthetic_data() {
 fn test_builder_laplacian_diagonal_properties() {
     // Test that Laplacian diagonal entries are non-negative and finite
     let items: Vec<Vec<f64>> = make_moons_hd(
-        80,     // Sufficient samples
-        0.12,   // Low noise for stable structure
-        0.5,    // Large separation
-        8,      // 8 dimensions
-        123     // Seed
+        80,   // Sufficient samples
+        0.12, // Low noise for stable structure
+        0.5,  // Large separation
+        8,    // 8 dimensions
+        123,  // Seed
     );
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
@@ -65,33 +66,58 @@ fn test_builder_laplacian_diagonal_properties() {
             }
         }
 
-        assert!(found, "Diagonal entry at ({},{}) should exist in Laplacian", i, i);
-        assert!(diag.is_finite(), "Diagonal at ({},{}) must be finite, got {}", i, i, diag);
-        assert!(diag >= 0.0, "Diagonal at ({},{}) must be non-negative, got {}", i, i, diag);
+        assert!(
+            found,
+            "Diagonal entry at ({},{}) should exist in Laplacian",
+            i, i
+        );
+        assert!(
+            diag.is_finite(),
+            "Diagonal at ({},{}) must be finite, got {}",
+            i,
+            i,
+            diag
+        );
+        assert!(
+            diag >= 0.0,
+            "Diagonal at ({},{}) must be non-negative, got {}",
+            i,
+            i,
+            diag
+        );
     }
 
-    println!("✓ All {} diagonal entries are non-negative and finite", aspace.n_clusters);
+    println!(
+        "✓ All {} diagonal entries are non-negative and finite",
+        aspace.n_clusters
+    );
 }
 
 #[test]
 fn test_builder_minimum_items() {
     // Test minimum viable dataset
     let items: Vec<Vec<f64>> = make_moons_hd(
-        20,     // Small dataset
-        0.1,    // Low noise
-        0.6,    // High separation
-        5,      // Low dimensions
-        42
+        20,  // Small dataset
+        0.1, // Low noise
+        0.6, // High separation
+        5,   // Low dimensions
+        42,
     );
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.5, 3, 2, 2.0, None)
         .build(items.clone());
 
-    assert!(aspace.n_clusters >= 1, "Should produce at least one cluster");
+    assert!(
+        aspace.n_clusters >= 1,
+        "Should produce at least one cluster"
+    );
     assert_eq!(gl.nnodes, items.len());
-    
-    println!("Minimum items test: {} clusters from {} items", aspace.n_clusters, 20);
+
+    println!(
+        "Minimum items test: {} clusters from {} items",
+        aspace.n_clusters, 20
+    );
 }
 
 #[test]
@@ -102,7 +128,7 @@ fn test_builder_scale_invariance_with_normalization() {
     // Build with original scale
     let (aspace1, gl1) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_normalisation(true)  // Normalize for scale invariance
+        .with_normalisation(true) // Normalize for scale invariance
         .build(items.clone());
 
     // Scale all items by constant factor
@@ -115,21 +141,27 @@ fn test_builder_scale_invariance_with_normalization() {
     // Build with scaled data
     let (aspace2, gl2) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_normalisation(true)  // Normalize for scale invariance
+        .with_normalisation(true) // Normalize for scale invariance
         .build(items_scaled);
 
     // With normalization, cluster counts should be similar (allowing minor numerical differences)
     assert!(
         (aspace1.n_clusters as i32 - aspace2.n_clusters as i32).abs() <= 3,
         "Normalized clustering should be scale-invariant: {} vs {}",
-        aspace1.n_clusters, aspace2.n_clusters
+        aspace1.n_clusters,
+        aspace2.n_clusters
     );
 
     // Graph sizes should match
-    assert_eq!(gl1.nnodes, gl2.nnodes, "Graph node counts should match under scaling");
-    
-    println!("✓ Scale invariance verified: original={} clusters, scaled={} clusters", 
-           aspace1.n_clusters, aspace2.n_clusters);
+    assert_eq!(
+        gl1.nnodes, gl2.nnodes,
+        "Graph node counts should match under scaling"
+    );
+
+    println!(
+        "✓ Scale invariance verified: original={} clusters, scaled={} clusters",
+        aspace1.n_clusters, aspace2.n_clusters
+    );
 }
 
 #[test]
@@ -157,13 +189,13 @@ fn test_builder_laplacian_symmetry() {
     for i in 0..n {
         let start = indptr.into_raw_storage()[i];
         let end = indptr.into_raw_storage()[i + 1];
-        
+
         for p in start..end {
             let j = indices[p];
             if i == j {
                 continue; // Skip diagonal
             }
-            
+
             total_edges += 1;
             let vij = data[p];
 
@@ -171,7 +203,7 @@ fn test_builder_laplacian_symmetry() {
             let js = indptr.into_raw_storage()[j];
             let je = indptr.into_raw_storage()[j + 1];
             let mut vji_opt: Option<f64> = None;
-            
+
             for q in js..je {
                 if indices[q] == i {
                     vji_opt = Some(data[q]);
@@ -183,18 +215,27 @@ fn test_builder_laplacian_symmetry() {
                 assert!(
                     (vij - vji).abs() <= eps * (1.0 + vij.abs().max(vji.abs())),
                     "Symmetric entries must match: L[{},{}]={:.6} vs L[{},{}]={:.6}",
-                    i, j, vij, j, i, vji
+                    i,
+                    j,
+                    vij,
+                    j,
+                    i,
+                    vji
                 );
                 symmetric_pairs += 1;
             } else {
-                panic!("Graph should be symmetric: found edge ({},{}) = {:.6} but missing ({},{})",
-                       i, j, vij, j, i);
+                panic!(
+                    "Graph should be symmetric: found edge ({},{}) = {:.6} but missing ({},{})",
+                    i, j, vij, j, i
+                );
             }
         }
     }
 
-    println!("✓ Verified symmetry for {} edge pairs (total {} edges)", 
-           symmetric_pairs, total_edges);
+    println!(
+        "✓ Verified symmetry for {} edge pairs (total {} edges)",
+        symmetric_pairs, total_edges
+    );
 }
 
 #[test]
@@ -204,11 +245,11 @@ fn test_builder_parameter_preservation() {
 
     let (_, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(
-            0.123,          // eps
-            7,              // k
-            3,              // topk
-            3.5,            // p
-            Some(0.456)     // sigma
+            0.123,       // eps
+            7,           // k
+            3,           // topk
+            3.5,         // p
+            Some(0.456), // sigma
         )
         .with_normalisation(false)
         .build(items);
@@ -219,7 +260,10 @@ fn test_builder_parameter_preservation() {
     assert_eq!(gl.graph_params.topk, 3 + 1, "topk must match");
     assert_eq!(gl.graph_params.p, 3.5, "p must match");
     assert_eq!(gl.graph_params.sigma, Some(0.456), "sigma must match");
-    assert_eq!(gl.graph_params.normalise, false, "normalise flag must match");
+    assert_eq!(
+        gl.graph_params.normalise, false,
+        "normalise flag must match"
+    );
 
     println!("✓ All graph parameters correctly preserved");
 }
@@ -239,7 +283,7 @@ fn test_builder_with_different_dimensions() {
             0.15,
             0.4,
             dims,
-            42 + dims as u64  // Vary seed by dimension
+            42 + dims as u64, // Vary seed by dimension
         );
 
         let (aspace, gl) = ArrowSpaceBuilder::default()
@@ -249,10 +293,17 @@ fn test_builder_with_different_dimensions() {
             .build(items);
 
         assert!(aspace.n_clusters > 0, "{}: Should produce clusters", desc);
-        assert!(aspace.nfeatures == dims, "{}: Features should be {}", desc, dims);
+        assert!(
+            aspace.nfeatures == dims,
+            "{}: Features should be {}",
+            desc,
+            dims
+        );
 
-        println!("{}: {} clusters, {} features, {} nodes", 
-               desc, aspace.n_clusters, aspace.nfeatures, gl.nnodes);
+        println!(
+            "{}: {} clusters, {} features, {} nodes",
+            desc, aspace.n_clusters, aspace.nfeatures, gl.nnodes
+        );
     }
 }
 
@@ -286,10 +337,14 @@ fn test_builder_spectral_laplacian_shape() {
         aspace_spectral.signals.shape(),
         (expected_dim, expected_dim),
         "Signals should be {}x{} (feature-by-feature Laplacian)",
-        expected_dim, expected_dim
+        expected_dim,
+        expected_dim
     );
 
-    println!("✓ Spectral Laplacian shape: {:?}", aspace_spectral.signals.shape());
+    println!(
+        "✓ Spectral Laplacian shape: {:?}",
+        aspace_spectral.signals.shape()
+    );
 }
 
 #[test]
@@ -304,32 +359,36 @@ fn test_builder_lambda_values_are_nonnegative() {
         .build(items);
 
     let lambdas = aspace.lambdas();
-    
+
     for (i, &lam) in lambdas.iter().enumerate() {
         assert!(
             lam >= 0.0,
             "Lambda at index {} should be non-negative, got {:.6}",
-            i, lam
+            i,
+            lam
         );
     }
 
     let min_lambda = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let max_lambda = lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
 
-    println!("✓ All {} lambdas are non-negative: min={:.6}, max={:.6}", 
-           lambdas.len(), min_lambda, max_lambda);
+    println!(
+        "✓ All {} lambdas are non-negative: min={:.6}, max={:.6}",
+        lambdas.len(),
+        min_lambda,
+        max_lambda
+    );
 }
-
 
 #[test]
 fn test_builder_with_high_noise() {
     // Test behavior with very noisy data
     let items: Vec<Vec<f64>> = make_moons_hd(
-        80,     // Samples
-        0.5,    // HIGH noise - creates significant overlap
-        0.2,    // Small separation
-        9,      // Dimensions
-        888
+        80,  // Samples
+        0.5, // HIGH noise - creates significant overlap
+        0.2, // Small separation
+        9,   // Dimensions
+        888,
     );
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
@@ -338,7 +397,10 @@ fn test_builder_with_high_noise() {
         .build(items);
 
     // Even with high noise, should produce valid clustering
-    assert!(aspace.n_clusters > 5, "Should produce clusters even with high noise");
+    assert!(
+        aspace.n_clusters > 5,
+        "Should produce clusters even with high noise"
+    );
 }
 
 #[test]

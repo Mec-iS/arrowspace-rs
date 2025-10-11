@@ -28,7 +28,10 @@ fn two_emitters_superposition_lambda_with_moons_hd() {
     // get_item(r) returns the r-th item (column) in ArrowSpace, so rebuild rows by iterating columns.
     let (nitems, _nfeatures) = aspace_sum.data.shape();
     // Expect two rows (features) over N items after from_items_default above.
-    assert_eq!(nitems, 2, "Expected exactly two signal rows from row_a/row_b");
+    assert_eq!(
+        nitems, 2,
+        "Expected exactly two signal rows from row_a/row_b"
+    );
 
     let mut data_matrix: Vec<Vec<f64>> = Vec::with_capacity(nitems);
     for r in 0..nitems {
@@ -36,7 +39,11 @@ fn two_emitters_superposition_lambda_with_moons_hd() {
     }
     // Sanity on sizes: 2 rows, N columns
     assert_eq!(data_matrix.len(), 2, "Expected two rows in data matrix");
-    assert_eq!(data_matrix[0].len(), n, "Row length should equal number of items");
+    assert_eq!(
+        data_matrix[0].len(),
+        n,
+        "Row length should equal number of items"
+    );
 
     // Build λτ-graph with cosine-like normalization to stabilize affinities in high-D.
     // Tune parameters to yield a connected or near-connected graph with reasonable sparsity.
@@ -87,8 +94,16 @@ fn two_emitters_superposition_lambda_with_moons_hd() {
     // Optional: ensure smallest two λ are non-negative and the smallest is ~0 within tolerance
     // which is consistent with Laplacian PSD and having at least one zero eigenvalue.
     let ls = aspace_sum.lambdas();
-    assert!(ls[0] >= -1e-12, "Smallest eigenvalue should be ≥ 0: {}", ls[0]);
+    assert!(
+        ls[0] >= -1e-12,
+        "Smallest eigenvalue should be ≥ 0: {}",
+        ls[0]
+    );
     if ls.len() > 1 {
-        assert!(ls[1] >= -1e-12, "Fiedler eigenvalue should be ≥ 0: {}", ls[1]);
+        assert!(
+            ls[1] >= -1e-12,
+            "Fiedler eigenvalue should be ≥ 0: {}",
+            ls[1]
+        );
     }
 }

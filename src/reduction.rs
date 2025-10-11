@@ -124,7 +124,10 @@ use smartcore::linalg::basic::{
 /// For n points and tolerance ε, need r = O(log(n) / ε²) dimensions
 /// to preserve pairwise distances within (1±ε) with high probability.
 pub fn compute_jl_dimension(n_points: usize, epsilon: f64) -> usize {
-    debug!("Computing JL optimal dimensions for n_points {:?}", n_points);
+    debug!(
+        "Computing JL optimal dimensions for n_points {:?}",
+        n_points
+    );
     let log_n = (n_points as f64).ln();
     let eps_sq = epsilon.powf(2.0);
 
@@ -171,7 +174,11 @@ pub struct ImplicitProjection {
 
 impl ImplicitProjection {
     pub fn new(original_dim: usize, reduced_dim: usize) -> Self {
-        Self { original_dim, reduced_dim, seed: rand::random() }
+        Self {
+            original_dim,
+            reduced_dim,
+            seed: rand::random(),
+        }
     }
 
     /// Project query without storing matrix

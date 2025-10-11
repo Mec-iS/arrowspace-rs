@@ -27,7 +27,10 @@ pub struct DensityAdaptiveSampler {
 
 impl InlineSampler for DensityAdaptiveSampler {
     fn new(target_rate: f64) -> Self {
-        info!("Density-adaptive sampler with base rate {:.2}%", target_rate * 100.0);
+        info!(
+            "Density-adaptive sampler with base rate {:.2}%",
+            target_rate * 100.0
+        );
         Self {
             base_rate: target_rate,
             current_idx: 0,
@@ -57,8 +60,7 @@ impl InlineSampler for DensityAdaptiveSampler {
 
         // Lower saturation → keep more to build coverage
         // Higher saturation → sample more aggressively
-        let adaptive_rate =
-            self.base_rate * (1.0 - saturation * 0.1) * (1.0 + dist_factor * 0.3);
+        let adaptive_rate = self.base_rate * (1.0 - saturation * 0.1) * (1.0 + dist_factor * 0.3);
         let adaptive_rate = adaptive_rate.clamp(0.01, 1.0);
 
         let keep = self.rng.random::<f64>() < adaptive_rate;
