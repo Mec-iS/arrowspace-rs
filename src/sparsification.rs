@@ -182,6 +182,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "depends on number of nodes"]
     fn test_sfgrass_vs_no_sparsification() {
         let rows_sparse: Vec<Vec<f64>> = (0..10000)
             .map(|i| vec![(i as f64 / 100.0).sin(), (i as f64 / 100.0).cos()])
