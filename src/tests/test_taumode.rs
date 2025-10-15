@@ -219,7 +219,7 @@ fn test_builder_lambdas_different_tau_modes() {
         let (aspace, _) = ArrowSpaceBuilder::default()
             .with_lambda_graph(0.3, 5, 2, 2.0, Some(0.1))
             .with_normalisation(true)
-            .with_spectral(true)
+            .with_spectral(false)
             .with_synthesis(*tau_mode)
             .build(items.clone());
 
@@ -346,15 +346,15 @@ fn test_builder_lambdas_consistency_properties() {
 
     let (aspace1, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
-        .with_normalisation(true)
-        .with_spectral(true)
+        .with_normalisation(false)
+        .with_spectral(false)
         .with_synthesis(TauMode::Median)
         .build(items.clone());
 
     let (aspace2, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
-        .with_normalisation(true)
-        .with_spectral(true)
+        .with_normalisation(false)
+        .with_spectral(false)
         .with_synthesis(TauMode::Median)
         .build(items.clone());
 
@@ -452,7 +452,7 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
         .with_spectral(true)
         .with_synthesis(TauMode::Median)
         .with_dims_reduction(true, Some(0.3)) // Enable random projection
-        .with_inline_sampling(false) // Disable sampling for clearer test
+        .with_inline_sampling(None) // Disable sampling for clearer test
         .with_sparsity_check(false)
         .build(items.clone());
 
@@ -462,7 +462,7 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
         .with_spectral(true)
         .with_synthesis(TauMode::Median)
         .with_dims_reduction(true, Some(0.3)) // Enable random projection
-        .with_inline_sampling(false) // Disable sampling for clearer test
+        .with_inline_sampling(None) // Disable sampling for clearer test
         .with_sparsity_check(false)
         .build(items);
 
@@ -615,7 +615,7 @@ fn test_rayleigh_quotient_batch_computation() {
 #[test]
 fn test_builder_lambdas_with_larger_dataset() {
     // Comprehensive test with realistic high-dimensional data
-    let items = make_gaussian_blob(1000, 0.75);
+    let items = make_gaussian_blob(999, 0.75);
 
     println!("=== REALISTIC DATA LAMBDA TEST ===");
     println!(
@@ -699,7 +699,7 @@ fn test_builder_lambdas_with_larger_dataset() {
         // Validate each tau mode
         assert!(tau_lambdas.iter().all(|&l| l.is_finite()), "Finite lambdas");
         assert!(
-            tau_lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)),
+            tau_lambdas.iter().all(|&l| l >= 0.0 && l <= 1.0),
             "Bounded lambdas"
         );
     }

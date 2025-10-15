@@ -697,6 +697,7 @@ fn test_project_query_preserves_dot_product_sign() {
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.35))
+        .with_seed(42)
         .build(data);
 
     let query_pos = queries[0].clone();

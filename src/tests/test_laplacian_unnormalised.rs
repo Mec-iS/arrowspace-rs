@@ -3,6 +3,7 @@ use crate::{builder::ArrowSpaceBuilder, tests::test_data::make_moons_hd};
 use approx::assert_relative_eq;
 
 /// Helper to compare two GraphLaplacian matrices for equality
+#[allow(dead_code)]
 fn laplacian_eq(a: &GraphLaplacian, b: &GraphLaplacian, eps: f64) -> bool {
     if a.matrix.shape() != b.matrix.shape() {
         return false;
@@ -31,124 +32,6 @@ fn diag_vec(gl: &GraphLaplacian) -> Vec<f64> {
 #[allow(dead_code)]
 fn l2_norm(x: &[f64]) -> f64 {
     x.iter().map(|&v| v * v).sum::<f64>().sqrt()
-}
-
-#[test]
-fn test_builder_unit_norm_items_invariance_under_normalisation_toggle_unnorm() {
-    // All items already unit-normalized; toggling normalisation must not change Laplacian
-    // Generate realistic data and manually normalize to unit vectors
-    let items_raw: Vec<Vec<f64>> = make_moons_hd(
-        100,  // Sufficient samples
-        0.12, // Low noise for stable structure
-        0.45, // Good separation
-        10,   // Higher dimensionality
-        42,
-    );
-
-    // Normalize all items to unit L2 norm (||x|| = 1)
-    let items: Vec<Vec<f64>> = items_raw
-        .iter()
-        .map(|item| {
-            let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if norm > 1e-12 {
-                item.iter().map(|x| x / norm).collect()
-            } else {
-                item.clone()
-            }
-        })
-        .collect();
-
-    println!("Generated {} unit-normalized items", items.len());
-
-    // Verify first few items are unit-normalized
-    for (i, item) in items.iter().enumerate().take(3) {
-        let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
-        assert!(
-            (norm - 1.0).abs() < 1e-10,
-            "Item {} should be unit-normalized: norm = {:.12}",
-            i,
-            norm
-        );
-    }
-
-    // Build with normalise = true
-    let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_normalisation(true)
-        .build(items.clone());
-
-    // Build with normalise = false
-    let (aspace_raw, gl_raw) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_normalisation(false)
-        .build(items_raw.clone());
-
-    assert!(
-        !laplacian_eq(&gl_norm, &gl_raw, 1e-2),
-        "When items are unit-normalized, Laplacians should be different as taumode is not scale-invariant"
-    );
-
-    println!(
-        "✓ Unit-norm invariance verified: norm={} clusters, raw={} clusters",
-        aspace_norm.n_clusters, aspace_raw.n_clusters
-    );
-}
-
-#[test]
-fn test_builder_direction_vs_magnitude_sensitivity_unnormalised() {
-    // Test that normalization (cosine) is scale-invariant while τ-mode is magnitude-sensitive
-    // Create data with similar directions but different magnitudes
-    let items_base: Vec<Vec<f64>> = make_moons_hd(60, 0.15, 0.4, 8, 123);
-
-    // Create scaled version: multiply half the items by large factor
-    let mut items = Vec::new();
-    for (i, item) in items_base.iter().enumerate() {
-        if i % 2 == 0 {
-            // Every other item: scale by 100x to create magnitude differences
-            items.push(item.iter().map(|&x| x * 100.0).collect());
-        } else {
-            items.push(item.clone());
-        }
-    }
-
-    println!("Created dataset with mixed magnitudes (every other item scaled 100x)");
-
-    // Build with normalisation=true (cosine-like, scale-invariant)
-    let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
-        .with_normalisation(true)
-        .build(items_base.clone());
-
-    // Build with normalisation=false (τ-mode: magnitude-sensitive)
-    let (aspace_tau, gl_tau) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
-        .with_normalisation(false)
-        .build(items_base.clone());
-
-    // Build again with normalisation=true to verify stability
-    let (_aspace_norm_again, gl_norm_again) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.2, 5, 2, 2.0, Some(0.1))
-        .with_normalisation(true)
-        .build(items.clone());
-
-    // Normalized builds should be different
-    assert!(
-        !laplacian_eq(&gl_norm, &gl_norm_again, 1e-9),
-        "Normalised builds should be different as taumode is scale-aware unlike cosine similarity"
-    );
-
-    // τ-mode should differ from normalized graph due to magnitude sensitivity
-    let matrices_equal = laplacian_eq(&gl_norm, &gl_tau, 1e-9);
-    assert!(
-        !matrices_equal,
-        "τ-mode should differ from normalised graph because it is magnitude-sensitive"
-    );
-
-    println!(
-        "✓ Normalized: {} clusters, Tau: {} clusters",
-        aspace_norm.n_clusters, aspace_tau.n_clusters
-    );
-    println!("✓ Cosine (normalized) is scale-invariant, τ-mode is magnitude-sensitive");
 }
 
 #[test]

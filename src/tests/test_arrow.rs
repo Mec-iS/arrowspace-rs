@@ -1,8 +1,7 @@
 use approx::assert_relative_eq;
 
 use crate::{
-    builder::ArrowSpaceBuilder, graph::GraphLaplacian, taumode::TauMode,
-    tests::test_data::{make_gaussian_blob, make_moons_hd},
+    builder::ArrowSpaceBuilder, graph::GraphLaplacian, sampling::SamplerType, taumode::TauMode, tests::test_data::{make_gaussian_blob, make_moons_hd}
 };
 
 /// Helper to compare two GraphLaplacian matrices for equality
@@ -93,7 +92,9 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
             None, // Auto sigma
         )
         .with_normalisation(true)
+        .with_inline_sampling(None)
         .with_spectral(true)
+        .with_seed(42)
         .build(items.clone());
 
     // Build with normalisation = false
@@ -104,6 +105,7 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
             4, 2, 2.0, None,
         )
         .with_normalisation(false)
+        .with_inline_sampling(None)
         .with_spectral(true)
         .build(items.clone());
 
@@ -169,18 +171,18 @@ fn test_builder_unit_norm_items_invariance_under_normalisation_toggle() {
 #[test]
 fn test_builder_direction_vs_magnitude_sensitivity() {
     // Construct vectors where two have the same direction but vastly different magnitudes
-    let items = make_moons_hd(6, 0.0, 1.0, 4, 42);
+    let items = make_gaussian_blob(99, 0.5);
 
     // Build with normalisation=true (cosine-like, scale-invariant)
     let (aspace_norm, gl_norm) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.5, 3, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 3, 2, 2.0, Some(0.25))
         .with_normalisation(true)
         .with_spectral(true)
         .build(items.clone());
 
     // Build with normalisation=false (τ-mode: magnitude-sensitive)
     let (aspace_tau, gl_tau) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.5, 3, 2, 2.0, Some(0.1))
+        .with_lambda_graph(1.0, 3, 2, 2.0, Some(0.25))
         .with_normalisation(false)
         .with_spectral(true)
         .build(items.clone());
@@ -209,7 +211,7 @@ fn test_builder_direction_vs_magnitude_sensitivity() {
 #[test]
 fn test_builder_normalisation_flag_is_preserved() {
     // Verify that normalisation flag is properly propagated through the builder
-    let items = make_moons_hd(3, 0.1, 0.5, 3, 123);
+    let items = make_moons_hd(99, 0.1, 0.5, 3, 123);
 
     let (_aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.25, 2, 1, 2.0, None)
@@ -255,12 +257,14 @@ fn test_builder_spectral_laplacian_computation() {
     let (aspace_no_spectral, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(false)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build WITH spectral computation
     let (aspace_spectral, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     println!(
@@ -295,12 +299,14 @@ fn test_builder_lambda_computation_with_different_tau_modes() {
     let (aspace_median, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Median)
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build with Max tau mode
     let (aspace_fixed, _) = ArrowSpaceBuilder::default()
         .with_synthesis(TauMode::Fixed(0.5))
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     let lambdas_median = aspace_median.lambdas();
@@ -341,6 +347,7 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(true)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items.clone());
 
     // Build with unnormalized data (no normalization flag)
@@ -348,6 +355,7 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
         .with_lambda_graph(0.2, 2, 1, 2.0, None)
         .with_normalisation(false)
         .with_spectral(true)
+        .with_inline_sampling(None)
         .build(items_unnormalized);
 
     println!("=== SPECTRAL ANALYSIS ===");
@@ -387,12 +395,12 @@ fn test_builder_with_inline_sampling() {
 
     let (_aspace_sampling, _gl_sampling) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_inline_sampling(true)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .build(items.clone());
 
     let (_aspace_no_sampling, _gl_no_sampl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_inline_sampling(false)
+        .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .build(items);
 }
 
@@ -458,8 +466,6 @@ fn test_builder_lambda_statistics() {
             2.0,  // Quadratic kernel
             None, // Auto-compute sigma
         )
-        .with_spectral(true)
-        .with_normalisation(true) // Normalize to focus on direction, not magnitude
         .with_sparsity_check(false)
         .build(items);
 

@@ -1,5 +1,4 @@
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 // Add logging
 use log::{debug, info, trace, warn};
 
@@ -11,7 +10,7 @@ use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::reduction::{compute_jl_dimension, ImplicitProjection};
-use crate::sampling::{DensityAdaptiveSampler, InlineSampler};
+use crate::sampling::{InlineSampler, SamplerType};
 use crate::taumode::TauMode;
 
 #[derive(Clone, Debug)]
@@ -36,11 +35,11 @@ pub struct ArrowSpaceBuilder {
     lambda_topk: usize,
     lambda_p: f64,
     lambda_sigma: Option<f64>,
-    normalise: bool,
+    normalise: bool,   // using normalisation is not relevant for taumode, do not use if are not sure
     sparsity_check: bool,
 
     // activate sampling, default false
-    pub inline_sampling: bool,
+    pub sampling: Option<SamplerType>,
 
     // Synthetic index configuration (used `with_synthesis`)
     synthesis: TauMode, // (tau_mode)
@@ -75,7 +74,8 @@ impl Default for ArrowSpaceBuilder {
             lambda_sigma: None, // means σ := eps inside the builder
             normalise: false,
             sparsity_check: false,
-            inline_sampling: false,
+            // sampling default
+            sampling: Some(SamplerType::Simple(0.6)),
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
@@ -164,9 +164,9 @@ impl ArrowSpaceBuilder {
         self
     }
 
-    pub fn with_inline_sampling(mut self, sampling: bool) -> Self {
-        info!("Configuring inline sampling: {:?}", sampling);
-        self.inline_sampling = sampling;
+    pub fn with_inline_sampling(mut self, sampling: Option<SamplerType>) -> Self {
+        info!("Configuring inline sampling: {}", sampling.as_ref().unwrap());
+        self.sampling = sampling;
         self
     }
 
@@ -243,6 +243,13 @@ impl ArrowSpaceBuilder {
             n_items, n_features
         );
 
+        // Sampler switch
+        let sampler: Arc<Mutex<dyn InlineSampler>> = match self.sampling {
+            Some(SamplerType::Simple(r)) => Arc::new(Mutex::new(SamplerType::new_simple(r))),
+            Some(SamplerType::DensityAdaptive(r)) => Arc::new(Mutex::new(SamplerType::new_density_adaptive(r))),
+            None => Arc::new(Mutex::new(SamplerType::new_simple(0.6))),
+        };
+
         // ---- Compute optimal K automatically ----
         let (_, _, intrinsic_dim) = {
             info!("Auto-computing optimal clustering parameters");
@@ -263,10 +270,8 @@ impl ArrowSpaceBuilder {
             intrinsic_dim
         );
 
-        // Initialize sampler
-        let sampler: Mutex<DensityAdaptiveSampler> = Mutex::new(DensityAdaptiveSampler::new(0.5));
-
         // Run incremental clustering
+        // include inline sampling if flag is on
         let (clustered_dm, assignments, sizes) = self.run_incremental_clustering_with_sampling(
             &rows,
             n_features,
@@ -404,7 +409,7 @@ impl ArrowSpaceBuilder {
         nfeatures: usize,
         max_clusters: usize,
         radius: f64,
-        sampler: Mutex<DensityAdaptiveSampler>,
+        sampler: Arc<Mutex<dyn InlineSampler>>,
     ) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {
         let nrows = rows.len();
 
@@ -435,20 +440,16 @@ impl ArrowSpaceBuilder {
                 Self::nearest_centroid(row, &cent_snap)
             };
 
-            // Implement sampling
-            let current_cent_count = cent_snap.len();
 
-            if self.inline_sampling {
+            if self.sampling.is_some() {
+                // Implement sampling
+                let current_cent_count = cent_snap.len();
+
                 let mut smp = sampler.lock().unwrap();
                 let keep = smp.should_keep(row, best_dist_sq, current_cent_count, max_clusters);
 
-                if !keep {
-                    smp.discarded_count.fetch_add(1, Ordering::Relaxed);
-                    trace!("Row {} discarded by sampler", row_idx);
-                    return; // Skip this row entirely
-                }
-
-                smp.sampled_count.fetch_add(1, Ordering::Relaxed);
+                // if not keep, go to the next row
+                if !keep { return; }
             }
 
             // Clustering logic
@@ -536,34 +537,33 @@ impl ArrowSpaceBuilder {
             dm
         } else {
             warn!("No clusters created; returning zero matrix");
-            let inline_sampling = self.inline_sampling;
-            panic!("No clusters created from data, sampling: {inline_sampling}");
+            let inline_sampling = self.sampling.as_ref().unwrap();
+            panic!("No clusters created from data, sampling: {}", inline_sampling);
             #[allow(unreachable_code)]
             DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out]).unwrap()
         };
 
-        if self.inline_sampling {
-            let smp = sampler.into_inner().unwrap();
-            let sampled = smp.sampled_count.load(Ordering::Relaxed);
-            let discarded = smp.discarded_count.load(Ordering::Relaxed);
-            let sampling_rate = sampled as f64 / nrows as f64;
+        if self.sampling.is_some() {
+            let smp = sampler.lock().unwrap();
+            let (sampled, discarded) = smp.get_stats();
+            let sampling_ratio = sampled as f64 / nrows as f64;
 
             debug!(
                 "Inline sampling complete: {} kept ({:.2}%), {} discarded",
                 sampled,
-                sampling_rate * 100.0,
+                sampling_ratio * 100.0,
                 discarded
             );
             debug!(
                 "Clustering produced {} centroids from {} rows ({}% sampling)",
                 final_centroids.len(),
                 nrows,
-                sampling_rate * 100.0
+                sampling_ratio * 100.0
             );
             #[cfg(not(test))]
             assert!(
-                sampling_rate > 0.325 && sampling_rate < 0.89,
-                "sampling_rate not in the interval 0.325..0.875 but {sampling_rate}"
+                sampling_ratio > 0.325 && sampling_ratio < 0.89,
+                "sampling_rate not in the interval 0.325..0.875 but {sampling_ratio}"
             );
         } else {
             debug!(

@@ -10,3 +10,4 @@ mod test_laplacian_unnormalised;
 mod test_querying_proj;
 mod test_reduction;
 mod test_taumode;
+mod test_sparsification;

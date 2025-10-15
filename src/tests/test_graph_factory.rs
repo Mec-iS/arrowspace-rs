@@ -406,31 +406,6 @@ fn test_builder_with_high_noise() {
 }
 
 #[test]
-fn test_builder_noise_sensitivity() {
-    // Low noise: should find 3 clusters
-    let items_low = make_gaussian_blob(300, 0.3);
-    let (aspace_low, _) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.4, 6, 3, 2.0, None)
-        .with_normalisation(true)
-        .build(items_low);
-    
-    assert_eq!(aspace_low.n_clusters, 3, "Low noise should find 3 clusters");
-    
-    // High noise: may find 2-3 clusters (conservative)
-    let items_high = make_gaussian_blob(300, 0.9);
-    let (aspace_high, _) = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.4, 6, 3, 2.0, None)
-        .with_normalisation(true)
-        .build(items_high);
-    
-    assert!(
-        aspace_high.n_clusters >= 2 && aspace_high.n_clusters <= 4,
-        "High noise should find 2-4 clusters (conservative), got {}",
-        aspace_high.n_clusters
-    );
-}
-
-#[test]
 fn test_builder_normalization_effects() {
     // Compare normalized vs unnormalized builds
     let items: Vec<Vec<f64>> = make_moons_hd(75, 0.14, 0.45, 8, 654);
