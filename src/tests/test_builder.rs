@@ -367,3 +367,60 @@ fn test_density_adaptive_maintains_lambda_quality() {
         assert!(has_variance, "Lambdas should have some variance");
     }
 }
+
+#[test]
+fn test_with_deterministic_seed() {
+    let items = make_moons_hd(80, 0.50, 0.50, 9, 789);
+    let seed = 42u64;
+    
+    let (aspace1, _) = ArrowSpaceBuilder::default()
+        .with_seed(seed)
+        .build(items.clone());
+    
+    let (aspace2, _) = ArrowSpaceBuilder::default()
+        .with_seed(seed)
+        .build(items.clone());
+    
+    // Should be identical
+    assert_eq!(aspace1.n_clusters, aspace2.n_clusters);
+}
+
+#[test]
+fn test_builder_unit_norm_diagonal_similarity() {
+    let items_raw: Vec<Vec<f64>> = make_moons_hd(80, 0.50, 0.50, 9, 789);
+    
+    let items: Vec<Vec<f64>> = items_raw
+        .iter()
+        .map(|item| {
+            let norm = item.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if norm > 1e-12 {
+                item.iter().map(|x| x / norm).collect()
+            } else {
+                item.clone()
+            }
+        })
+        .collect();
+    
+    let seed = 42u64;
+    
+    let (aspace_norm, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_normalisation(true)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(false)
+        .with_seed(seed)
+        .build(items.clone());
+    
+    let (aspace_raw, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 4, 2, 2.0, None)
+        .with_normalisation(false)
+        .with_dims_reduction(false, None)
+        .with_inline_sampling(false)
+        .with_seed(seed)
+        .build(items_raw.clone());
+    
+    // Now should be identical
+    assert_eq!(aspace_norm.n_clusters, aspace_raw.n_clusters);
+}
+
+

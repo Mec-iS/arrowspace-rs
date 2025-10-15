@@ -127,7 +127,7 @@ fn test_implicit_projection_non_trivial() {
 #[test]
 fn test_project_matrix_dimensions() {
     let data = vec![1.0; 60]; // 3 rows × 20 cols
-    let matrix = DenseMatrix::from_iterator(data.into_iter(), 3, 20, 0);
+    let matrix = DenseMatrix::from_iterator(data.into_iter(), 3, 20, 1);
     let proj = ImplicitProjection::new(20, 5);
 
     let projected = project_matrix(&matrix, &proj);
@@ -138,7 +138,7 @@ fn test_project_matrix_dimensions() {
 #[test]
 fn test_project_matrix_preserves_rows() {
     let data = vec![0.5; 100]; // 10 rows × 10 cols
-    let matrix = DenseMatrix::from_iterator(data.into_iter(), 10, 10, 0);
+    let matrix = DenseMatrix::from_iterator(data.into_iter(), 10, 10, 1);
     let proj = ImplicitProjection::new(10, 3);
 
     let projected = project_matrix(&matrix, &proj);

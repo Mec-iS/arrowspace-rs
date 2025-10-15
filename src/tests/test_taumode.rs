@@ -614,7 +614,7 @@ fn test_rayleigh_quotient_batch_computation() {
 #[test]
 fn test_builder_lambdas_with_realistic_data() {
     // Comprehensive test with realistic high-dimensional data
-    let items = make_moons_hd(200, 0.18, 0.35, 50, 42);
+    let items = make_moons_hd(200, 0.50, 0.50, 50, 42);
 
     println!("=== REALISTIC DATA LAMBDA TEST ===");
     println!(

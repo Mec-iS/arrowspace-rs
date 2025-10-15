@@ -49,6 +49,8 @@ pub struct ArrowSpaceBuilder {
     cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
     cluster_radius: f64,
+    clustering_seed: Option<u64>,
+    deterministic_clustering: bool,
 
     // dimensionality reduction with random projection (dafault false)
     use_dims_reduction: bool,
@@ -77,6 +79,8 @@ impl Default for ArrowSpaceBuilder {
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
+            clustering_seed: None,
+            deterministic_clustering: false,
             // dim reduction
             use_dims_reduction: false,
             rp_eps: 0.3,
@@ -172,6 +176,16 @@ impl ArrowSpaceBuilder {
         self
     }
 
+    /// Set a custom seed for deterministic clustering.
+    /// Enable sequential (deterministic) clustering.
+    /// This ensures reproducible results at the cost of parallelization.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        info!("Setting custom clustering seed: {}", seed);
+        self.clustering_seed = Some(seed);
+        self.deterministic_clustering = true;
+        self
+    }
+
     /// Define the results number of k-neighbours from the
     ///  max number of neighbours connections (`GraphParams::k` -> result_k)
     /// Check if the passed cap_k is reasonable and define an euristics to
@@ -232,7 +246,7 @@ impl ArrowSpaceBuilder {
         // ---- Compute optimal K automatically ----
         let (_, _, intrinsic_dim) = {
             info!("Auto-computing optimal clustering parameters");
-            let params = self.compute_optimal_k(&rows, n_items, n_features);
+            let params = self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
             info!(
                 "Auto K={}, radius={:.6}, intrinsic_dim={}",
                 params.0, params.1, params.2
@@ -496,7 +510,11 @@ impl ArrowSpaceBuilder {
         };
 
         // Process rows in parallel (sampling decisions are thread-safe via state snapshots)
-        (0..nrows).into_par_iter().for_each(process_row);
+        if self.deterministic_clustering {
+            (0..nrows).for_each(process_row);
+        } else {
+            (0..nrows).into_par_iter().for_each(process_row);
+        }
 
         let final_centroids = centroids.into_inner().unwrap();
         let final_counts = counts.into_inner().unwrap();
@@ -514,7 +532,8 @@ impl ArrowSpaceBuilder {
                 "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
                 flat, x_out, nfeatures
             );
-            DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 0)
+            let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
+            dm
         } else {
             warn!("No clusters created; returning zero matrix");
             let inline_sampling = self.inline_sampling;

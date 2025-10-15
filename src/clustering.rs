@@ -28,48 +28,44 @@ const CLUSTERING_SEED: u64 = 128;
 pub trait ClusteringHeuristic {
     /// Compute optimal number of clusters K, squared-distance threshold radius,
     /// and estimated intrinsic dimension from NxF data matrix.
-    fn compute_optimal_k(&self, rows: &[Vec<f64>], n: usize, f: usize) -> (usize, f64, usize)
+    fn compute_optimal_k(&self, rows: &[Vec<f64>], n: usize, f: usize, seed_override: Option<u64>) -> (usize, f64, usize)
     where
         Self: Sync,
     {
         info!("Computing optimal K for clustering: N={}, F={}", n, f);
 
-        // Step 1: Establish bounds
-        let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f);
-        info!(
-            "step 1 bounds: K in [{}, {}], intrinsic_dim ≈ {}",
-            k_min, k_max, id_est
-        );
 
-        // Step 2: Spectral gap via Calinski-Harabasz
-        let sample_size = n.min(1000);
-        let sample_indices: Vec<usize> = if n > sample_size {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(CLUSTERING_SEED);
-            let mut idxs: Vec<usize> = (0..n).collect();
-            idxs.shuffle(&mut rng);
-            idxs[..sample_size].to_vec()
-        } else {
-            (0..n).collect()
-        };
+    let base_seed = seed_override.unwrap_or(CLUSTERING_SEED);
+    
+    info!("Computing optimal K for clustering: N={}, F={} (seed={})", n, f, base_seed);
+    
+    let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
 
-        let sampled_rows: Vec<Vec<f64>> = sample_indices
-            .par_iter()
-            .map(|&i| rows[i].clone())
-            .collect();
+    let sample_size = n.min(1000);
+    let sample_indices: Vec<usize> = if n > sample_size {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed);
+        let mut idxs: Vec<usize> = (0..n).collect();
+        idxs.shuffle(&mut rng);
+        idxs[..sample_size].to_vec()
+    } else {
+        (0..n).collect()
+    };
 
-        let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max);
-        info!("step 2 Calinski-Harabasz suggests K = {}", k_optimal);
+    let sampled_rows: Vec<Vec<f64>> = sample_indices
+        .par_iter()
+        .map(|&i| rows[i].clone())
+        .collect();
+    
+    let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max, base_seed);
 
-        // Step 3: Derive radius threshold
-        let radius = self.compute_threshold_from_pilot(&sampled_rows, k_optimal);
-        info!("Computed radius threshold: {:.6}", radius);
+    let radius = self.compute_threshold_from_pilot(&sampled_rows, k_optimal, base_seed);
 
         (k_optimal, radius, id_est)
     }
 
     // Step 1: Bounds via N/F and intrinsic dimension
-    fn step1_bounds(&self, rows: &[Vec<f64>], n: usize, f: usize) -> (usize, usize, usize) {
-        let id_est = self.estimate_intrinsic_dimension(rows, n, f);
+    fn step1_bounds(&self, rows: &[Vec<f64>], n: usize, f: usize, base_seed: u64) -> (usize, usize, usize) {
+        let id_est = self.estimate_intrinsic_dimension(rows, n, f, base_seed);
         debug!("Intrinsic dimension estimate: {}", id_est);
 
         let k_min = ((n as f64 / 10.0).sqrt().ceil() as usize).max(2);
@@ -88,13 +84,13 @@ pub trait ClusteringHeuristic {
     }
 
     /// Estimate intrinsic dimension via Two-NN ratio method (DETERMINISTIC).
-    fn estimate_intrinsic_dimension(&self, rows: &[Vec<f64>], n: usize, f: usize) -> usize {
+    fn estimate_intrinsic_dimension(&self, rows: &[Vec<f64>], n: usize, f: usize, base_seed: u64) -> usize {
         if n < 10 {
             return f.min(2);
         }
 
         let sample_size = n.min(500);
-        let mut rng = rand::rngs::StdRng::seed_from_u64(CLUSTERING_SEED.wrapping_add(1));
+        let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed.wrapping_add(1));
         let mut indices: Vec<usize> = (0..n).collect();
         indices.shuffle(&mut rng);
         let sample_indices = &indices[..sample_size];
@@ -148,7 +144,7 @@ pub trait ClusteringHeuristic {
     }
 
     // Step 2: Calinski-Harabasz for optimal K (DETERMINISTIC with full parallelism)
-    fn step2_calinski_harabasz(&self, rows: &[Vec<f64>], k_min: usize, k_max: usize) -> usize
+    fn step2_calinski_harabasz(&self, rows: &[Vec<f64>], k_min: usize, k_max: usize, base_seed: u64) -> usize
     where
         Self: Sync,
     {
@@ -181,7 +177,7 @@ pub trait ClusteringHeuristic {
                     .into_par_iter()
                     .map(|trial| {
                         // Derive unique seed: base + k*1000 + trial
-                        let trial_seed = CLUSTERING_SEED
+                        let trial_seed = base_seed
                             .wrapping_add((k as u64) * 1000)
                             .wrapping_add(trial as u64);
 
@@ -239,7 +235,7 @@ pub trait ClusteringHeuristic {
                         .into_par_iter()
                         .map(|trial| {
                             // Fine-tuning seed: base + k*10000 + trial
-                            let trial_seed = CLUSTERING_SEED
+                            let trial_seed = base_seed
                                 .wrapping_add((k as u64) * 10000)
                                 .wrapping_add(trial as u64);
 
@@ -360,8 +356,8 @@ pub trait ClusteringHeuristic {
     }
 
     // Step 3: Adaptive threshold (DETERMINISTIC)
-    fn compute_threshold_from_pilot(&self, rows: &[Vec<f64>], k: usize) -> f64 {
-        let assignments = kmeans_lloyd(rows, k, 20, CLUSTERING_SEED.wrapping_add(100000));
+    fn compute_threshold_from_pilot(&self, rows: &[Vec<f64>], k: usize, base_seed: u64) -> f64 {
+        let assignments = kmeans_lloyd(rows, k, 20, base_seed.wrapping_add(100000));
         let f = rows[0].len();
 
         let centroids_counts: Vec<(Vec<f64>, usize)> = (0..k)
@@ -491,7 +487,7 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
 
     // Flatten row-major data
     let x: DenseMatrix<f64> =
-        DenseMatrix::from_iterator(rows.into_iter().flatten().map(|x| *x), n, f, 0);
+        DenseMatrix::from_iterator(rows.into_iter().flatten().map(|x| *x), n, f, 1);
 
     // Create parameters with explicit seed
     let params = KMeansParameters {

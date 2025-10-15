@@ -437,7 +437,7 @@ fn test_builder_lambda_statistics() {
         200, // Sufficient samples for meaningful statistics
         0.3, // High noise for variance - standard deviation of Gaussian noise
         0.5, // Moderate separation between moons
-        15,  // High dimensionality to spread variance
+        40,  // High dimensionality to spread variance
         42,  // Fixed seed for reproducibility
     );
 
