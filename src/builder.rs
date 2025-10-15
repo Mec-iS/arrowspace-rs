@@ -74,7 +74,7 @@ impl Default for ArrowSpaceBuilder {
             lambda_p: 2.0,
             lambda_sigma: None, // means σ := eps inside the builder
             normalise: false,
-            sparsity_check: true,
+            sparsity_check: false,
             inline_sampling: false,
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time

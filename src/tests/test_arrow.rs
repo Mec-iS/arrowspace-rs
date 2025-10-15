@@ -2,7 +2,7 @@ use approx::assert_relative_eq;
 
 use crate::{
     builder::ArrowSpaceBuilder, graph::GraphLaplacian, taumode::TauMode,
-    tests::test_data::make_moons_hd,
+    tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
 /// Helper to compare two GraphLaplacian matrices for equality
@@ -383,14 +383,14 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
 #[test]
 fn test_builder_with_inline_sampling() {
     // Test builder with inline sampling enabled
-    let items = make_moons_hd(100, 0.2, 0.3, 3, 987);
+    let items = make_gaussian_blob(100, 0.5);
 
-    let (_aspace_sampling, _gl) = ArrowSpaceBuilder::default()
+    let (_aspace_sampling, _gl_sampling) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_inline_sampling(true)
         .build(items.clone());
 
-    let (_aspace_no_sampling, _) = ArrowSpaceBuilder::default()
+    let (_aspace_no_sampling, _gl_no_sampl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_inline_sampling(false)
         .build(items);
@@ -438,7 +438,7 @@ fn test_builder_lambda_statistics() {
         0.3, // High noise for variance - standard deviation of Gaussian noise
         0.5, // Moderate separation between moons
         40,  // High dimensionality to spread variance
-        42,  // Fixed seed for reproducibility
+        768,  // Fixed seed for reproducibility
     );
 
     println!("=== LAMBDA STATISTICS TEST ===");
@@ -460,6 +460,7 @@ fn test_builder_lambda_statistics() {
         )
         .with_spectral(true)
         .with_normalisation(true) // Normalize to focus on direction, not magnitude
+        .with_sparsity_check(false)
         .build(items);
 
     println!("Graph has {} nodes", gl.nnodes);

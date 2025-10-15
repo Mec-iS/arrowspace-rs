@@ -6301,3 +6301,37 @@ pub fn make_moons_hd(
 
     out
 }
+
+/// Generate Gaussian blob dataset with configurable noise
+///
+/// # Arguments
+/// * `n_points` - Number of points per cluster
+/// * `noise` - Standard deviation of Gaussian noise (controls cluster spread)
+///
+/// # Returns
+/// Vector of 3*n_points data points in 5D space, forming 3 clusters
+pub fn make_gaussian_blob(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
+    use rand_distr::{Distribution, Normal};
+    use rand::SeedableRng;
+    
+    let mut rng = rand::rngs::StdRng::seed_from_u64(789);
+    let mut rows = Vec::new();
+    
+    let centers = vec![
+        vec![0.0, 0.0, 0.0, 0.0, 0.0],
+        vec![10.0, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 10.0, 0.0, 0.0, 0.0],
+    ];
+    
+    for center in &centers {
+        for _ in 0..(n_points / 3) {
+            let mut point = Vec::new();
+            for &c in center {
+                let normal = Normal::new(c, noise).unwrap();  // ← Use noise parameter
+                point.push(normal.sample(&mut rng));
+            }
+            rows.push(point);
+        }
+    }
+    rows
+}

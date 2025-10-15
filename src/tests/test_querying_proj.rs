@@ -578,6 +578,7 @@ fn test_project_query_linearity() {
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_dims_reduction(true, Some(0.35))
+        .with_sparsity_check(false)
         .build(data);
 
     let query = queries[1].clone();

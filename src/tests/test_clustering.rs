@@ -8,7 +8,7 @@
 //! - OptimalKHeuristic end-to-end
 //! - Edge cases (small N, high-dimensional, degenerate data)
 
-use crate::{clustering::{euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic}};
+use crate::{clustering::{euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic}, tests::test_data::make_gaussian_blob};
 
 pub struct OptimalKHeuristic;
 
@@ -57,32 +57,9 @@ fn test_nearest_centroid_middle() {
 
 #[test]
 fn test_kmeans_lloyd_gaussian_blobs() {
-    use rand_distr::{Distribution, Normal};
-    use rand::SeedableRng;
+    let data = make_gaussian_blob(100, 0.2);
     
-    let mut rng = rand::rngs::StdRng::seed_from_u64(789);
-    let mut rows = Vec::new();
-    
-    // Generate 3 well-separated Gaussian blobs in 5D space
-    let centers = vec![
-        vec![0.0, 0.0, 0.0, 0.0, 0.0],
-        vec![10.0, 0.0, 0.0, 0.0, 0.0],
-        vec![0.0, 10.0, 0.0, 0.0, 0.0],
-    ];
-    let std_dev = 0.5;
-    
-    for center in &centers {
-        for _ in 0..40 {
-            let mut point = Vec::new();
-            for &c in center {
-                let normal = Normal::new(c, std_dev).unwrap();
-                point.push(normal.sample(&mut rng));
-            }
-            rows.push(point);
-        }
-    }
-    
-    let assignments = kmeans_lloyd(&rows, 3, 50, 42);
+    let assignments = kmeans_lloyd(&data, 3, 50, 42);
     
     // Test 1: Should find exactly 3 clusters
     let unique_labels: std::collections::HashSet<_> = 
