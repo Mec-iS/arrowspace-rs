@@ -25,9 +25,13 @@ fn simple_build() {
         vec![0.3, 1.0, 0.0],
         vec![1.0, 0.0, 5.0],
         vec![0.3, 1.0, 0.0],
+        vec![2.0, 0.0, 5.0],
+        vec![0.3, 2.0, 0.0],
+        vec![5.0, 1.0, 5.0],
+        vec![0.3, 1.0, 5.0],
     ];
 
-    let eps = 1.0;
+    let eps = 0.5;
     let k = 3usize;
     let topk = 3usize;
     let p = 2.0;
@@ -37,8 +41,8 @@ fn simple_build() {
         .with_lambda_graph(eps, k, topk, p, sigma_override)
         .build(rows);
 
-    assert_eq!(aspace.data.shape(), (4, 3));
-    assert_eq!(gl.nnodes, 4);
+    assert_eq!(aspace.data.shape(), (8, 3));
+    assert_eq!(gl.nnodes, 8);
 }
 
 #[test]
@@ -123,11 +127,12 @@ fn test_simple_random_high_rate() {
 #[test]
 fn test_simple_random_aggressive_sampling() {
     // Test very aggressive sampling (20%)
-    let rows = make_moons_hd(50, 0.10, 0.40, 10, 42);
+    let rows = make_gaussian_blob(99, 0.5);
 
     let (_, gl) = ArrowSpaceBuilder::new()
         .with_inline_sampling(Some(SamplerType::Simple(0.2)))  // 20% keep rate
-        .with_lambda_graph(2.0, 5, 5, 2.0, None)
+        .with_lambda_graph(1.0, 5, 5, 2.0, None)
+        .with_dims_reduction(false, None)
         .build(rows.clone());
 
     let sampled_count = gl.matrix.shape().0;
@@ -142,7 +147,7 @@ fn test_simple_random_aggressive_sampling() {
 
     // Despite aggressive sampling, should still create valid Laplacian
     assert!(
-        sampled_count >= 4,
+        sampled_count >= 10,
         "Should keep at least 4 points for valid graph, got {}",
         sampled_count
     );
@@ -367,11 +372,12 @@ fn test_density_adaptive_sampling_statistics() {
 #[test]
 fn test_density_adaptive_vs_no_sampling() {
     // Compare results with and without sampling
-    let rows: Vec<Vec<f64>> = make_moons_hd(50, 0.10, 0.40, 100, 42);
+    let rows: Vec<Vec<f64>> = make_gaussian_blob(99, 0.5);
 
     // Without sampling
     let (aspace_full, gl_full) = ArrowSpaceBuilder::new()
         .with_lambda_graph(1.0, 5, 5, 2.0, None)
+        .with_inline_sampling(None)
         .build(rows.clone());
 
     // With 50% density-adaptive sampling
