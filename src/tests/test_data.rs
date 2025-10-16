@@ -6302,9 +6302,9 @@ pub fn make_moons_hd(
     out
 }
 
-use rand_distr::{Distribution, Normal, Uniform};
-use rand::SeedableRng;
 use rand::seq::SliceRandom;
+use rand::SeedableRng;
+use rand_distr::{Distribution, Normal, Uniform};
 
 /// Generate Gaussian blob dataset with configurable noise and outliers
 ///
@@ -6318,14 +6318,14 @@ use rand::seq::SliceRandom;
 pub fn make_gaussian_blob(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(789);
     let mut rows = Vec::new();
-    
+
     let n_outliers = (n_points as f64 * 0.15).round() as usize;
     let n_cluster_points = n_points - n_outliers;
     let points_per_cluster = n_cluster_points / 3;
-    
+
     // Define cluster centers in 10D space
     let centers = vec![
-        vec![0.0; 10],  // Cleaner than listing 10 zeros
+        vec![0.0; 10], // Cleaner than listing 10 zeros
         {
             let mut c = vec![0.0; 10];
             c[0] = 10.0;
@@ -6337,7 +6337,7 @@ pub fn make_gaussian_blob(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
             c
         },
     ];
-    
+
     // Generate cluster points
     for center in &centers {
         for _ in 0..points_per_cluster {
@@ -6349,17 +6349,67 @@ pub fn make_gaussian_blob(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
             rows.push(point);
         }
     }
-    
+
     // Generate outliers
     let outlier_dist = Uniform::new(-5.0, 15.0).unwrap();
     for _ in 0..n_outliers {
         let mut point = Vec::new();
-        for _ in 0..10 {  // ← Changed from 5 to 10
+        for _ in 0..10 {
+            // ← Changed from 5 to 10
             point.push(outlier_dist.sample(&mut rng));
         }
         rows.push(point);
     }
-    
+
+    rows.shuffle(&mut rng);
+    rows
+}
+
+pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(435);
+    let mut rows = Vec::new();
+
+    let n_outliers = (n_points as f64 * 0.15).round() as usize;
+    let n_cluster_points = n_points - n_outliers;
+    let points_per_cluster = n_cluster_points / 3;
+
+    // Define cluster centers in 10D space
+    let centers = vec![
+        vec![0.0; 100], // Cleaner than listing 10 zeros
+        {
+            let mut c = vec![0.0; 100];
+            c[0] = 10.0;
+            c
+        },
+        {
+            let mut c = vec![0.0; 100];
+            c[1] = 10.0;
+            c
+        },
+    ];
+
+    // Generate cluster points
+    for center in &centers {
+        for _ in 0..points_per_cluster {
+            let mut point = Vec::new();
+            for &c in center {
+                let normal = Normal::new(c, noise).unwrap();
+                point.push(normal.sample(&mut rng));
+            }
+            rows.push(point);
+        }
+    }
+
+    // Generate outliers
+    let outlier_dist = Uniform::new(-5.0, 15.0).unwrap();
+    for _ in 0..n_outliers {
+        let mut point = Vec::new();
+        for _ in 0..100 {
+            point.push(outlier_dist.sample(&mut rng));
+        }
+        rows.push(point);
+    }
+
     rows.shuffle(&mut rng);
     rows
 }

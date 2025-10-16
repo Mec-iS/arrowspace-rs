@@ -8,7 +8,10 @@
 //! - OptimalKHeuristic end-to-end
 //! - Edge cases (small N, high-dimensional, degenerate data)
 
-use crate::{clustering::{euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic}, tests::test_data::make_gaussian_blob};
+use crate::{
+    clustering::{euclidean_dist, kmeans_lloyd, nearest_centroid, ClusteringHeuristic},
+    tests::test_data::make_gaussian_blob,
+};
 
 pub struct OptimalKHeuristic;
 
@@ -58,14 +61,13 @@ fn test_nearest_centroid_middle() {
 #[test]
 fn test_kmeans_lloyd_gaussian_blobs() {
     let data = make_gaussian_blob(99, 0.2);
-    
+
     let assignments = kmeans_lloyd(&data, 3, 50, 42);
-    
+
     // Test 1: Should find exactly 3 clusters
-    let unique_labels: std::collections::HashSet<_> = 
-        assignments.iter().copied().collect();
+    let unique_labels: std::collections::HashSet<_> = assignments.iter().copied().collect();
     assert_eq!(unique_labels.len(), 3, "Should find 3 clusters");
-    
+
     // Note: K-means can converge to local minima depending on initialization.
     // We use relaxed thresholds to verify the algorithm produces reasonable
     // (not degenerate) clusters while avoiding flaky tests.
@@ -73,21 +75,22 @@ fn test_kmeans_lloyd_gaussian_blobs() {
     for &label in &assignments {
         *label_counts.entry(label).or_insert(0) += 1;
     }
-    
+
     // Test 2: Relaxed balance check (20-80 instead of 35-45)
     for (&label, &count) in &label_counts {
         assert!(
             count >= 10 && count <= 70,
             "Cluster {} has {} points (expected 20-80, initialization-dependent)",
-            label, count
+            label,
+            count
         );
     }
-    
+
     // Test 3: No degenerate clusters
     for (&label, &count) in &label_counts {
         assert!(count >= 10, "Cluster {} too small: {}", label, count);
     }
-    
+
     println!("✓ K-means produced valid clustering:");
     for (label, count) in &label_counts {
         println!("  Cluster {}: {} points", label, count);

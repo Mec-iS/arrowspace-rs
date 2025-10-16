@@ -1,7 +1,11 @@
 use approx::assert_relative_eq;
 
 use crate::{
-    builder::ArrowSpaceBuilder, graph::GraphLaplacian, sampling::SamplerType, taumode::TauMode, tests::test_data::{make_gaussian_blob, make_moons_hd}
+    builder::ArrowSpaceBuilder,
+    graph::GraphLaplacian,
+    sampling::SamplerType,
+    taumode::TauMode,
+    tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
 /// Helper to compare two GraphLaplacian matrices for equality
@@ -446,7 +450,7 @@ fn test_builder_lambda_statistics() {
         0.3, // High noise for variance - standard deviation of Gaussian noise
         0.5, // Moderate separation between moons
         40,  // High dimensionality to spread variance
-        768,  // Fixed seed for reproducibility
+        768, // Fixed seed for reproducibility
     );
 
     println!("=== LAMBDA STATISTICS TEST ===");

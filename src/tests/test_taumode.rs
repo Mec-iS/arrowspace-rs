@@ -280,28 +280,29 @@ fn test_builder_zero_vectors_panic() {
 
 #[test]
 fn test_builder_lambdas_invariants() {
-    let items = make_gaussian_blob(500, 0.9);  // Any noise level
-    
+    let items = make_gaussian_blob(500, 0.9); // Any noise level
+
     let (aspace, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 6, 2, 2.0, Some(0.12))
         .with_normalisation(false)
         .with_spectral(true)
         .with_synthesis(TauMode::Median)
         .build(items);
-    
+
     let lambdas = aspace.lambdas();
-    
+
     // Test INVARIANTS that must hold regardless of clustering
-    
+
     // 1. Lambda values must be bounded [0, 1]
     for (i, &lambda) in lambdas.iter().enumerate() {
         assert!(
             lambda >= 0.0 && lambda <= 1.0,
             "Lambda {} = {:.6} not in [0,1]",
-            i, lambda
+            i,
+            lambda
         );
     }
-    
+
     // 3. Variance must be non-negative (mathematical property)
     let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
     let lambda_variance = lambdas
@@ -309,16 +310,16 @@ fn test_builder_lambdas_invariants() {
         .map(|&x| (x - lambda_mean).powi(2))
         .sum::<f64>()
         / lambdas.len() as f64;
-    
+
     assert!(lambda_variance >= 0.0, "Variance must be non-negative");
-    
+
     // 4. If multiple clusters, should have variation
     if lambdas.len() > 1 {
         let lambda_min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let lambda_max = lambdas.iter().fold(0.0, |a, &b| a.max(b));
         assert!(lambda_max >= lambda_min, "Max should be >= min");
     }
-    
+
     println!("✓ Lambda invariants validated:");
     println!("  Clusters: {}", aspace.n_clusters);
     println!("  Mean: {:.6}", lambda_mean);

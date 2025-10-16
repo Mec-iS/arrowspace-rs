@@ -191,10 +191,10 @@ impl ImplicitProjection {
         let mut result = vec![0.0; self.reduced_dim];
 
         // **Gaussian projection: every entry is non-zero**
-        for i in 0..self.original_dim {
-            for j in 0..self.reduced_dim {
+        for original in query.iter().take(self.original_dim) {
+            for reduced in result.iter_mut().take(self.reduced_dim) {
                 let sample: f64 = StandardNormal.sample(&mut rng);
-                result[j] += query[i] * sample * scale;
+                *reduced += original * sample * scale;
             }
         }
 

@@ -58,20 +58,20 @@ fn test_builder_graph_params_preservation() {
 }
 
 #[test]
-fn test_with_deterministic_clustering() { 
+fn test_with_deterministic_clustering() {
     let items = make_moons_hd(80, 0.50, 0.50, 9, 789);
-    
+
     // Build with fixed seed
     let (aspace1, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
-        .with_seed(42)  // If your API supports this
+        .with_seed(42) // If your API supports this
         .build(items.clone());
-    
+
     let (aspace2, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 4, 2, 2.0, None)
         .with_seed(42)
         .build(items.clone());
-    
+
     // Now these should be identical
     assert_eq!(aspace1.n_clusters, aspace2.n_clusters);
 }

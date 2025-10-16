@@ -28,49 +28,63 @@ const CLUSTERING_SEED: u64 = 128;
 pub trait ClusteringHeuristic {
     /// Compute optimal number of clusters K, squared-distance threshold radius,
     /// and estimated intrinsic dimension from NxF data matrix.
-    fn compute_optimal_k(&self, rows: &[Vec<f64>], n: usize, f: usize, seed_override: Option<u64>) -> (usize, f64, usize)
+    fn compute_optimal_k(
+        &self,
+        rows: &[Vec<f64>],
+        n: usize,
+        f: usize,
+        seed_override: Option<u64>,
+    ) -> (usize, f64, usize)
     where
         Self: Sync,
     {
         info!("Computing optimal K for clustering: N={}, F={}", n, f);
 
+        let base_seed = seed_override.unwrap_or(CLUSTERING_SEED);
 
-    let base_seed = seed_override.unwrap_or(CLUSTERING_SEED);
-    
-    info!("Computing optimal K for clustering: N={}, F={} (seed={})", n, f, base_seed);
-    
-    let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
+        info!(
+            "Computing optimal K for clustering: N={}, F={} (seed={})",
+            n, f, base_seed
+        );
 
-    let sample_size = n.min(1000);
-    let sample_indices: Vec<usize> = if n > sample_size {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed);
-        let mut idxs: Vec<usize> = (0..n).collect();
-        idxs.shuffle(&mut rng);
-        idxs[..sample_size].to_vec()
-    } else {
-        (0..n).collect()
-    };
+        let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
 
-    let sampled_rows: Vec<Vec<f64>> = sample_indices
-        .par_iter()
-        .map(|&i| rows[i].clone())
-        .collect();
-    
-    let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max, base_seed);
+        let sample_size = n.min(1000);
+        let sample_indices: Vec<usize> = if n > sample_size {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed);
+            let mut idxs: Vec<usize> = (0..n).collect();
+            idxs.shuffle(&mut rng);
+            idxs[..sample_size].to_vec()
+        } else {
+            (0..n).collect()
+        };
 
-    let radius = self.compute_threshold_from_pilot(&sampled_rows, k_optimal, base_seed);
+        let sampled_rows: Vec<Vec<f64>> = sample_indices
+            .par_iter()
+            .map(|&i| rows[i].clone())
+            .collect();
+
+        let k_optimal = self.step2_calinski_harabasz(&sampled_rows, k_min, k_max, base_seed);
+
+        let radius = self.compute_threshold_from_pilot(&sampled_rows, k_optimal, base_seed);
 
         (k_optimal, radius, id_est)
     }
 
     // Step 1: Bounds via N/F and intrinsic dimension
-    fn step1_bounds(&self, rows: &[Vec<f64>], n: usize, f: usize, base_seed: u64) -> (usize, usize, usize) {
+    fn step1_bounds(
+        &self,
+        rows: &[Vec<f64>],
+        n: usize,
+        f: usize,
+        base_seed: u64,
+    ) -> (usize, usize, usize) {
         let id_est = self.estimate_intrinsic_dimension(rows, n, f, base_seed);
         debug!("Intrinsic dimension estimate: {}", id_est);
 
         let k_min = ((n as f64 / 10.0).sqrt().ceil() as usize).max(2);
 
-        let k_max_candidates = vec![f, n / 10, 5 * id_est, (n as f64).powf(0.5) as usize];
+        let k_max_candidates = [f, n / 10, 5 * id_est, (n as f64).powf(0.5) as usize];
 
         let k_max = k_max_candidates
             .iter()
@@ -84,7 +98,13 @@ pub trait ClusteringHeuristic {
     }
 
     /// Estimate intrinsic dimension via Two-NN ratio method (DETERMINISTIC).
-    fn estimate_intrinsic_dimension(&self, rows: &[Vec<f64>], n: usize, f: usize, base_seed: u64) -> usize {
+    fn estimate_intrinsic_dimension(
+        &self,
+        rows: &[Vec<f64>],
+        n: usize,
+        f: usize,
+        base_seed: u64,
+    ) -> usize {
         if n < 10 {
             return f.min(2);
         }
@@ -144,7 +164,13 @@ pub trait ClusteringHeuristic {
     }
 
     // Step 2: Calinski-Harabasz for optimal K (DETERMINISTIC with full parallelism)
-    fn step2_calinski_harabasz(&self, rows: &[Vec<f64>], k_min: usize, k_max: usize, base_seed: u64) -> usize
+    fn step2_calinski_harabasz(
+        &self,
+        rows: &[Vec<f64>],
+        k_min: usize,
+        k_max: usize,
+        base_seed: u64,
+    ) -> usize
     where
         Self: Sync,
     {
@@ -258,9 +284,8 @@ pub trait ClusteringHeuristic {
                 .collect();
 
             // DETERMINISTIC: Sequential max for fine-tuning results
-            if let Some(&(fine_k, fine_score)) = fine_scores
-                .iter()
-                .max_by(|(k_a, score_a), (k_b, score_b)| {
+            if let Some(&(fine_k, fine_score)) =
+                fine_scores.iter().max_by(|(k_a, score_a), (k_b, score_b)| {
                     match score_a.partial_cmp(score_b) {
                         Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
                         Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,

@@ -1,4 +1,7 @@
-use crate::{builder::ArrowSpaceBuilder, tests::test_data::{make_gaussian_blob, make_moons_hd}};
+use crate::{
+    builder::ArrowSpaceBuilder,
+    tests::test_data::{make_gaussian_blob, make_moons_hd},
+};
 
 #[test]
 fn test_builder_basic_clustering_with_synthetic_data() {
@@ -381,17 +384,16 @@ fn test_builder_lambda_values_are_nonnegative() {
     );
 }
 
-
 #[test]
 fn test_builder_with_high_noise() {
     // Generate 3 Gaussian blobs with noise=0.9 (moderate overlap)
     let items = make_gaussian_blob(300, 0.9);
-    
+
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.4, 6, 3, 2.0, None)
         .with_normalisation(true)
         .build(items);
-    
+
     // Note: With noise=0.9, the optimal K heuristic may conservatively
     // choose K=2 instead of K=3 due to cluster overlap. This is correct
     // behavior - the algorithm prefers under-clustering to over-clustering.
@@ -400,9 +402,11 @@ fn test_builder_with_high_noise() {
         "Should produce valid clusters even with high noise, got {}",
         aspace.n_clusters
     );
-    
-    println!("✓ Found {} clusters (conservative estimate for noisy data)", 
-             aspace.n_clusters);
+
+    println!(
+        "✓ Found {} clusters (conservative estimate for noisy data)",
+        aspace.n_clusters
+    );
 }
 
 #[test]

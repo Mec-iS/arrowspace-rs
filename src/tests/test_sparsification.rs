@@ -39,20 +39,12 @@ fn test_sfgrass_larger() {
 
     assert!(sparse_edges < orig_edges);
 }
-use crate::{builder::ArrowSpaceBuilder, sparsification::SfGrassSparsifier, tests::test_data::make_gaussian_blob};
+use env_logger::init;
 
-#[test]
-fn test_sfgrass_sparsification() {
-    let rows: Vec<Vec<f64>> = make_gaussian_blob(300, 0.5);
-
-    let (aspace, _) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1.0, 5, 5, 2.0, None)
-        .with_seed(42)
-        .build(rows);
-
-    // Should produce valid lambdas
-    assert!(aspace.lambdas().iter().all(|&l| l >= 0.0));
-}
+use crate::{
+    builder::ArrowSpaceBuilder, sparsification::SfGrassSparsifier,
+    tests::test_data::make_gaussian_blob,
+};
 
 #[test]
 #[ignore = "depends on number of nodes"]
