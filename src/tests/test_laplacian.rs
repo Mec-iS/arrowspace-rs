@@ -428,11 +428,11 @@ fn test_performance_with_larger_dataset() {
         .collect();
 
     let params = GraphParams {
-        eps: 0.8,
-        k: 10,
+        eps: 0.5,
+        k: 4,
         topk: 3,
         p: 2.0,
-        sigma: Some(0.1),
+        sigma: Some(0.25),
         normalise: false,
         sparsity_check: true,
     };

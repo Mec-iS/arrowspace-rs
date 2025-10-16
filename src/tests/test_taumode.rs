@@ -284,7 +284,7 @@ fn test_builder_lambdas_invariants() {
     
     let (aspace, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 6, 2, 2.0, Some(0.12))
-        .with_normalisation(true)
+        .with_normalisation(false)
         .with_spectral(true)
         .with_synthesis(TauMode::Median)
         .build(items);
@@ -617,7 +617,6 @@ fn test_builder_lambdas_with_larger_dataset() {
     // Comprehensive test with realistic high-dimensional data
     let items = make_gaussian_blob(999, 0.75);
 
-    println!("=== REALISTIC DATA LAMBDA TEST ===");
     println!(
         "Dataset: {} items, {} dimensions",
         items.len(),
@@ -685,7 +684,7 @@ fn test_builder_lambdas_with_larger_dataset() {
     for tau_mode in tau_modes {
         let (test_aspace, _) = ArrowSpaceBuilder::default()
             .with_lambda_graph(0.3, 6, 2, 2.0, Some(0.15))
-            .with_normalisation(true)
+            .with_normalisation(false)
             .with_spectral(true)
             .with_synthesis(tau_mode)
             .with_sparsity_check(false)

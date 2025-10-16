@@ -533,12 +533,13 @@ fn test_builder_lambda_statistics() {
 #[test]
 fn test_builder_cluster_radius_impact() {
     // Test how cluster radius affects clustering
-    let items = make_moons_hd(9, 0.1, 0.25, 3, 222);
+    let items = make_gaussian_blob(99, 0.5);
 
     // This test verifies that the auto-computed cluster parameters
     // produce reasonable clustering behavior
     let (aspace, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
         .build(items);
 
     // Radius should be positive
