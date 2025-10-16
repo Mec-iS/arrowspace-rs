@@ -1,3 +1,83 @@
+//! Graph construction and Laplacian matrix computation for ArrowSpace.
+//!
+//! This module implements sparse graph construction from clustered data, followed by
+//! Laplacian matrix computation for spectral analysis. It provides both CPU and GPU
+//! paths with automatic fallback for robust execution.
+//!
+//! # Overview
+//!
+//! The graph module bridges the gap between raw data and spectral analysis by:
+//! 1. Constructing sparse k-NN or ε-radius graphs from cluster centroids
+//! 2. Computing edge weights using adaptive Gaussian kernels
+//! 3. Building normalized graph Laplacians (L = D⁻¹/²(D-W)D⁻¹/²)
+//! 4. Preparing matrices for eigendecomposition and taumode computation
+//!
+//! # Graph Construction Modes
+//!
+//! ## K-NN Graph
+//! - Connects each node to its k nearest neighbors
+//! - Symmetrized via max(w_ij, w_ji) to ensure undirected graph
+//! - Suitable for uniform manifold sampling
+//!
+//! ## Epsilon-Radius Graph
+//! - Connects nodes within distance threshold ε
+//! - Adaptive to local density variations
+//! - Better preserves local geometric structure
+//!
+//! # Laplacian Variants
+//!
+//! - **Unnormalized**: L = D - W
+//! - **Symmetric normalized**: L_sym = D⁻¹/²(D-W)D⁻¹/² (default)
+//! - **Random walk**: L_rw = D⁻¹(D-W)
+//!
+//! The symmetric normalized Laplacian is preferred for spectral clustering and
+//! manifold learning due to its connection to diffusion processes.
+//!
+//! # Edge Weight Computation
+//!
+//! Weights use adaptive Gaussian kernels:
+//! ```
+//! w_ij = exp(-||x_i - x_j||² / (2σ²))
+//! ```
+//! where σ is computed adaptively from local density estimates or provided explicitly.
+//!
+//! # GPU Acceleration
+//!
+//! - `build_laplacian_gpu`: wgpu-based parallel construction
+//! - Efficient for large graphs (>10k nodes)
+//! - Automatic fallback to CPU on device unavailability
+//!
+//! # Core Types
+//!
+//! - `GraphLaplacian`: Sparse representation with COO format
+//! - `LaplacianMode`: Enum for normalization strategy
+//! - Helper functions for k-NN search and weight computation
+//!
+//! # Usage
+//!
+//! ```
+//! use arrowspace::graph::{build_laplacian_knn, LaplacianMode};
+//!
+//! let laplacian = build_laplacian_knn(
+//!     &centroids, 
+//!     k, 
+//!     sigma, 
+//!     LaplacianMode::Symmetric
+//! );
+//! ```
+//!
+//! # Performance
+//!
+//! - CPU path: Parallel k-NN with Rayon, O(n²k) for k-NN
+//! - GPU path: O(n²) worst-case, but highly parallel for dense graphs
+//! - Sparse matrix storage minimizes memory footprint
+//!
+//! # Integration
+//!
+//! Laplacian matrices feed directly into eigensolvers (via nalgebra or GPU compute)
+//! for spectral decomposition, enabling downstream taumode computation and manifold
+//! analysis within ArrowSpace.
+
 use std::fmt;
 
 use crate::core::ArrowSpace;

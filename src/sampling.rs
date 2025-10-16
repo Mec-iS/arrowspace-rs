@@ -1,3 +1,55 @@
+//! Inline sampling strategies for incremental clustering in ArrowSpace.
+//!
+//! This module provides sampling policies that determine which data points should
+//! be used to create or update cluster centroids during incremental clustering,
+//! enabling efficient processing of large datasets while maintaining clustering quality.
+//!
+//! # Overview
+//!
+//! Inline samplers make real-time decisions during the clustering process about whether
+//! to keep or discard each point for centroid computation. This differs from traditional
+//! pre-sampling by adapting to the evolving cluster structure.
+//!
+//! # Sampling Strategies
+//!
+//! ## SimpleRandomSampler
+//! - Uniform probability sampling with fixed keep rate
+//! - Thread-safe with atomic counters for statistics
+//! - Suitable for homogeneous data distributions
+//!
+//! ## DensityAdaptiveSampler
+//! - Adapts sampling rate based on local cluster density
+//! - Higher sampling in sparse regions (encourages exploration)
+//! - Lower sampling in dense regions (reduces redundancy)
+//! - Considers both distance to nearest centroid and cluster saturation
+//!
+//! # Trait Design
+//!
+//! The `InlineSampler` trait provides:
+//! - `new(target_rate)`: Constructor with target sampling rate
+//! - `should_keep(...)`: Real-time decision for each data point
+//! - Thread-safe implementation via interior mutability
+//!
+//! # Usage
+//!
+//! ```
+//! use arrowspace::sampling::{InlineSampler, DensityAdaptiveSampler};
+//!
+//! let sampler = DensityAdaptiveSampler::new(0.3);  // 30% base rate
+//! let keep = sampler.should_keep(row, distance_sq, n_centroids, max_centroids);
+//! ```
+//!
+//! # Performance Considerations
+//!
+//! - Minimal overhead: O(1) per-point decision
+//! - Lock-free counters for statistics tracking
+//! - Adaptive strategies improve cluster quality vs. throughput trade-off
+//!
+//! # Integration
+//!
+//! Samplers are used within `ArrowSpaceBuilder` during the incremental clustering
+//! phase, before Laplacian construction and spectral analysis.
+
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

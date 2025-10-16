@@ -1,65 +1,65 @@
-// Encapsulates tau selection policies for the synthetic index transform.
+//! Encapsulates tau selection policies for the synthetic index transform.
 //
-// API:
-// - TauMode: policy enum
-// - select_tau(&[f64], TauMode) -> f64: returns a strictly positive tau (> 0)
-//
-// Notes:
-// - Energies may contain NaN/inf; this utility filters non-finite values out.
-// - If the filtered set is empty or produces a non-positive tau, a small floor is used.
-//
-// TauMode policy and selection utility for synthetic lambda transform.
-// Default is Median, use `with_synthesis` to change the default to one of the other
-
-// The computation should run once and the graph should not be stored, only the syntethic index should be stored
-
-// A single-pass, stored synthetic index can be designed as a per-row scalar that blends the global Rayleigh energy with a localized Laplacian-weighted roughness summary, so downstream search can use “semantic” scores together with “spectral roughness” without retaining the graph. Concretely, compute once per row r a scalar S_r that merges the Rayleigh quotient $E_r = \frac{x_r^\top L x_r}{x_r^\top x_r}$ with a Laplacian-locality moment derived from the same per-edge Dirichlet energy, normalize it, and store only S_r alongside the row; discard L afterward. This preserves the smoothness signal that Rayleigh encodes while incorporating a stable, intensity-aware normalization and local variability component, enabling alpha–beta blending at query time with no graph in memory.[^1][^2]
-// ## Key idea
-// - Use the Rayleigh energy $E_r$ as the primary smoothness measure; it is non‑negative and scale‑invariant in x, reflecting how “wiggly” a row is over the item graph built once for the dataset.[^2][^1]
-// - Augment $E_r$ with a local Dirichlet statistic that captures how energy distributes across edges, e.g., an energy-weighted Gini or variance of per-edge contributions, to distinguish uniformly rough rows from rows whose roughness is concentrated; summarize this as $V_r$ and combine with $E_r$ into a single scalar index $S_r$ via a bounded transform that is comparable across rows.[^3][^1]
-// ## Per-row synthetic index
-// For each row vector x in R^N and Laplacian L computed once:
-// - Rayleigh energy: $E_r = \frac{x^\top L x}{x^\top x}$ with the convention $E_r = 0$ if $x^\top x = 0$.[^1][^2]
-// - Edgewise energy distribution: expand the Dirichlet energy as a sum over edges using the standard identity $x^\top L x = \sum_{(i,j)\in E} w_{ij} (x_i - x_j)^2$; define per-edge share $e_{ij} = \frac{w_{ij} (x_i - x_j)^2}{\sum w_{uv} (x_u - x_v)^2}$ if the denominator is nonzero, else 0.[^3][^1]
-// - Locality moment: compute a dispersion summary $V_r$ over {e_{ij}} such as:
-//     - Gini-like concentration: $G_r = \sum e_{ij}^2$ (higher means energy concentrated on fewer edges), or
-//     - Variance: $\operatorname{Var}_r = \sum (e_{ij} - \frac{1}{|E_x|})^2$ over edges with nonzero contribution [^3][^1].
-// - Normalization: map $E_r$ to a bounded score $E_r' = \frac{E_r}{E_r + \tau}$ with a small positive scale $\tau$ (e.g., median E across rows) to stabilize tails and keep 0–1 range; keep $G_r$ already in  by construction.`ArrowSpace`[^2][^1]
-// - Synthetic index: $S_r = \alpha \, E_r' + (1-\alpha) \, G_r$, with \$\alpha \in \$ (e.g., 0.7). Store S_r per row and discard L and all edge stats.`ArrowSpace`[^2][^1]
-// ## Why this works
-// - $E_r$ is the classical Dirichlet (Rayleigh) energy; lower means smoother over the item graph, higher means high-frequency variation; it is standard in spectral methods and tightly coupled to Laplacian eigen-analysis.[^2][^1]
-// - $G_r$ distinguishes equal-energy rows by how the energy is distributed across edges: a row with many small, diffuse irregularities differs from one with a few sharp discontinuities; a single scalar keeps this nuance without storing the graph.[^1][^3]
-// ## One-time computation plan
-// - Build the item graph Laplacian L once (any construction policy, e.g., your λτ-graph or KNN), compute S_r for all rows, then drop L.[^3][^1]
-// - Complexity: computing $x^\top L x$ is O(nnz(L)) per row using CSR; computing e_{ij} shares during the same pass has the same complexity; no extra matrices are needed; storage is O(nrows) for S_r.[^2][^3]
-// ## Practical details
-// - Zero/constant rows: if $x^\top x = 0$, set $E_r=0$ and $G_r=0$, hence $S_r=0$, which is consistent with smoothness on connected graphs.[^1][^2]
-// - Scale selection: pick $\tau$ as median or a small quantile of {E_r} to get a stable logistic-like compression; this makes S_r robust and comparable across datasets.[^2][^1]
-// - Optional calibration: z-score or rank-normalize E_r across rows before the bounded map if heavy tails; keep G_r as-is in.`ArrowSpace`[^3][^1]
-// ## Using the index
-// - At search time, blend semantic similarity with S_r proximity using the same alpha–beta logic already used for λ, replacing lambda proximity with an S_r proximity term, e.g., $1/(1+|S_q - S_i|)$; this preserves a spectral bias without reconstructing or storing any graph [^2][^1].
-// - The single scalar S_r per row can also be used for band filters, clustering seeds, or diversity penalties biased by spectral roughness, again without graphs.[^3][^1]
-// <span style="display:none">[^10][^11][^5][^6][^7][^8][^9]</span>
-// <div style="text-align: center">⁂</div>
-// [^1]: https://www.cs.yale.edu/homes/spielman/462/2007/lect7-07.pdf
-// [^2]: https://www.microsoft.com/en-us/research/wp-content/uploads/2013/07/Krishnan-SG13.pdf
-// [^3]: https://www.math.uni-potsdam.de/fileadmin/user_upload/Prof-GraphTh/Keller/KellerLenzWojciechowski_GraphsAndDiscreteDirichletSpaces_personal.pdf
-// [^5]: https://arxiv.org/html/2501.11024v1
-// [^6]: https://arxiv.org/html/2508.06123v1
-// [^7]: https://d-nb.info/1162140003/34
-// [^8]: https://www.ins.uni-bonn.de/media/public/publication-media/MA_Schwartz_2016.pdf?pk=703
-// [^9]: https://proceedings.neurips.cc/paper_files/paper/2024/file/f57de20ab7bb1540bcac55266ebb5401-Paper-Conference.pdf
-// [^10]: https://arxiv.org/pdf/2309.11251.pdf
-// [^11]: https://academic.oup.com/mnras/article-pdf/370/4/1713/3388125/mnras0370-1713.pdf
-//
-// Taumode has been tested for:
-// 1. **Non-negativity**: Fundamental property of Rayleigh quotients
-// 2. **Reasonable bounds**: Ensures values aren't pathologically large
-// 3. **Computational consistency**: Recomputation gives identical results
-// 4. **Data sensitivity**: Different inputs produce different outputs (discriminative power)
-// 5. **Numerical stability**: Values are finite (no NaN/infinity)
-// 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
-//
+//! API:
+//! - `TauMode``: policy enum
+//! - `select_tau(&[f64], TauMode) -> f64``: returns a strictly positive tau (> 0)
+//!
+//! Notes:
+//! - Energies may contain NaN/inf; this utility filters non-finite values out.
+//! - If the filtered set is empty or produces a non-positive tau, a small floor is used.
+//!
+//! TauMode policy and selection utility for synthetic lambda transform.
+//! Default is Median, use `with_synthesis` to change the default to one of the other
+//!
+//! The computation should run once and the graph should not be stored, only the syntethic index should be stored
+//!
+//! A single-pass, stored synthetic index can be designed as a per-row scalar that blends the global Rayleigh energy with a localized Laplacian-weighted roughness summary, so downstream search can use “semantic” scores together with “spectral roughness” without retaining the graph. Concretely, compute once per row r a scalar S_r that merges the Rayleigh quotient $E_r = \frac{x_r^\top L x_r}{x_r^\top x_r}$ with a Laplacian-locality moment derived from the same per-edge Dirichlet energy, normalize it, and store only S_r alongside the row; discard L afterward. This preserves the smoothness signal that Rayleigh encodes while incorporating a stable, intensity-aware normalization and local variability component, enabling alpha–beta blending at query time with no graph in memory.
+//! ## Key idea
+//! - Use the Rayleigh energy $E_r$ as the primary smoothness measure; it is non‑negative and scale‑invariant in x, reflecting how “wiggly” a row is over the item graph built once for the dataset.[^2][^1]
+//! - Augment $E_r$ with a local Dirichlet statistic that captures how energy distributes across edges, e.g., an energy-weighted Gini or variance of per-edge contributions, to distinguish uniformly rough rows from rows whose roughness is concentrated; summarize this as $V_r$ and combine with $E_r$ into a single scalar index $S_r$ via a bounded transform that is comparable across rows.[^3][^1]
+//! ## Per-row synthetic index
+//! For each row vector x in R^N and Laplacian L computed once:
+//! - Rayleigh energy: $E_r = \frac{x^\top L x}{x^\top x}$ with the convention $E_r = 0$ if $x^\top x = 0$.[^1][^2]
+//! - Edgewise energy distribution: expand the Dirichlet energy as a sum over edges using the standard identity $x^\top L x = \sum_{(i,j)\in E} w_{ij} (x_i - x_j)^2$; define per-edge share $e_{ij} = \frac{w_{ij} (x_i - x_j)^2}{\sum w_{uv} (x_u - x_v)^2}$ if the denominator is nonzero, else 0.[^3][^1]
+//! - Locality moment: compute a dispersion summary $V_r$ over {e_{ij}} such as:
+//!     - Gini-like concentration: $G_r = \sum e_{ij}^2$ (higher means energy concentrated on fewer edges), or
+//!     - Variance: $\operatorname{Var}_r = \sum (e_{ij} - \frac{1}{|E_x|})^2$ over edges with nonzero contribution [^3][^1].
+//! - Normalization: map $E_r$ to a bounded score $E_r' = \frac{E_r}{E_r + \tau}$ with a small positive scale $\tau$ (e.g., median E across rows) to stabilize tails and keep 0–1 range; keep $G_r$ already in  by construction.`ArrowSpace`[^2][^1]
+//! - Synthetic index: $S_r = \alpha \, E_r' + (1-\alpha) \, G_r$, with \$\alpha \in \$ (e.g., 0.7). Store S_r per row and discard L and all edge stats.`ArrowSpace`[^2][^1]
+//! ## Why this works
+//! - $E_r$ is the classical Dirichlet (Rayleigh) energy; lower means smoother over the item graph, higher means high-frequency variation; it is standard in spectral methods and tightly coupled to Laplacian eigen-analysis.[^2][^1]
+//! - $G_r$ distinguishes equal-energy rows by how the energy is distributed across edges: a row with many small, diffuse irregularities differs from one with a few sharp discontinuities; a single scalar keeps this nuance without storing the graph.[^1][^3]
+//! ## One-time computation plan
+//! - Build the item graph Laplacian L once (any construction policy, e.g., your λτ-graph or KNN), compute S_r for all rows, then drop L.[^3][^1]
+//! - Complexity: computing $x^\top L x$ is O(nnz(L)) per row using CSR; computing e_{ij} shares during the same pass has the same complexity; no extra matrices are needed; storage is O(nrows) for S_r.[^2][^3]
+//! ## Practical details
+//! - Zero/constant rows: if $x^\top x = 0$, set $E_r=0$ and $G_r=0$, hence $S_r=0$, which is consistent with smoothness on connected graphs.[^1][^2]
+//! - Scale selection: pick $\tau$ as median or a small quantile of {E_r} to get a stable logistic-like compression; this makes S_r robust and comparable across datasets.[^2][^1]
+//! - Optional calibration: z-score or rank-normalize E_r across rows before the bounded map if heavy tails; keep G_r as-is in.`ArrowSpace`[^3][^1]
+//! ## Using the index
+//! - At search time, blend semantic similarity with S_r proximity using the same alpha–beta logic already used for λ, replacing lambda proximity with an S_r proximity term, e.g., $1/(1+|S_q - S_i|)$; this preserves a spectral bias without reconstructing or storing any graph [^2][^1].
+//! - The single scalar S_r per row can also be used for band filters, clustering seeds, or diversity penalties biased by spectral roughness, again without graphs.[^3][^1]
+//! <span style="display:none">[^10][^11][^5][^6][^7][^8][^9]</span>
+//! <div style="text-align: center">⁂</div>
+//! [^1]: https://www.cs.yale.edu/homes/spielman/462/2007/lect7-07.pdf
+//! [^2]: https://www.microsoft.com/en-us/research/wp-content/uploads/2013/07/Krishnan-SG13.pdf
+//! [^3]: https://www.math.uni-potsdam.de/fileadmin/user_upload/Prof-GraphTh/Keller/KellerLenzWojciechowski_GraphsAndDiscreteDirichletSpaces_personal.pdf
+//! [^5]: https://arxiv.org/html/2501.11024v1
+//! [^6]: https://arxiv.org/html/2508.06123v1
+//! [^7]: https://d-nb.info/1162140003/34
+//! [^8]: https://www.ins.uni-bonn.de/media/public/publication-media/MA_Schwartz_2016.pdf?pk=703
+//! [^9]: https://proceedings.neurips.cc/paper_files/paper/2024/file/f57de20ab7bb1540bcac55266ebb5401-Paper-Conference.pdf
+//! [^10]: https://arxiv.org/pdf/2309.11251.pdf
+//! [^11]: https://academic.oup.com/mnras/article-pdf/370/4/1713/3388125/mnras0370-1713.pdf
+//!
+//! Taumode has been tested for:
+//! 1. **Non-negativity**: Fundamental property of Rayleigh quotients
+//! 2. **Reasonable bounds**: Ensures values aren't pathologically large
+//! 3. **Computational consistency**: Recomputation gives identical results
+//! 4. **Data sensitivity**: Different inputs produce different outputs (discriminative power)
+//! 5. **Numerical stability**: Values are finite (no NaN/infinity)
+//! 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
+//!
 use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
 

@@ -19,7 +19,7 @@
 //!
 //!
 //! Run documentation tests with `cargo test --doc`; Rustdoc extracts code blocks
-//! and executes them as tests, ensuring examples stay correct over time[3][6].
+//! and executes them as tests, ensuring examples stay correct over time.
 //!
 //! # Panics
 //!
@@ -36,9 +36,9 @@
 //! # Testing examples
 //!
 //! Rustdoc preprocesses examples: it injects the crate, wraps code in `fn main`
-//! if missing, and allows common lints to reduce boilerplate[3][11]. Keep examples
+//! if missing, and allows common lints to reduce boilerplate. Keep examples
 //! small and focused; add hidden setup lines with `#` when needed so that examples
-//! compile while showing only the essential lines to readers[3][4][8].
+//! compile while showing only the essential lines to readers.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};

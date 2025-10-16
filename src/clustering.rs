@@ -495,7 +495,7 @@ pub trait ClusteringHeuristic {
 /// Perform K-Means clustering using Lloyd's algorithm
 ///
 /// # Arguments
-/// * `rows` - Input data as Vec<Vec<f64>> where each inner vec is a sample
+/// * `rows` - Input data as `Vec<Vec<f64>>` where each inner vec is a sample
 /// * `k` - Number of clusters
 /// * `max_iter` - Maximum iterations for convergence
 /// * `seed` - Random seed for reproducibility

@@ -5,13 +5,13 @@
 //! This module uses **random projection** (Gaussian or sparse Achlioptas) as the default
 //! dimensionality reduction technique, not full PCA/SVD. Random projection is linear,
 //! parameter-light, and preserves distances sufficiently for k-NN graph construction,
-//! which is exactly what the Laplacian stage relies on in this codebase[web:2][web:7].
+//! which is exactly what the Laplacian stage relies on in this codebase.
 //!
 //! The **Johnson–Lindenstrauss lemma** guarantees that a target dimension
 //! \( r = \mathcal{O}(\log N_c / \varepsilon^2) \) suffices to approximately preserve
-//! pairwise distances among \( N_c \) centroids[web:2][web:4]. This makes the k-NN neighborhood
+//! pairwise distances among \( N_c \) centroids. This makes the k-NN neighborhood
 //! structure and weights stable while reducing computation from \( O(N_c F) \) to
-//! \( O(N_c r) \) per pass before the Laplacian build[web:7][web:13].
+//! \( O(N_c r) \) per pass before the Laplacian build.
 //!
 //! ## An example of why JL Preserves Distances BETWEEN Points
 //!
@@ -67,26 +67,26 @@
 //! ### Laplacian Eigenmaps
 //!
 //! Belkin and Niyogi demonstrate the importance of locality-preserving weights and show
-//! that spectral embedding quality depends on neighborhood fidelity[web:8][web:14]. Projecting
+//! that spectral embedding quality depends on neighborhood fidelity. Projecting
 //! to a dimension \( r \) that preserves distances ensures the adjacency built in reduced
 //! space respects local structure with far less computational cost, matching the algorithm's
-//! locality emphasis without introducing new algorithmic branches[web:11][web:14].
+//! locality emphasis without introducing new algorithmic branches.
 //!
 //! ### Laplacian-based Dimensionality Reduction
 //!
 //! The survey on spectral dimensionality reduction methods (arXiv:2106.02154) unifies
-//! these approaches around graph Laplacians[file:1]. For a low-code baseline, a linear
+//! these approaches around graph Laplacians. For a low-code baseline, a linear
 //! projection is acceptable upstream of the Laplacian as long as neighbor relations are
-//! not distorted, which Johnson-Lindenstrauss-based projections provide[web:2][web:7].
-//! This avoids bespoke kernel or solver choices while maintaining efficiency[web:13][web:16].
+//! not distorted, which Johnson-Lindenstrauss-based projections provide.
+//! This avoids bespoke kernel or solver choices while maintaining efficiency.
 //!
 //! ### Spectral Filtering
 //!
 //! NeurIPS 2021 work on spectral filtering mitigates high-dimensional effects by acting
-//! in graph frequency domains; however, that approach requires graph eigensolvers[web:17][web:20].
+//! in graph frequency domains; however, that approach requires graph eigensolvers.
 //! Random projection upstream achieves similar speed gains for graph construction with
 //! minimal code and no added hyperparameters, fitting the objective to reduce Laplacian
-//! build time with minimal changes[web:10][web:16].
+//! build time with minimal changes.
 //!
 //! ### When to prefer SVD later
 //!
