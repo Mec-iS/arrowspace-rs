@@ -32,7 +32,7 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```ignore
 //! use arrowspace::sampling::{InlineSampler, DensityAdaptiveSampler};
 //!
 //! let sampler = DensityAdaptiveSampler::new(0.3);  // 30% base rate

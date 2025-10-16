@@ -13,13 +13,18 @@
 //!
 //! **DETERMINISTIC**: All random operations use fixed seed 128 for reproducibility.
 
-use log::{debug, info, warn};
+use std::sync::{Arc, Mutex};
+
+use log::{debug, info, trace, warn};
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
+
+use crate::builder::ArrowSpaceBuilder;
+use crate::sampling::InlineSampler;
 
 /// Fixed seed for deterministic clustering
 const CLUSTERING_SEED: u64 = 128;
@@ -530,30 +535,389 @@ pub fn kmeans_lloyd(rows: &[Vec<f64>], k: usize, max_iter: usize, seed: u64) -> 
     labels
 }
 
-pub fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f64) {
-    let mut best_idx = 0;
-    let mut best_dist2 = f64::INFINITY;
-
-    for (i, c) in centroids.iter().enumerate() {
-        let mut d2 = 0.0;
-        for (a, b) in row.iter().zip(c.iter()) {
-            let diff = a - b;
-            d2 += diff * diff;
-        }
-
-        if d2 < best_dist2 {
-            best_dist2 = d2;
-            best_idx = i;
-        }
-    }
-
-    (best_idx, best_dist2)
-}
-
 pub fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
     a.iter()
         .zip(b)
         .map(|(x, y)| (x - y).powi(2))
         .sum::<f64>()
         .sqrt()
+}
+
+// Clustering and Reduction: methods used to prepare the raw data before
+//  computing Laplacian.
+
+/// Scans rows linearly, assigns to nearest centroid if within radius,
+/// else creates a new cluster up to max_clusters. Outliers beyond cap are skipped.
+/// Returns (centroids_matrix, assignments, sizes).
+pub(crate) fn run_incremental_clustering_with_sampling(
+    arrowspacebuilder: &ArrowSpaceBuilder,
+    rows: &[Vec<f64>],
+    nfeatures: usize,
+    max_clusters: usize,
+    radius: f64,
+    sampler: Arc<Mutex<dyn InlineSampler>>,
+) -> (DenseMatrix<f64>, Vec<Option<usize>>, Vec<usize>) {
+    let nrows = rows.len();
+
+    info!("Starting incremental clustering with inline sampling");
+    debug!(
+        "Parameters: max_clusters={}, radius={:.4}",
+        max_clusters, radius
+    );
+
+    // Shared clustering state
+    let centroids = Mutex::new(Vec::<Vec<f64>>::new());
+    let counts = Mutex::new(Vec::<usize>::new());
+    let assignments = Mutex::new(vec![None; nrows]);
+
+    let process_row = |row_idx: usize| {
+        let row = &rows[row_idx];
+
+        // ============================================================
+        // PHASE 1: Snapshot and decision
+        // ============================================================
+        let cent_snap = {
+            let c = centroids.lock().unwrap();
+            c.clone()
+        };
+
+        trace!(
+            "Row {}: Snapshot phase - n_centroids_snapshot={}",
+            row_idx,
+            cent_snap.len()
+        );
+
+        // Distance from snapshot (decision basis)
+        let (_snap_best_idx, snap_best_dist_sq) = if cent_snap.is_empty() {
+            trace!("Row {}: Snapshot empty, setting dist²=INFINITY", row_idx);
+            (0, f64::INFINITY)
+        } else {
+            let (idx, dist) = nearest_centroid(row, &cent_snap);
+            trace!(
+                "Row {}: Snapshot nearest - idx={}, dist²={:.6}",
+                row_idx,
+                idx,
+                dist
+            );
+            (idx, dist)
+        };
+
+        // Sampling (if enabled)
+        if arrowspacebuilder.sampling.is_some() {
+            trace!("Row {}: Checking sampling filter", row_idx);
+            let mut smp = sampler.lock().unwrap();
+            if !smp.should_keep(row, snap_best_dist_sq, cent_snap.len(), max_clusters) {
+                trace!("Row {}: REJECTED by sampling filter", row_idx);
+                return;
+            }
+            trace!("Row {}: KEPT by sampling filter", row_idx);
+        } else {
+            trace!("Row {}: Sampling disabled", row_idx);
+        }
+
+        // ============================================================
+        // PHASE 2: Update phase under lock
+        // ============================================================
+        let mut c = centroids.lock().unwrap();
+        let mut k = counts.lock().unwrap();
+        let mut a = assignments.lock().unwrap();
+
+        trace!(
+            "Row {}: Acquired locks - n_centroids_current={}",
+            row_idx,
+            c.len()
+        );
+
+        // Assert: centroids count should be >= snapshot count (monotonically increasing)
+        #[cfg(test)]
+        assert!(
+            c.len() >= cent_snap.len(),
+            "Row {}: Centroid count went backwards! snapshot={}, current={}",
+            row_idx,
+            cent_snap.len(),
+            c.len()
+        );
+
+        // First centroid special case
+        if c.is_empty() {
+            trace!("Row {}: Creating FIRST centroid", row_idx);
+            assert_eq!(
+                cent_snap.len(),
+                0,
+                "Row {}: Snapshot should be empty",
+                row_idx
+            );
+            assert_eq!(
+                snap_best_dist_sq,
+                f64::INFINITY,
+                "Row {}: Distance should be INFINITY for empty",
+                row_idx
+            );
+
+            c.push(row.clone());
+            k.push(1);
+            a[row_idx] = Some(0);
+
+            trace!("Row {}: First centroid created, n_centroids=1", row_idx);
+            return;
+        }
+
+        // ============================================================
+        // PHASE 3: Decision based on snapshot distance
+        // ============================================================
+        trace!(
+            "Row {}: Decision - snap_dist²={:.6}, radius²={:.6}, n_current={}, max={}",
+            row_idx,
+            snap_best_dist_sq,
+            radius,
+            c.len(),
+            max_clusters
+        );
+
+        if c.len() < max_clusters && snap_best_dist_sq > (radius * 0.5) {
+            // avoid overfitting the radius and falling into a single-cluster
+            // CREATE NEW CLUSTER
+            trace!("Row {}: CONDITION MET for new cluster: len({}) < max({}) AND dist²({:.6}) > radius²({:.6})",
+                    row_idx, c.len(), max_clusters, snap_best_dist_sq, radius);
+
+            let new_idx = c.len();
+
+            #[cfg(test)]
+            {
+                // Assert: new_idx should be valid
+                assert_eq!(new_idx, c.len(), "Row {}: new_idx mismatch", row_idx);
+                assert!(
+                    new_idx < max_clusters,
+                    "Row {}: new_idx {} >= max_clusters {}",
+                    row_idx,
+                    new_idx,
+                    max_clusters
+                );
+            }
+
+            c.push(row.clone());
+            k.push(1);
+            a[row_idx] = Some(new_idx);
+
+            debug!(
+                "Row {}: Created centroid {}, n_centroids now={}",
+                row_idx,
+                new_idx,
+                c.len()
+            );
+
+            // Assert: counts should match centroids
+            assert_eq!(
+                c.len(),
+                k.len(),
+                "Row {}: Centroids and counts out of sync",
+                row_idx
+            );
+        } else if snap_best_dist_sq <= radius {
+            // ASSIGN TO EXISTING CLUSTER
+            trace!(
+                "Row {}: ASSIGNING to existing cluster (dist²={:.6} <= radius²={:.6})",
+                row_idx, snap_best_dist_sq, radius
+            );
+
+            // Recompute with current centroids for assignment
+            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+
+            trace!("Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
+                    row_idx, best_idx, current_dist_sq, snap_best_dist_sq);
+
+            // Assert: best_idx should be valid
+            #[cfg(test)]
+            assert!(
+                best_idx < c.len(),
+                "Row {}: best_idx {} >= n_centroids {}",
+                row_idx,
+                best_idx,
+                c.len()
+            );
+
+            let k_old = k[best_idx] as f64;
+            let k_new = k_old + 1.0;
+
+            // Assert: count should be positive
+            assert!(
+                k_old > 0.0,
+                "Row {}: Centroid {} has zero count",
+                row_idx,
+                best_idx
+            );
+
+            for j in 0..nfeatures {
+                c[best_idx][j] += (row[j] - c[best_idx][j]) / k_new;
+            }
+            k[best_idx] += 1;
+            a[row_idx] = Some(best_idx);
+
+            debug!(
+                "Row {}: Assigned to cluster {}, count now={}",
+                row_idx, best_idx, k[best_idx]
+            );
+        } else {
+            // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
+            // for points that are "not too far", instead of dropping everything outright.
+
+            // 1) Recompute distance against current centroids under the lock
+            let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
+
+            // 2) Use a relaxed radius once saturated to keep more outliers
+            let relax_factor = 1.5; // tune: 1.2–2.0
+            let relaxed_radius = radius * relax_factor;
+
+            if current_dist_sq <= relaxed_radius {
+                // Assign as a "soft outlier" without moving the centroid (safe)
+                // Alternative: tiny eta if you want some adaptation (e.g., 0.01)
+                let eta = 0.0; // tune: 0.0 keeps centroids fixed for outliers
+                if eta > 0.0 {
+                    for j in 0..nfeatures {
+                        c[best_idx][j] += eta * (row[j] - c[best_idx][j]);
+                    }
+                }
+                // Still count the assignment for downstream stats/graph
+                k[best_idx] += 1;
+                a[row_idx] = Some(best_idx);
+
+                debug!(
+                    "Row {}: SOFT-ASSIGNED as outlier to cluster {} (dist²={:.6} <= relaxed {:.6})",
+                    row_idx, best_idx, current_dist_sq, relaxed_radius
+                );
+            } else {
+                // Too far even for relaxed policy → drop
+                debug!(
+                    "Row {}: DROPPED as outlier (dist²={:.6} > relaxed {:.6}, len={} >= max={})",
+                    row_idx, current_dist_sq, relaxed_radius, c.len(), max_clusters
+                );
+
+                #[cfg(test)]
+                {
+                    assert_eq!(
+                        c.len(),
+                        max_clusters,
+                        "Row {}: drop only after saturation",
+                        row_idx
+                    );
+                    assert!(
+                        current_dist_sq > relaxed_radius,
+                        "Row {}: drop only if truly far",
+                        row_idx
+                    );
+                }
+
+                return;
+            }
+        }
+
+        #[cfg(test)]
+        {
+            // Final assertions before releasing locks
+            assert_eq!(
+                c.len(),
+                k.len(),
+                "Row {}: Final check - centroids/counts mismatch",
+                row_idx
+            );
+            assert!(
+                c.len() <= max_clusters,
+                "Row {}: Final check - exceeded max_clusters",
+                row_idx
+            );
+        }
+
+        trace!(
+            "Row {}: Complete - n_centroids={}, n_counts={}",
+            row_idx,
+            c.len(),
+            k.len()
+        );
+    };
+
+    // Process rows in parallel (game loop all along)
+    if arrowspacebuilder.deterministic_clustering {
+        (0..nrows).into_iter().for_each(process_row);
+    } else {
+        (0..nrows).into_par_iter().for_each(process_row);
+    }
+
+    let final_centroids = centroids.into_inner().unwrap();
+    let final_counts = counts.into_inner().unwrap();
+    let final_assignments = assignments.into_inner().unwrap();
+
+    // Build output matrix
+    let x_out = &final_centroids.len().max(1);
+    let mut flat = Vec::<f64>::with_capacity(x_out * nfeatures);
+    for c in &final_centroids {
+        flat.extend_from_slice(c);
+    }
+
+    let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
+        debug!(
+            "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
+            flat, x_out, nfeatures
+        );
+        let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
+        dm
+    } else {
+        warn!("No clusters created; returning zero matrix");
+        let inline_sampling = arrowspacebuilder.sampling.as_ref().unwrap();
+        panic!(
+            "No clusters created from data, sampling: {}",
+            inline_sampling
+        );
+        #[allow(unreachable_code)]
+        DenseMatrix::from_2d_vec(&vec![vec![0.0 as f64; nfeatures]; *x_out]).unwrap()
+    };
+
+    if arrowspacebuilder.sampling.is_some() {
+        let smp = sampler.lock().unwrap();
+        let (sampled, discarded) = smp.get_stats();
+        let sampling_ratio = sampled as f64 / nrows as f64;
+
+        debug!(
+            "Inline sampling complete: {} kept ({:.2}%), {} discarded",
+            sampled,
+            sampling_ratio * 100.0,
+            discarded
+        );
+        debug!(
+            "Clustering produced {} centroids from {} rows ({}% sampling)",
+            final_centroids.len(),
+            nrows,
+            sampling_ratio * 100.0
+        );
+        #[cfg(not(test))]
+        assert!(
+            sampling_ratio > 0.325 && sampling_ratio < 0.89,
+            "sampling_rate not in the interval 0.325..0.875 but {sampling_ratio}"
+        );
+    } else {
+        debug!(
+            "Clustering produced {} centroids from {} rows (100% sampling)",
+            final_centroids.len(),
+            nrows
+        );
+    }
+
+    (centroids_dm, final_assignments, final_counts)
+}
+
+/// Linear-scan nearest centroid helper: returns (index, squared_distance).
+pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f64) {
+    let mut best_idx = 0;
+    let mut best_dist2 = f64::INFINITY;
+    for (i, c) in centroids.iter().enumerate() {
+        let mut d2 = 0.0;
+        for (a, b) in row.iter().zip(c.iter()) {
+            let diff = a - b;
+            d2 += diff * diff;
+        }
+        if d2 < best_dist2 {
+            best_dist2 = d2;
+            best_idx = i;
+        }
+    }
+    (best_idx, best_dist2)
 }

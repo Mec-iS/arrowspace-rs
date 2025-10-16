@@ -36,7 +36,7 @@
 //! # Edge Weight Computation
 //!
 //! Weights use adaptive Gaussian kernels:
-//! ```
+//! ```ignore
 //! w_ij = exp(-||x_i - x_j||² / (2σ²))
 //! ```
 //! where σ is computed adaptively from local density estimates or provided explicitly.

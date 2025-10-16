@@ -395,6 +395,7 @@ fn test_search_returns_top_k_exactly() {
 
 #[test]
 fn test_projection_preserves_relative_distances() {
+    init();
     // Test Johnson-Lindenstrauss projection preserves relative distances
     let (data, _) = create_test_data(99, 18);
 
@@ -405,6 +406,7 @@ fn test_projection_preserves_relative_distances() {
         .with_normalisation(true)
         .with_dims_reduction(true, Some(0.3)) // 30% of original dimension
         .with_sparsity_check(false)
+        .with_seed(42)
         .build(data);
 
     // Verify projection was applied
