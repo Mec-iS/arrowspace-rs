@@ -39,11 +39,9 @@ fn test_sfgrass_larger() {
 
     assert!(sparse_edges < orig_edges);
 }
-use env_logger::init;
 
 use crate::{
     builder::ArrowSpaceBuilder, sparsification::SfGrassSparsifier,
-    tests::test_data::make_gaussian_blob,
 };
 
 #[test]

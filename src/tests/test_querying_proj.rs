@@ -7,7 +7,9 @@
 //! 4. Lambda-aware similarity search in clustered space
 //! 5. Hybrid search combining semantic and spectral scoring
 
-use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::test_data::make_gaussian_hd};
+use log::debug;
+
+use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::{init, test_data::make_gaussian_hd}};
 
 /// Helper: return test data (training + query split from same distribution)
 fn create_test_data(n_train: usize, n_query: usize) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
@@ -327,6 +329,7 @@ fn test_range_search_with_query_lambda() {
 
 #[test]
 fn test_lambda_values_reasonable_range() {
+    init();
     // Test that query lambdas are in reasonable range
     let (data, queries) = create_test_data(99, 18);
 
@@ -335,6 +338,7 @@ fn test_lambda_values_reasonable_range() {
         .with_normalisation(true)
         .with_spectral(true)
         .with_sparsity_check(false)
+        .with_seed(42)
         .build(data);
 
     // Test all queries
@@ -350,10 +354,10 @@ fn test_lambda_values_reasonable_range() {
             lambda
         );
 
-        println!("Query {} lambda: {:.6}", i, lambda);
+        debug!("Query {} lambda: {:.6}", i, lambda);
     }
 
-    println!("✓ All query lambdas in reasonable range");
+    debug!("✓ All query lambdas in reasonable range");
 }
 
 #[test]

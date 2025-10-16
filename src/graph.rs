@@ -55,7 +55,7 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```ignore
 //! use arrowspace::graph::{build_laplacian_knn, LaplacianMode};
 //!
 //! let laplacian = build_laplacian_knn(

@@ -67,7 +67,7 @@ use sprs::CsMat;
 
 use rayon::prelude::*;
 
-use log::debug;
+use log::{debug, trace};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum TauMode {
@@ -221,7 +221,7 @@ impl TauMode {
         let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
 
         #[cfg(debug_assertions)]
-        debug!(
+        trace!(
             "Query synthetic lambda: E_raw={:.8}, G_raw={:.8}, tau={:.8}, final={:.8}",
             e_raw, g_raw, tau, synthetic_lambda
         );
