@@ -266,7 +266,7 @@ impl ArrowSpaceBuilder {
         self.cluster_max_clusters = Some(params.0);
         self.cluster_radius = params.1;
 
-        info!(
+        debug!(
             "Clustering: {} centroids, radius= {}, intrinsic_dim ≈ {}",
             self.cluster_max_clusters.unwrap(),
             self.cluster_radius,
@@ -342,14 +342,13 @@ impl ArrowSpaceBuilder {
             (clustered_dm.clone(), n_features)
         };
 
+        // Resolve λτ-graph params with conservative defaults
         info!(
             "Building Laplacian matrix on {} × {} input",
             laplacian_input.shape().0,
             reduced_dim
         );
 
-        // Resolve λτ-graph params with conservative defaults
-        info!("Building Laplacian matrix with configured parameters");
 
         // 3) Compute synthetic indices on resulting graph
         let gl = GraphFactory::build_laplacian_matrix_from_k_cluster(

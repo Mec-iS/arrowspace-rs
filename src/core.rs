@@ -442,8 +442,8 @@ impl ArrowSpace {
     #[inline]
     #[cfg(test)]
     pub fn from_items(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
-        info!(
-            "Creating ArrowSpace from {} items with custom tau mode: {:?}",
+        warn!(
+            "This is just a test method. Use ArrowSpaceBuilder. Creating ArrowSpace from {} items with custom tau mode: {:?}",
             items.len(),
             taumode
         );
@@ -465,8 +465,8 @@ impl ArrowSpace {
         let n_items = items.len(); // Number of items (columns in final layout)
         let n_features = items[0].len(); // Number of features (rows in final layout)
 
-        info!(
-            "Creating ArrowSpace from {} items with {} features",
+        warn!(
+            "This is a test method, use ArrowSpaceBuilder. Creating ArrowSpace from {} items with {} features",
             n_items, n_features
         );
         debug!("Using default tau mode: {:?}", TAUDEFAULT);
@@ -632,7 +632,7 @@ impl ArrowSpace {
             "Laplacian nodes must match number of items"
         );
 
-        info!("Adding item {} into item {}", b, a);
+        debug!("Adding item {} into item {}", b, a);
         debug!(
             "Graph Laplacian has {} nodes, ArrowSpace has {} items",
             gl.nnodes, self.nitems
@@ -667,7 +667,7 @@ impl ArrowSpace {
             "Laplacian nodes must match number of items"
         );
 
-        info!("Multiplying item {} by item {}", a, b);
+        debug!("Multiplying item {} by item {}", a, b);
 
         // Extract both items as complete ArrowItem vectors
         let mut item_a = self.get_item(a);
@@ -697,7 +697,7 @@ impl ArrowSpace {
             "Laplacian nodes must match number of items"
         );
 
-        info!("Scaling item {} by factor {:.6}", a, scalar);
+        debug!("Scaling item {} by factor {:.6}", a, scalar);
 
         // Extract item as complete ArrowItem vector
         let mut item_a = self.get_item(a);
@@ -813,7 +813,7 @@ impl ArrowSpace {
         k: usize,
         alpha: f64,
     ) -> Vec<(usize, f64)> {
-        info!("Pure rayon streaming search: k={}, alpha={}", k, alpha);
+        info!("Hybrid search: k={}, alpha={}", k, alpha);
 
         if k == 0 {
             return Vec::new();

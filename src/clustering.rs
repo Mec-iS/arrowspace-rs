@@ -47,11 +47,6 @@ pub trait ClusteringHeuristic {
 
         let base_seed = seed_override.unwrap_or(CLUSTERING_SEED);
 
-        info!(
-            "Computing optimal K for clustering: N={}, F={} (seed={})",
-            n, f, base_seed
-        );
-
         let (k_min, k_max, id_est) = self.step1_bounds(rows, n, f, base_seed);
 
         let sample_size = n.min(1000);
