@@ -571,12 +571,13 @@ mod tests {
     use approx::assert_relative_eq;
     use sprs::TriMat;
     use std::fs;
+    use crate::storage::test_storage::{create_test_builder, create_test_dense_matrix, create_test_sparse_matrix};
 
     #[test]
     fn test_dense_roundtrip() {
         let _ = fs::create_dir_all("./test_data");
         
-        let data = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
+        let data = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0], vec![1e-3, 1e-5, 0.34235236234234]];
         let original = DenseMatrix::from_2d_vec(&data).unwrap();
         
         save_dense_matrix(&original, "./test_data", "test_dense", None).unwrap();
@@ -595,8 +596,8 @@ mod tests {
                 );
             }
         }
-        
-        let _ = fs::remove_dir_all("./test_data");
+
+        // let _ = fs::remove_dir_all("./test_data");
     }
     
     #[test]
@@ -625,6 +626,44 @@ mod tests {
             }
         }
         
-        let _ = fs::remove_dir_all("./test_data");
+        //let _ = fs::remove_dir_all("./test_data");
+    }
+
+    #[test]
+    fn test_checkpoint_save_all_artifacts() {
+        let temp_dir = Path::new("./test_data");
+        let builder = create_test_builder();
+        
+        let raw_data = create_test_dense_matrix();
+        let centroids = DenseMatrix::from_2d_vec(&vec![vec![1.5, 2.5, 3.5]]).unwrap();
+        let adjacency = create_test_sparse_matrix();
+        let laplacian = create_test_sparse_matrix();
+        let signals = create_test_sparse_matrix();
+        
+        save_arrowspace_checkpoint_with_builder(
+            temp_dir,
+            "checkpoint_test",
+            &raw_data,
+            &adjacency,
+            &centroids,
+            &laplacian,
+            &signals,
+            &builder,
+        ).unwrap();
+        
+        // Verify all files exist
+        let expected_files = vec![
+            "checkpoint_test_raw_data.parquet",
+            "checkpoint_test_adjacency.parquet",
+            "checkpoint_test_centroids.parquet",
+            "checkpoint_test_laplacian.parquet",
+            "checkpoint_test_signals.parquet",
+            "checkpoint_test_metadata.json",
+        ];
+        
+        for filename in expected_files {
+            let path = temp_dir.join(filename);
+            assert!(path.exists(), "Missing file: {}", filename);
+        }
     }
 }

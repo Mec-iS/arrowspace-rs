@@ -13,16 +13,17 @@ use crate::storage::parquet::*;
 // Helper Functions
 // ========================================================================
 
-fn create_test_dense_matrix() -> DenseMatrix<f64> {
+pub(crate) fn create_test_dense_matrix() -> DenseMatrix<f64> {
     let data = vec![
         vec![1.0, 2.0, 3.0],
         vec![4.0, 5.0, 6.0],
         vec![7.0, 8.0, 9.0],
+        vec![1e-3, 1e-5, 0.342352362362323],
     ];
     DenseMatrix::from_2d_vec(&data).unwrap()
 }
 
-fn create_test_sparse_matrix() -> CsMat<f64> {
+pub(crate) fn create_test_sparse_matrix() -> CsMat<f64> {
     let mut trimat = TriMat::new((4, 4));
     trimat.add_triplet(0, 0, 2.0);
     trimat.add_triplet(0, 1, -1.0);
@@ -33,7 +34,7 @@ fn create_test_sparse_matrix() -> CsMat<f64> {
     trimat.to_csr()
 }
 
-fn create_test_builder() -> ArrowSpaceBuilder {
+pub(crate) fn create_test_builder() -> ArrowSpaceBuilder {
     ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 10, 4, 2.0, Some(0.6))
         .with_synthesis(TauMode::Median)
@@ -207,9 +208,8 @@ fn test_dense_matrix_roundtrip() {
     
     save_dense_matrix(&original, temp_dir.path(), "roundtrip", None).unwrap();
     
-    // Note: You'll need to implement load_dense_matrix
-    // let loaded = load_dense_matrix(temp_dir.path().join("roundtrip.parquet")).unwrap();
-    // assert_matrices_equal(&original, &loaded);
+    let loaded = load_dense_matrix(temp_dir.path().join("roundtrip.parquet")).unwrap();
+    assert_matrices_equal(&original, &loaded);
 }
 
 #[test]
