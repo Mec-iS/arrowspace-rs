@@ -20,6 +20,9 @@ pub mod sampling;
 pub mod sparsification;
 pub mod taumode;
 
+#[cfg(feature = "storage")]
+pub mod storage;
+
 #[cfg(test)]
 mod tests;
 

@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, Mutex};
-// Add logging
 use log::{debug, info, trace};
+
+#[cfg(feature = "storage")]
+use serde::{Deserialize, Serialize};
 
 use smartcore::linalg::basic::arrays::Array;
 
@@ -400,3 +404,176 @@ impl ArrowSpaceBuilder {
         (aspace, gl)
     }
 }
+
+impl fmt::Display for ArrowSpaceBuilder {
+    /// Format ArrowSpaceBuilder as comma-separated key=value pairs (cookie-style).
+    /// 
+    /// Output format: "key1=value1, key2=value2, ..."
+    /// This format can be parsed into a HashMap<String, String> using cookie parsers
+    /// or simple string splitting.
+    /// 
+    /// # Example
+    /// 
+    /// ```ignore
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_auto_graph(50_000, None)
+    ///     .with_synthesis(TauMode::Median);
+    /// 
+    /// let config_string = builder.to_string();
+    /// println!("{}", config_string);
+    /// 
+    /// // Parse back to HashMap
+    /// let config_map: HashMap<String, String> = parse_builder_config(&config_string);
+    /// ```
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,
+            "prebuilt_spectral={}, \
+             lambda_eps={}, \
+             lambda_k={}, \
+             lambda_topk={}, \
+             lambda_p={}, \
+             lambda_sigma={}, \
+             normalise={}, \
+             sparsity_check={}, \
+             sampling={}, \
+             synthesis={:?}, \
+             cluster_max_clusters={}, \
+             cluster_radius={}, \
+             clustering_seed={}, \
+             deterministic_clustering={}, \
+             use_dims_reduction={}, \
+             rp_eps={}",
+            self.prebuilt_spectral,
+            self.lambda_eps,
+            self.lambda_k,
+            self.lambda_topk,
+            self.lambda_p,
+            self.lambda_sigma.map_or("None".to_string(), |v| v.to_string()),
+            self.normalise,
+            self.sparsity_check,
+            self.sampling.as_ref().map_or("None".to_string(), |s| s.to_string()),
+            self.synthesis,
+            self.cluster_max_clusters.map_or("None".to_string(), |v| v.to_string()),
+            self.cluster_radius,
+            self.clustering_seed.map_or("None".to_string(), |v| v.to_string()),
+            self.deterministic_clustering,
+            self.use_dims_reduction,
+            self.rp_eps,
+        )
+    }
+}
+
+#[cfg(feature = "storage")]
+/// Configuration value that can hold different types while preserving type information.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ConfigValue {
+    Bool(bool),
+    Usize(usize),
+    F64(f64),
+    String(String),
+    OptionF64(Option<f64>),
+    OptionUsize(Option<usize>),
+    OptionU64(Option<u64>),
+    TauMode(TauMode),
+    OptionSamplerType(Option<SamplerType>),
+}
+
+impl ConfigValue {
+    // Convenience methods for type extraction
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            ConfigValue::Bool(v) => Some(*v),
+            _ => None,
+        }
+    }
+    
+    pub fn as_usize(&self) -> Option<usize> {
+        match self {
+            ConfigValue::Usize(v) => Some(*v),
+            _ => None,
+        }
+    }
+    
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            ConfigValue::F64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+        // Convenience extraction methods
+    pub fn as_tau_mode(&self) -> Option<&TauMode> {
+        match self {
+            ConfigValue::TauMode(v) => Some(v),
+            _ => None,
+        }
+    }
+    
+    pub fn as_sampler_type(&self) -> Option<&Option<SamplerType>> {
+        match self {
+            ConfigValue::OptionSamplerType(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "storage")]
+impl ArrowSpaceBuilder {
+    pub fn builder_config_typed(&self) -> HashMap<String, ConfigValue> {
+        let mut config = HashMap::new();
+        
+        config.insert("prebuilt_spectral".to_string(), ConfigValue::Bool(self.prebuilt_spectral));
+        config.insert("lambda_eps".to_string(), ConfigValue::F64(self.lambda_eps));
+        config.insert("lambda_k".to_string(), ConfigValue::Usize(self.lambda_k));
+        config.insert("lambda_topk".to_string(), ConfigValue::Usize(self.lambda_topk));
+        config.insert("lambda_p".to_string(), ConfigValue::F64(self.lambda_p));
+        config.insert("lambda_sigma".to_string(), ConfigValue::OptionF64(self.lambda_sigma));
+        config.insert("normalise".to_string(), ConfigValue::Bool(self.normalise));
+        config.insert("sparsity_check".to_string(), ConfigValue::Bool(self.sparsity_check));
+        config.insert("synthesis".to_string(), ConfigValue::TauMode(self.synthesis.clone()));
+        config.insert("sampling".to_string(), ConfigValue::OptionSamplerType(self.sampling.clone()));
+        config.insert("cluster_max_clusters".to_string(), ConfigValue::OptionUsize(self.cluster_max_clusters));
+        config.insert("cluster_radius".to_string(), ConfigValue::F64(self.cluster_radius));
+        config.insert("clustering_seed".to_string(), ConfigValue::OptionU64(self.clustering_seed));
+        config.insert("deterministic_clustering".to_string(), ConfigValue::Bool(self.deterministic_clustering));
+        config.insert("use_dims_reduction".to_string(), ConfigValue::Bool(self.use_dims_reduction));
+        config.insert("rp_eps".to_string(), ConfigValue::F64(self.rp_eps));
+
+        config
+    }
+}
+
+impl fmt::Display for ConfigValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            // Primitive types
+            ConfigValue::Bool(v) => write!(f, "{}", v),
+            ConfigValue::Usize(v) => write!(f, "{}", v),
+            ConfigValue::F64(v) => write!(f, "{}", v),
+            ConfigValue::String(v) => write!(f, "{}", v),
+            
+            // Optional primitive types
+            ConfigValue::OptionF64(opt) => match opt {
+                Some(v) => write!(f, "{}", v),
+                None => write!(f, "None"),
+            },
+            ConfigValue::OptionUsize(opt) => match opt {
+                Some(v) => write!(f, "{}", v),
+                None => write!(f, "None"),
+            },
+            ConfigValue::OptionU64(opt) => match opt {
+                Some(v) => write!(f, "{}", v),
+                None => write!(f, "None"),
+            },
+            
+            // Custom domain types
+            ConfigValue::TauMode(tau) => write!(f, "{}", tau),
+            ConfigValue::OptionSamplerType(opt) => match opt {
+                Some(sampler) => write!(f, "{:?}", sampler),
+                None => write!(f, "None"),
+            },
+        }
+    }
+}
+
+

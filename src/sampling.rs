@@ -55,6 +55,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{info, trace};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // TRAIT DEFINITION
@@ -84,6 +85,7 @@ pub trait InlineSampler: Send {
 // ============================================================================
 
 /// Enum wrapper to use different samplers with dynamic dispatch
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum SamplerType {
     Simple(f64),
     DensityAdaptive(f64),

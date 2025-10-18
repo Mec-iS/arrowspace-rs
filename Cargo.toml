@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.16.0"
+version = "0.16.1"
 edition = "2024"
 description = "Spectral vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -31,11 +31,22 @@ env_logger = "0.11.8"
 dashmap = "6.1.0"
 rand_chacha = "0.9.0"
 rand_distr = "0.5.1"
+parquet = { version = "56.2.0", optional = true}
+uuid = { version = "1.18.1", features = ["v4", "serde"], optional = true }
+arrow = { version = "56.2.0", optional = true }
+serde = { version = "^1.0.228", features = ["derive"], optional = true }
+serde_json = { version = "^1.0.143", optional = true }
+chrono = { version = "0.4.42", optional = true }
 
 [dev-dependencies]
 criterion = "0.7.0"
 smartcore = {version = "0.4.5", features = ["datasets"]}
 rand_pcg = "0.9.0"
+tempfile = "3.23.0"
+
+[features]
+default = []
+storage = ["dep:parquet", "dep:uuid", "dep:arrow", "dep:serde", "dep:serde_json", "dep:chrono"]
 
 [lib]
 name = "arrowspace"

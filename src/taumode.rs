@@ -60,16 +60,19 @@
 //! 5. **Numerical stability**: Values are finite (no NaN/infinity)
 //! 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
 //!
+use std::fmt;
+
 use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
 
+use serde::{Deserialize, Serialize};
 use sprs::CsMat;
 
 use rayon::prelude::*;
 
 use log::{debug, trace};
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum TauMode {
     Fixed(f64),
     #[default]
@@ -342,5 +345,16 @@ impl TauMode {
             .iter()
             .map(|v| Self::compute_rayleigh_quotient_from_matrix(matrix, v))
             .collect()
+    }
+}
+
+impl fmt::Display for TauMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TauMode::Fixed(value) => write!(f, "Fixed({})", value),
+            TauMode::Median => write!(f, "Median"),
+            TauMode::Mean => write!(f, "Mean"),
+            TauMode::Percentile(p) => write!(f, "Percentile({})", p),
+        }
     }
 }
