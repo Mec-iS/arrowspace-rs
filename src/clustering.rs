@@ -694,7 +694,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             k.push(1);
             a[row_idx] = Some(new_idx);
 
-            debug!(
+            trace!(
                 "Row {}: Created centroid {}, n_centroids now={}",
                 row_idx,
                 new_idx,
@@ -748,7 +748,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             k[best_idx] += 1;
             a[row_idx] = Some(best_idx);
 
-            debug!(
+            trace!(
                 "Row {}: Assigned to cluster {}, count now={}",
                 row_idx, best_idx, k[best_idx]
             );
@@ -849,7 +849,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
     }
 
     let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
-        debug!(
+        trace!(
             "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
             flat, x_out, nfeatures
         );

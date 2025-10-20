@@ -3,7 +3,6 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use log::{debug, info, trace};
 
-#[cfg(feature = "storage")]
 use serde::{Deserialize, Serialize};
 
 use smartcore::linalg::basic::arrays::Array;
@@ -56,6 +55,10 @@ pub struct ArrowSpaceBuilder {
     // dimensionality reduction with random projection (dafault false)
     use_dims_reduction: bool,
     rp_eps: f64,
+
+    // persistence directory
+    #[cfg(feature = "storage")]
+    persistence: Option<(String, std::path::PathBuf)>,
 }
 
 impl Default for ArrowSpaceBuilder {
@@ -86,6 +89,9 @@ impl Default for ArrowSpaceBuilder {
             // dim reduction
             use_dims_reduction: false,
             rp_eps: 0.3,
+            // persistence directory
+            #[cfg(feature = "storage")]
+            persistence: None,
         }
     }
 }
@@ -193,6 +199,30 @@ impl ArrowSpaceBuilder {
         self
     }
 
+    /// Files are saved in Parquet format with Snappy compression for efficiency.
+    ///
+    /// # Arguments
+    /// * `path` - Directory path where artifacts will be saved
+    ///
+    /// # Example
+    /// ```ignore
+    /// use arrowspace::builder::ArrowSpaceBuilder;
+    ///
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_lambda_graph(0.5, 5, 3, 2.0, None)
+    ///     .with_persistence("./checkpoints");
+    /// ```
+    ///
+    /// # Note
+    /// This method is only available when the `storage` feature is enabled.
+    #[cfg(feature = "storage")]
+    pub fn with_persistence(mut self, path: impl AsRef<std::path::Path>, name: String) -> Self {
+        let path_buf: std::path::PathBuf = path.as_ref().to_path_buf();
+        info!("Enabling persistence at: {}", path_buf.display());
+        self.persistence = Some((name, path_buf));
+        self
+    }
+
     /// Define the results number of k-neighbours from the
     ///  max number of neighbours connections (`GraphParams::k` -> result_k)
     /// Check if the passed cap_k is reasonable and define an euristics to
@@ -225,6 +255,8 @@ impl ArrowSpaceBuilder {
         let n_items = rows.len();
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
 
+        let start = std::time::Instant::now();
+
         // set baseline for topk
         self.define_result_k();
 
@@ -233,7 +265,7 @@ impl ArrowSpaceBuilder {
             n_items, n_features
         );
         debug!(
-            "Build configuration: eps={}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}",
+            "Build configuration: eps={:?}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}",
             self.lambda_eps,
             self.lambda_k,
             self.lambda_p,
@@ -250,13 +282,33 @@ impl ArrowSpaceBuilder {
             n_items, n_features
         );
 
+        #[cfg(feature = "storage")]
+        {
+            use crate::storage::StorageError;
+            use crate::storage::parquet::save_dense_matrix_with_builder;
+
+            assert!(self.persistence.is_some());
+            assert!(self.persistence.clone().unwrap().1.is_dir());
+            let _name = self.persistence.clone().unwrap().0;
+            let name = _name.as_str();
+
+            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                &aspace.data, self.persistence.clone().unwrap().1,
+                &format!("{}-raw_input", name), Some(&self));
+            match saved {
+                Ok(_) => debug!("raw-input saved"),
+                Err(StorageError::Parquet(err)) => panic!("saving failed for raw-input {}", err),
+                _ => panic!("Error with {:?}", saved),
+            };
+        }
+
         // Sampler switch
         let sampler: Arc<Mutex<dyn InlineSampler>> = match self.sampling {
             Some(SamplerType::Simple(r)) => Arc::new(Mutex::new(SamplerType::new_simple(r))),
             Some(SamplerType::DensityAdaptive(r)) => {
                 Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
             }
-            None => Arc::new(Mutex::new(SamplerType::new_simple(0.6))),
+            None => Arc::new(Mutex::new(SamplerType::new_simple(1.0))),
         };
 
         // ---- Compute optimal K automatically ----
@@ -287,6 +339,21 @@ impl ArrowSpaceBuilder {
             self.cluster_radius,
             sampler,
         );
+
+        #[cfg(feature = "storage")]
+        {
+            use crate::storage::StorageError;
+            use crate::storage::parquet::save_dense_matrix_with_builder;
+
+            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                &clustered_dm, "/datadisk/publish/arrowspace-rs/test_data/cve-dataset/",
+                "cve-clustered-dm", Some(&self));
+            match saved {
+                Ok(_) => debug!("clustered_dm saved"),
+                Err(StorageError::Parquet(err)) => panic!("saving failed for clustered_dm {}", err),
+                _ => panic!("Error with {:?}", saved),
+            };
+        }
 
         // Store clustering results in ArrowSpace
         aspace.n_clusters = clustered_dm.shape().0;
@@ -346,6 +413,23 @@ impl ArrowSpaceBuilder {
             (clustered_dm.clone(), n_features)
         };
 
+        #[cfg(feature = "storage")]
+        {
+            use crate::storage::StorageError;
+            use crate::storage::parquet::save_dense_matrix_with_builder;
+            let _name = self.persistence.clone().unwrap().0;
+            let name = _name.as_str();
+
+            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                &laplacian_input, self.persistence.clone().unwrap().1,
+                &format!("{}-laplacian-input", name), Some(&self));
+            match saved {
+                Ok(_) => debug!("laplacian_input saved"),
+                Err(StorageError::Parquet(err)) => panic!("saving failed for laplacian_input {}", err),
+                _ => panic!("Error with {:?}", saved),
+            };
+        }
+
         // Resolve λτ-graph params with conservative defaults
         info!(
             "Building Laplacian matrix on {} × {} input",
@@ -368,6 +452,23 @@ impl ArrowSpaceBuilder {
         );
         debug!("Laplacian matrix built successfully");
 
+        #[cfg(feature = "storage")]
+        {
+            use crate::storage::StorageError;
+            use crate::storage::parquet::save_sparse_matrix_with_builder;
+            let _name = self.persistence.clone().unwrap().0;
+            let name = _name.as_str();
+
+            let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
+                &gl.matrix, self.persistence.clone().unwrap().1,
+                &format!("{}-gl-matrix", name), Some(&self));
+            match saved {
+                Ok(_) => debug!("gl.matrix saved"),
+                Err(StorageError::Parquet(err)) => panic!("saving failed for gl.matrix {}", err),
+                _ => panic!("Error with {:?}", saved),
+            };
+        }
+
         // Branch: if spectral L_2 laplacian is required, compute
         // if aspace.signals is not set, gl.matrix will be used
         if self.prebuilt_spectral {
@@ -378,6 +479,23 @@ impl ArrowSpaceBuilder {
                 "Spectral Laplacian built with signals shape: {:?}",
                 aspace.signals.shape()
             );
+
+            #[cfg(feature = "storage")]
+            {
+                use crate::storage::StorageError;
+                use crate::storage::parquet::save_sparse_matrix_with_builder;
+                let _name = self.persistence.clone().unwrap().0;
+                let name = _name.as_str();
+
+                let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
+                    &aspace.signals, self.persistence.clone().unwrap().1,
+                    &format!("{}-aspace-signals", name), Some(&self));
+                match saved {
+                    Ok(_) => debug!("aspace.signals saved"),
+                    Err(StorageError::Parquet(err)) => panic!("saving failed for aspace.signals {}", err),
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
         }
 
         // Compute taumode lambdas
@@ -386,6 +504,23 @@ impl ArrowSpaceBuilder {
             self.synthesis
         );
         TauMode::compute_taumode_lambdas(&mut aspace, &gl, self.synthesis);
+
+        #[cfg(feature = "storage")]
+        {
+            use crate::storage::StorageError;
+            use crate::storage::parquet::save_lambda_with_builder;
+            let _name = self.persistence.clone().unwrap().0;
+            let name = _name.as_str();
+
+            let saved: Result<(), StorageError> = save_lambda_with_builder(
+                &aspace.lambdas, self.persistence.clone().unwrap().1,
+                &format!("{}-lambdas", name), Some(&self));
+            match saved {
+                Ok(_) => debug!("cve-lambdas saved"),
+                Err(StorageError::Parquet(err)) => panic!("saving failed for cve-lambdas {}", err),
+                _ => panic!("Error with {:?}", saved),
+            };
+        }
 
         let lambda_stats = {
             let lambdas = aspace.lambdas();
@@ -400,6 +535,8 @@ impl ArrowSpaceBuilder {
             lambda_stats.0, lambda_stats.1, lambda_stats.2
         );
 
+        info!("Total ArrowSpaceBuilder construction time: {:?}", start.elapsed());
+        debug!("ArrowSpaceBuilder configuration: {}", self);
         info!("ArrowSpace build completed successfully");
         (aspace, gl)
     }
@@ -416,7 +553,6 @@ impl fmt::Display for ArrowSpaceBuilder {
     /// 
     /// ```ignore
     /// let builder = ArrowSpaceBuilder::new()
-    ///     .with_auto_graph(50_000, None)
     ///     .with_synthesis(TauMode::Median);
     /// 
     /// let config_string = builder.to_string();
@@ -442,7 +578,8 @@ impl fmt::Display for ArrowSpaceBuilder {
              clustering_seed={}, \
              deterministic_clustering={}, \
              use_dims_reduction={}, \
-             rp_eps={}",
+             rp_eps={}, \
+             persistence={}",
             self.prebuilt_spectral,
             self.lambda_eps,
             self.lambda_k,
@@ -459,11 +596,11 @@ impl fmt::Display for ArrowSpaceBuilder {
             self.deterministic_clustering,
             self.use_dims_reduction,
             self.rp_eps,
+            self.persistence.as_ref().map_or("None".to_string(), |s| s.1.display().to_string())
         )
     }
 }
 
-#[cfg(feature = "storage")]
 /// Configuration value that can hold different types while preserving type information.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConfigValue {
@@ -517,7 +654,6 @@ impl ConfigValue {
     }
 }
 
-#[cfg(feature = "storage")]
 impl ArrowSpaceBuilder {
     pub fn builder_config_typed(&self) -> HashMap<String, ConfigValue> {
         let mut config = HashMap::new();

@@ -70,7 +70,7 @@ use sprs::CsMat;
 
 use rayon::prelude::*;
 
-use log::{debug, trace};
+use log::trace;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum TauMode {
@@ -204,11 +204,8 @@ impl TauMode {
             panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
         }
 
-        #[cfg(debug_assertions)]
-        {
-            debug!("=== COMPUTING SYNTHETIC LAMBDA FOR ITEM VECTOR ===");
-            debug!("Item vector dimensions: {}", item_vector.len());
-        }
+        trace!("=== COMPUTING SYNTHETIC LAMBDA FOR ITEM VECTOR ===");
+        trace!("Item vector dimensions: {}", item_vector.len());
 
         // Step 1: Compute Rayleigh energy E_q = query^T * spectrum * query / (query^T * query)
         let e_raw = Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
@@ -223,7 +220,6 @@ impl TauMode {
         // Step 4: Compute synthetic index S_q = α * E_bounded + (1-α) * G_clamped
         let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
 
-        #[cfg(debug_assertions)]
         trace!(
             "Query synthetic lambda: E_raw={:.8}, G_raw={:.8}, tau={:.8}, final={:.8}",
             e_raw, g_raw, tau, synthetic_lambda

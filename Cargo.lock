@@ -356,6 +356,7 @@ dependencies = [
  "arrow",
  "chrono",
  "criterion",
+ "csv",
  "dashmap",
  "env_logger",
  "log",

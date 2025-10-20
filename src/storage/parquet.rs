@@ -559,6 +559,176 @@ pub fn save_arrowspace_checkpoint_with_builder(
     Ok(())
 }
 
+/// Save a lambda vector (per-row computed values) with ArrowSpaceBuilder metadata
+///
+/// # Arguments
+/// * `lambdas` - Vector of lambda values, one per data row
+/// * `path` - Directory path where file will be saved
+/// * `name_id` - Identifier for the lambda file (e.g., "lambda_values", "row_lambdas")
+/// * `builder` - Optional ArrowSpaceBuilder for metadata tracking
+///
+/// # Example
+/// ```
+/// let lambdas = vec![0.5, 0.6, 0.7, 0.8];
+/// let builder = ArrowSpaceBuilder::new().with_auto_graph(10000, None);
+/// save_lambda_with_builder(&lambdas, "./data", "lambda_values", Some(&builder)).unwrap();
+/// ```
+pub fn save_lambda_with_builder(
+    lambdas: &[f64],
+    path: impl AsRef<Path>,
+    name_id: &str,
+    builder: Option<&ArrowSpaceBuilder>,
+) -> Result<(), StorageError> {
+    let config = builder.map(|b| b.builder_config_typed());
+    save_lambda(lambdas, path, name_id, config)
+}
+
+/// Save a lambda vector to Parquet with optional typed configuration metadata
+///
+/// Stores the lambda values as a single-column Parquet file with metadata
+/// about the vector dimensions and optional builder configuration.
+///
+/// # Arguments
+/// * `lambdas` - Vector of lambda values (one per row in the original data)
+/// * `path` - Directory path where file will be saved
+/// * `name_id` - Identifier for the lambda file
+/// * `builder_config` - Optional ArrowSpaceBuilder configuration to store
+///
+/// # Example
+/// ```
+/// let lambdas = vec![0.1, 0.2, 0.3];
+/// save_lambda(&lambdas, "./data", "lambdas", None).unwrap();
+/// ```
+pub fn save_lambda(
+    lambdas: &[f64],
+    path: impl AsRef<Path>,
+    name_id: &str,
+    builder_config: Option<HashMap<String, ConfigValue>>,
+) -> Result<(), StorageError> {
+    let n_values = lambdas.len();
+    
+    if n_values == 0 {
+        return Err(StorageError::Invalid("Cannot save empty lambda vector".to_string()));
+    }
+    
+    // Build schema: metadata + lambda values column
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("name_id", DataType::Utf8, false),
+        Field::new("n_values", DataType::UInt64, false),
+        Field::new("row_index", DataType::UInt64, false),
+        Field::new("lambda", DataType::Float64, false),
+    ]));
+    
+    // Build arrays
+    let name_array = StringArray::from(vec![name_id; n_values]);
+    let n_values_array = UInt64Array::from(vec![n_values as u64; n_values]);
+    let row_index_array = UInt64Array::from((0..n_values as u64).collect::<Vec<_>>());
+    let lambda_array = Float64Array::from(lambdas.to_vec());
+    
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(name_array),
+            Arc::new(n_values_array),
+            Arc::new(row_index_array),
+            Arc::new(lambda_array),
+        ],
+    )
+    .map_err(|e| StorageError::Arrow(e.to_string()))?;
+    
+    // Write to Parquet with Snappy compression
+    let file_path = path.as_ref().join(format!("{}.parquet", name_id));
+    let file = File::create(&file_path)
+        .map_err(|e| StorageError::Io(e.to_string()))?;
+    
+    let props = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .build();
+    
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    writer.write(&batch)
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    writer.close()
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    // Get file size
+    let file_size = std::fs::metadata(&file_path)
+        .map(|m| m.len())
+        .ok();
+    
+    // Create and save metadata if builder config is provided
+    if let Some(config) = builder_config {
+        let metadata = ArrowSpaceMetadata::new(name_id)
+            .with_builder_config(config)
+            .with_dimensions(n_values, 1) // n_values rows, 1 column
+            .add_file(
+                "lambda_vector",
+                FileInfo {
+                    filename: format!("{}.parquet", name_id),
+                    file_type: "lambda_vector".to_string(),
+                    rows: n_values,
+                    cols: 1,
+                    nnz: None,
+                    size_bytes: file_size,
+                },
+            );
+        
+        save_metadata(&metadata, path.as_ref(), name_id)?;
+    }
+    
+    Ok(())
+}
+
+/// Load a lambda vector from Parquet
+///
+/// # Arguments
+/// * `path` - Full path to the parquet file (including .parquet extension)
+///
+/// # Returns
+/// Vector of lambda values in the original row order
+///
+/// # Example
+/// ```
+/// let lambdas = load_lambda("./data/lambda_values.parquet").unwrap();
+/// println!("Loaded {} lambda values", lambdas.len());
+/// ```
+pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    
+    let file = File::open(path.as_ref())
+        .map_err(|e| StorageError::Io(e.to_string()))?;
+    
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    let mut reader = builder.build()
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    let batch = reader.next()
+        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
+        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    
+    // Extract n_values from first row
+    let n_values_col = batch.column_by_name("n_values")
+        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+        .ok_or_else(|| StorageError::Invalid("n_values column missing".to_string()))?;
+    let n_values = n_values_col.value(0) as usize;
+    
+    // Extract lambda values
+    let lambda_col = batch.column_by_name("lambda")
+        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+        .ok_or_else(|| StorageError::Invalid("lambda column missing".to_string()))?;
+    
+    let lambdas: Vec<f64> = (0..n_values)
+        .map(|i| lambda_col.value(i))
+        .collect();
+    
+    Ok(lambdas)
+}
+
 
 
 // ============================================================================
