@@ -57,7 +57,6 @@ pub struct ArrowSpaceBuilder {
     rp_eps: f64,
 
     // persistence directory
-    #[cfg(feature = "storage")]
     persistence: Option<(String, std::path::PathBuf)>,
 }
 
@@ -90,7 +89,6 @@ impl Default for ArrowSpaceBuilder {
             use_dims_reduction: false,
             rp_eps: 0.3,
             // persistence directory
-            #[cfg(feature = "storage")]
             persistence: None,
         }
     }
@@ -503,7 +501,7 @@ impl ArrowSpaceBuilder {
             "Computing taumode lambdas with synthesis: {:?}",
             self.synthesis
         );
-        TauMode::compute_taumode_lambdas(&mut aspace, &gl, self.synthesis);
+        TauMode::compute_taumode_lambdas_parallel(&mut aspace, &gl, self.synthesis);
 
         #[cfg(feature = "storage")]
         {

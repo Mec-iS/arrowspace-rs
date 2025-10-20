@@ -1,6 +1,7 @@
 pub mod parquet;
 
 #[cfg(test)]
+#[cfg(feature = "storage")]
 mod test_storage;
 
 // ============================================================================

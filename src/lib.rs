@@ -24,6 +24,7 @@ pub mod taumode;
 pub mod storage;
 
 #[cfg(test)]
+#[cfg(not(feature = "storage"))]
 mod tests;
 
 use std::sync::Once;

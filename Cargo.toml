@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.16.1"
+version = "0.17.0"
 edition = "2024"
 description = "Spectral vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -61,7 +61,6 @@ name = "arrowspace"
 crate-type = ["rlib"]
 
 [examples]
-name = "03_cve_test"
 
 [workspace]
 

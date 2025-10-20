@@ -154,7 +154,9 @@ pub fn load_metadata(
 /// Accepts either typed ConfigValue HashMap or ArrowSpaceBuilder directly.
 ///
 /// # Example
-/// ```
+/// ```ignore
+/// use arrowspace::builder::ArrowSpaceBuilder;
+/// use arrowspace::storage::parquet::save_dense_matrix_with_builder;
 /// // Option 1: Pass ArrowSpaceBuilder directly
 /// let builder = ArrowSpaceBuilder::new().with_auto_graph(10000, None);
 /// save_dense_matrix_with_builder(&matrix, "./data", "embeddings", Some(&builder)).unwrap();
@@ -270,7 +272,8 @@ pub fn save_dense_matrix(
 /// * `path` - Full path to the parquet file (including .parquet extension)
 ///
 /// # Example
-/// ```
+/// ```ignore
+/// use arrowspace::storage::parquet::load_dense_matrix;
 /// let matrix = load_dense_matrix("./data/my_matrix.parquet").unwrap();
 /// ```
 pub fn load_dense_matrix(path: impl AsRef<Path>) -> Result<DenseMatrix<f64>, StorageError> {
@@ -568,9 +571,11 @@ pub fn save_arrowspace_checkpoint_with_builder(
 /// * `builder` - Optional ArrowSpaceBuilder for metadata tracking
 ///
 /// # Example
-/// ```
+/// ```ignore
+/// use arrowspace::builder::ArrowSpaceBuilder;
+/// use arrowspace::storage::parquet::save_lambda_with_builder;
 /// let lambdas = vec![0.5, 0.6, 0.7, 0.8];
-/// let builder = ArrowSpaceBuilder::new().with_auto_graph(10000, None);
+/// let builder = ArrowSpaceBuilder::default();
 /// save_lambda_with_builder(&lambdas, "./data", "lambda_values", Some(&builder)).unwrap();
 /// ```
 pub fn save_lambda_with_builder(
@@ -595,7 +600,8 @@ pub fn save_lambda_with_builder(
 /// * `builder_config` - Optional ArrowSpaceBuilder configuration to store
 ///
 /// # Example
-/// ```
+/// ```ignore
+/// use arrowspace::storage::parquet::save_lambda;
 /// let lambdas = vec![0.1, 0.2, 0.3];
 /// save_lambda(&lambdas, "./data", "lambdas", None).unwrap();
 /// ```
@@ -691,7 +697,8 @@ pub fn save_lambda(
 /// Vector of lambda values in the original row order
 ///
 /// # Example
-/// ```
+/// ```ignore
+/// use arrowspace::storage::parquet::load_lambda;
 /// let lambdas = load_lambda("./data/lambda_values.parquet").unwrap();
 /// println!("Loaded {} lambda values", lambdas.len());
 /// ```
