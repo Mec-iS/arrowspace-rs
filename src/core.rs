@@ -1,4 +1,4 @@
-//! Arrow and ArrowSpace: enhanced with search-specific zero-copy operations.
+//! ArrowSpace: enhanced with search-specific zero-copy operations.
 //!
 //! This module provides two core abstractions for working with row-major numeric
 //! data in search/graph contexts:

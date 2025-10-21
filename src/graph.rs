@@ -147,7 +147,7 @@ impl GraphFactory {
     /// Transpose the resulting matrix from clustering and build a graph Laplacian matrix
     ///  so to be ready to be used to analyse signal features
     pub fn build_laplacian_matrix_from_k_cluster(
-        clustered: DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
+        clustered: &DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
         eps: f64,                    // maximum rectified cosine distance (see `docs/`)
         k: usize,                    // max number of neighbours for node
         topk: usize,                 // number of results to be considered for closest neighbors
@@ -282,7 +282,7 @@ fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
         }
     }
 
-    DenseMatrix::new(rows, cols, data, false).unwrap()
+    DenseMatrix::<f64>::from_iterator(data.iter().copied(), rows, cols, 1)
 }
 
 impl GraphLaplacian {

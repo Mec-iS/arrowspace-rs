@@ -31,30 +31,30 @@ pub struct ArrowSpaceBuilder {
     // and set the kernel to behave nearly linearly for small gaps so it doesn't overpower cosine;
     // a practical default is: lambda_eps ≈ 1e-3, lambda_k ≈ 3–10, lambda_p = 2.0,
     // lambda_sigma = None (which defaults σ to eps)
-    lambda_eps: f64,
-    lambda_k: usize,
-    lambda_topk: usize,
-    lambda_p: f64,
-    lambda_sigma: Option<f64>,
-    normalise: bool, // using normalisation is not relevant for taumode, do not use if are not sure
-    sparsity_check: bool,
+    pub(crate) lambda_eps: f64,
+    pub(crate) lambda_k: usize,
+    pub(crate) lambda_topk: usize,
+    pub(crate) lambda_p: f64,
+    pub(crate) lambda_sigma: Option<f64>,
+    pub(crate) normalise: bool, // using normalisation is not relevant for taumode, do not use if are not sure
+    pub(crate) sparsity_check: bool,
 
     // activate sampling, default false
     pub sampling: Option<SamplerType>,
 
     // Synthetic index configuration (used `with_synthesis`)
-    synthesis: TauMode, // (tau_mode)
+    pub(crate) synthesis: TauMode, // (tau_mode)
 
     /// Max clusters X (default: nfeatures; cap on centroids)
-    cluster_max_clusters: Option<usize>,
+    pub(crate) cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
-    cluster_radius: f64,
-    clustering_seed: Option<u64>,
+    pub(crate) cluster_radius: f64,
+    pub(crate) clustering_seed: Option<u64>,
     pub(crate) deterministic_clustering: bool,
 
     // dimensionality reduction with random projection (dafault false)
-    use_dims_reduction: bool,
-    rp_eps: f64,
+    pub(crate) use_dims_reduction: bool,
+    pub(crate) rp_eps: f64,
 
     // persistence directory
     persistence: Option<(String, std::path::PathBuf)>,
@@ -449,7 +449,7 @@ impl ArrowSpaceBuilder {
 
         // 3) Compute synthetic indices on resulting graph
         let gl = GraphFactory::build_laplacian_matrix_from_k_cluster(
-            laplacian_input,
+            &laplacian_input,
             self.lambda_eps,
             self.lambda_k,
             self.lambda_topk,

@@ -19,6 +19,7 @@ pub mod reduction;
 pub mod sampling;
 pub mod sparsification;
 pub mod taumode;
+pub mod eigenmaps;
 
 #[cfg(feature = "storage")]
 pub mod storage;
