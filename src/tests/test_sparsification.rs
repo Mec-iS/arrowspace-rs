@@ -40,9 +40,7 @@ fn test_sfgrass_larger() {
     assert!(sparse_edges < orig_edges);
 }
 
-use crate::{
-    builder::ArrowSpaceBuilder, sparsification::SfGrassSparsifier,
-};
+use crate::{builder::ArrowSpaceBuilder, sparsification::SfGrassSparsifier};
 
 #[test]
 #[ignore = "depends on number of nodes"]

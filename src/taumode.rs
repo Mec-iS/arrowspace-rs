@@ -146,17 +146,17 @@ impl TauMode {
     /// # Implementation Details
     ///
     /// 1. **Parallel Processing**: Uses Rayon to compute lambdas across all items in parallel
-    /// 2. **Adaptive Selection**: Automatically chooses between sequential and parallel 
+    /// 2. **Adaptive Selection**: Automatically chooses between sequential and parallel
     ///    computation per-item based on graph size:
     ///    - Sequential for small graphs (< 1000 nodes or < 10,000 edges)
     ///    - Parallel chunked for large graphs
-    /// 3. **Graph Selection**: Uses precomputed signals if available, otherwise falls 
+    /// 3. **Graph Selection**: Uses precomputed signals if available, otherwise falls
     ///    back to the graph Laplacian
     /// 4. **Memory Efficient**: Processes items in batches with optimal chunk sizing
     ///
     /// # Performance Characteristics
     ///
-    /// - **Time Complexity**: O(n · nnz) where n is number of items and nnz is 
+    /// - **Time Complexity**: O(n · nnz) where n is number of items and nnz is
     ///   average non-zeros per row
     /// - **Space Complexity**: O(n) for result storage
     /// - **Parallelism**: Scales near-linearly with available CPU cores
@@ -180,7 +180,7 @@ impl TauMode {
         let n_features = aspace.nfeatures;
         let num_threads = rayon::current_num_threads();
         let start_total = std::time::Instant::now();
-        
+
         // Log configuration
         info!("╔═════════════════════════════════════════════════════════════╗");
         info!("║          Parallel TauMode Lambda Computation                ║");
@@ -190,42 +190,52 @@ impl TauMode {
         info!("║   Features:        {:<40} ║", n_features);
         info!("║   Threads:         {:<40} ║", num_threads);
         info!("║   TauMode:         {:<40} ║", format!("{:?}", taumode));
-        
+
         // Determine graph source
         let using_signals = aspace.signals.shape() != (0, 0);
-        let graph = if using_signals { &aspace.signals } else { &gl.matrix };
+        let graph = if using_signals {
+            &aspace.signals
+        } else {
+            &gl.matrix
+        };
         let (graph_rows, graph_cols) = graph.shape();
         let graph_nnz = graph.nnz();
         let sparsity = (graph_nnz as f64) / ((graph_rows * graph_cols) as f64);
-        
-        info!("║   Graph Source:    {:<40} ║", 
-            if using_signals { "Precomputed Signals" } else { "Laplacian Matrix" });
+
+        info!(
+            "║   Graph Source:    {:<40} ║",
+            if using_signals {
+                "Precomputed Signals"
+            } else {
+                "Laplacian Matrix"
+            }
+        );
         info!("║   Graph Shape:     {}×{:<36} ║", graph_rows, graph_cols);
         info!("║   Graph NNZ:       {:<40} ║", graph_nnz);
         info!("║   Graph Sparsity:  {:<40.6} ║", sparsity);
         info!("╚═════════════════════════════════════════════════════════════╝");
-        
+
         // Threshold for adaptive algorithm selection
         const PARALLEL_THRESHOLD: usize = 1000;
-        
+
         // Counters for algorithm selection statistics
         use std::sync::atomic::{AtomicUsize, Ordering};
         let sequential_count = AtomicUsize::new(0);
         let parallel_count = AtomicUsize::new(0);
-        
+
         info!("Starting parallel lambda computation...");
         let start_compute = std::time::Instant::now();
-        
+
         // Parallel computation with adaptive algorithm selection
         let synthetic_lambdas: Vec<f64> = (0..n_items)
             .into_par_iter()
             .map(|item_idx| {
                 let item = aspace.get_item(item_idx);
                 let tau = Self::select_tau(&item.item, taumode);
-                
+
                 let n = graph.rows();
                 let nnz = graph.nnz();
-                
+
                 // Adaptive selection: sequential for small, parallel for large
                 let lambda = if n < PARALLEL_THRESHOLD || nnz < PARALLEL_THRESHOLD * 10 {
                     sequential_count.fetch_add(1, Ordering::Relaxed);
@@ -234,42 +244,45 @@ impl TauMode {
                     parallel_count.fetch_add(1, Ordering::Relaxed);
                     Self::compute_synthetic_lambda_parallel(&item.item, graph, tau)
                 };
-                
+
                 // Log progress for large datasets
                 if n_items > 10000 && item_idx % (n_items / 10) == 0 {
                     let progress = (item_idx as f64 / n_items as f64) * 100.0;
-                    info!("  Progress: {:.1}% ({}/{} items)", progress, item_idx, n_items);
+                    info!(
+                        "  Progress: {:.1}% ({}/{} items)",
+                        progress, item_idx, n_items
+                    );
                 }
-                
+
                 lambda
             })
             .collect();
-        
+
         let compute_time = start_compute.elapsed();
-        
+
         // Log algorithm selection statistics
         let seq_count = sequential_count.load(Ordering::Relaxed);
         let par_count = parallel_count.load(Ordering::Relaxed);
-        
+
         info!("╔═════════════════════════════════════════════════════════════╗");
         info!("║          Computation Statistics                             ║");
         info!("╠═════════════════════════════════════════════════════════════╣");
         info!("║   Sequential Items: {:<39} ║", seq_count);
         info!("║   Parallel Items:   {:<39} ║", par_count);
         info!("║   Compute Time:     {:<39.3?} ║", compute_time);
-        
+
         // Update ArrowSpace
         let start_update = std::time::Instant::now();
         aspace.update_lambdas(synthetic_lambdas);
         let update_time = start_update.elapsed();
-        
+
         let total_time = start_total.elapsed();
         let items_per_sec = n_items as f64 / total_time.as_secs_f64();
-        
+
         info!("║   Update Time:      {:<39.3?} ║", update_time);
         info!("║   Total Time:       {:<39.3?} ║", total_time);
         info!("║   Throughput:       {:<39.0} items/sec ║", items_per_sec);
-        
+
         // Compute lambda statistics
         #[cfg(test)]
         if !aspace.lambdas.is_empty() {
@@ -277,11 +290,13 @@ impl TauMode {
             let min_lambda = lambdas.iter().copied().fold(f64::INFINITY, f64::min);
             let max_lambda = lambdas.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let mean_lambda = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-            let variance = lambdas.iter()
+            let variance = lambdas
+                .iter()
                 .map(|&x| (x - mean_lambda).powi(2))
-                .sum::<f64>() / lambdas.len() as f64;
+                .sum::<f64>()
+                / lambdas.len() as f64;
             let std_lambda = variance.sqrt();
-            
+
             info!("╠═════════════════════════════════════════════════════════════╣");
             info!("║          Lambda Statistics                                  ║");
             info!("╠═════════════════════════════════════════════════════════════╣");
@@ -291,16 +306,15 @@ impl TauMode {
             info!("║   Std Dev:          {:<39.6} ║", std_lambda);
             info!("║   Range:            {:<39.6} ║", max_lambda - min_lambda);
         }
-        
+
         info!("╚═════════════════════════════════════════════════════════════╝");
         info!("✓ Parallel taumode lambda computation completed successfully");
     }
 
-
     /// Compute synthetic lambda for a single item using parallel processing
     ///
     /// This function computes the synthetic lambda index for a single item vector
-    /// by parallelizing the computation of Rayleigh quotient energy (E) and 
+    /// by parallelizing the computation of Rayleigh quotient energy (E) and
     /// dispersion measure (G) across graph rows.
     ///
     /// # Algorithm
@@ -371,18 +385,22 @@ impl TauMode {
     ) -> f64 {
         let n = graph.rows();
         let nnz = graph.nnz();
-        
+
         trace!("=== Starting parallel synthetic lambda computation ===");
         trace!("  Graph dimensions: {}×{}", graph.rows(), graph.cols());
-        trace!("  Graph NNZ: {} (sparsity: {:.4}%)", 
-            nnz, 
-            (nnz as f64 / ((n * n) as f64)) * 100.0);
+        trace!(
+            "  Graph NNZ: {} (sparsity: {:.4}%)",
+            nnz,
+            (nnz as f64 / ((n * n) as f64)) * 100.0
+        );
         trace!("  Tau parameter: {:.6}", tau);
-        trace!("  Vector norm: {:.6}", 
-            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt());
-        
+        trace!(
+            "  Vector norm: {:.6}",
+            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt()
+        );
+
         let start_first_pass = std::time::Instant::now();
-        
+
         // Parallel first pass: compute numerator and edge_energy_sum
         let (numerator, edge_energy_sum): (f64, f64) = (0..n)
             .into_par_iter()
@@ -391,11 +409,11 @@ impl TauMode {
                 let xi = item_vector[i];
                 let mut local_numerator = 0.0;
                 let mut local_edge_energy = 0.0;
-                
+
                 for (j, &lij) in row.iter() {
                     // Rayleigh quotient numerator
                     local_numerator += xi * lij * item_vector[j];
-                    
+
                     // Dispersion computation (only off-diagonal)
                     if i != j {
                         let w = (-lij).max(0.0);
@@ -405,44 +423,47 @@ impl TauMode {
                         }
                     }
                 }
-                
+
                 (local_numerator, local_edge_energy)
             })
-            .reduce(
-                || (0.0, 0.0),
-                |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2)
-            );
-        
+            .reduce(|| (0.0, 0.0), |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2));
+
         trace!("  First pass completed in {:?}", start_first_pass.elapsed());
         trace!("    Rayleigh numerator: {:.8}", numerator);
         trace!("    Edge energy sum: {:.8}", edge_energy_sum);
-        
+
         // Parallel computation of denominator
         let start_denominator = std::time::Instant::now();
         let denominator: f64 = item_vector.par_iter().map(|&x| x * x).sum();
-        let e_raw = if denominator > 1e-12 { 
-            numerator / denominator 
-        } else { 
-            trace!("    WARNING: Near-zero denominator ({:.2e}), setting E_raw = 0", denominator);
-            0.0 
+        let e_raw = if denominator > 1e-12 {
+            numerator / denominator
+        } else {
+            trace!(
+                "    WARNING: Near-zero denominator ({:.2e}), setting E_raw = 0",
+                denominator
+            );
+            0.0
         };
-        
-        trace!("  Denominator computed in {:?}", start_denominator.elapsed());
+
+        trace!(
+            "  Denominator computed in {:?}",
+            start_denominator.elapsed()
+        );
         trace!("    Denominator: {:.8}", denominator);
         trace!("    E_raw (Rayleigh quotient): {:.8}", e_raw);
-        
+
         // Second pass for G (parallel)
         let start_second_pass = std::time::Instant::now();
         let g_sq_sum_parts = if edge_energy_sum > 0.0 {
             trace!("  Computing dispersion (G) - second pass...");
-            
+
             let result = (0..n)
                 .into_par_iter()
                 .map(|i| {
                     let row = graph.outer_view(i).unwrap();
                     let xi = item_vector[i];
                     let mut local_g_sq_sum = 0.0;
-                    
+
                     for (j, &lij) in row.iter() {
                         if i != j {
                             let w = (-lij).max(0.0);
@@ -454,37 +475,46 @@ impl TauMode {
                             }
                         }
                     }
-                    
+
                     local_g_sq_sum
                 })
                 .sum();
-            
-            trace!("  Second pass completed in {:?}", start_second_pass.elapsed());
+
+            trace!(
+                "  Second pass completed in {:?}",
+                start_second_pass.elapsed()
+            );
             result
         } else {
             trace!("  Skipping dispersion computation (edge_energy_sum = 0)");
             0.0
         };
-        
+
         let g_raw = g_sq_sum_parts.clamp(0.0, 1.0);
         trace!("    G_raw (dispersion): {:.8}", g_sq_sum_parts);
         trace!("    G_clamped: {:.8}", g_raw);
-        
+
         // Apply bounded transformation
         let e_bounded = e_raw / (e_raw + tau);
         let g_clamped = g_raw.clamp(0.0, 1.0);
-        
+
         trace!("  Applying bounded transformation:");
         trace!("    E_bounded = E_raw / (E_raw + τ) = {:.8}", e_bounded);
         trace!("    G_clamped = {:.8}", g_clamped);
-        
+
         let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
-        
+
         trace!("  Final synthetic lambda: {:.8}", synthetic_lambda);
-        trace!("    Energy contribution:     τ·E_bounded = {:.8}", tau * e_bounded);
-        trace!("    Dispersion contribution: (1-τ)·G = {:.8}", (1.0 - tau) * g_clamped);
+        trace!(
+            "    Energy contribution:     τ·E_bounded = {:.8}",
+            tau * e_bounded
+        );
+        trace!(
+            "    Dispersion contribution: (1-τ)·G = {:.8}",
+            (1.0 - tau) * g_clamped
+        );
         trace!("=== Parallel synthetic lambda computation complete ===");
-        
+
         synthetic_lambda
     }
 
@@ -519,20 +549,18 @@ impl TauMode {
     /// - Uses `outer_iterator()` which works efficiently for both CSR and CSC
     /// - Parallel row-wise iteration with `par_bridge()`
     /// - Two-pass algorithm with fused first pass for E and G computation
-    pub fn compute_synthetic_lambda_csr(
-        item_vector: &[f64],
-        graph: &CsMat<f64>,
-        tau: f64,
-    ) -> f64 {
+    pub fn compute_synthetic_lambda_csr(item_vector: &[f64], graph: &CsMat<f64>, tau: f64) -> f64 {
         let n = graph.rows();
         let nnz = graph.nnz();
-        
+
         trace!("=== CSR synthetic lambda computation ===");
         trace!("  Graph: {}×{}, NNZ: {}", n, graph.cols(), nnz);
         trace!("  Tau: {:.6}", tau);
-        trace!("  Vector L2 norm: {:.6}", 
-            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt());
-        
+        trace!(
+            "  Vector L2 norm: {:.6}",
+            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt()
+        );
+
         // Directly use the matrix - outer_iterator works for both CSR and CSC
         let (numerator, edge_energy_sum): (f64, f64) = graph
             .outer_iterator()
@@ -542,10 +570,10 @@ impl TauMode {
                 let xi = item_vector[i];
                 let mut local_num = 0.0;
                 let mut local_edge = 0.0;
-                
+
                 for (j, &lij) in row.iter() {
                     local_num += xi * lij * item_vector[j];
-                    
+
                     if i != j {
                         let w = (-lij).max(0.0);
                         if w > 0.0 {
@@ -554,28 +582,32 @@ impl TauMode {
                         }
                     }
                 }
-                
+
                 (local_num, local_edge)
             })
-            .reduce(
-                || (0.0, 0.0),
-                |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2)
-            );
-        
-        trace!("  First pass: numerator={:.8}, edge_energy={:.8}", 
-            numerator, edge_energy_sum);
-        
+            .reduce(|| (0.0, 0.0), |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2));
+
+        trace!(
+            "  First pass: numerator={:.8}, edge_energy={:.8}",
+            numerator,
+            edge_energy_sum
+        );
+
         let denominator: f64 = item_vector.par_iter().map(|&x| x * x).sum();
-        let e_raw = if denominator > 1e-12 { 
-            numerator / denominator 
-        } else { 
+        let e_raw = if denominator > 1e-12 {
+            numerator / denominator
+        } else {
             trace!("  WARNING: Near-zero denominator ({:.2e})", denominator);
-            0.0 
+            0.0
         };
-        
-        trace!("  E_raw: {:.8} (num={:.8}, denom={:.8})", 
-            e_raw, numerator, denominator);
-        
+
+        trace!(
+            "  E_raw: {:.8} (num={:.8}, denom={:.8})",
+            e_raw,
+            numerator,
+            denominator
+        );
+
         let g_sq_sum = if edge_energy_sum > 0.0 {
             trace!("  Computing dispersion (G)...");
             graph
@@ -585,7 +617,7 @@ impl TauMode {
                 .map(|(i, row)| {
                     let xi = item_vector[i];
                     let mut local_g = 0.0;
-                    
+
                     for (j, &lij) in row.iter() {
                         if i != j {
                             let w = (-lij).max(0.0);
@@ -597,7 +629,7 @@ impl TauMode {
                             }
                         }
                     }
-                    
+
                     local_g
                 })
                 .sum()
@@ -605,22 +637,27 @@ impl TauMode {
             trace!("  Skipping G computation (zero edge energy)");
             0.0
         };
-        
+
         let g_raw = g_sq_sum.clamp(0.0, 1.0);
         let e_bounded = e_raw / (e_raw + tau);
-        
+
         trace!("  G_raw: {:.8} (clamped from {:.8})", g_raw, g_sq_sum);
         trace!("  E_bounded: {:.8}", e_bounded);
-        
+
         let result = tau * e_bounded + (1.0 - tau) * g_raw;
-        
-        trace!("  Result: {:.8} = {:.8}·{:.8} + {:.8}·{:.8}", 
-            result, tau, e_bounded, 1.0 - tau, g_raw);
+
+        trace!(
+            "  Result: {:.8} = {:.8}·{:.8} + {:.8}·{:.8}",
+            result,
+            tau,
+            e_bounded,
+            1.0 - tau,
+            g_raw
+        );
         trace!("=== CSR computation complete ===");
-        
+
         result
     }
-
 }
 
 impl fmt::Display for TauMode {

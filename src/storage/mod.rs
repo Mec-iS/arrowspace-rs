@@ -14,7 +14,7 @@ pub enum StorageError {
     Arrow(String),
     Serde(String),
     Invalid(String),
-    Parquet(String)
+    Parquet(String),
 }
 
 impl std::fmt::Display for StorageError {

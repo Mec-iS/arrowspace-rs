@@ -712,7 +712,9 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             // ASSIGN TO EXISTING CLUSTER
             trace!(
                 "Row {}: ASSIGNING to existing cluster (dist²={:.6} <= radius²={:.6})",
-                row_idx, snap_best_dist_sq, radius
+                row_idx,
+                snap_best_dist_sq,
+                radius
             );
 
             // Recompute with current centroids for assignment
@@ -750,7 +752,9 @@ pub(crate) fn run_incremental_clustering_with_sampling(
 
             trace!(
                 "Row {}: Assigned to cluster {}, count now={}",
-                row_idx, best_idx, k[best_idx]
+                row_idx,
+                best_idx,
+                k[best_idx]
             );
         } else {
             // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
@@ -784,7 +788,11 @@ pub(crate) fn run_incremental_clustering_with_sampling(
                 // Too far even for relaxed policy → drop
                 debug!(
                     "Row {}: DROPPED as outlier (dist²={:.6} > relaxed {:.6}, len={} >= max={})",
-                    row_idx, current_dist_sq, relaxed_radius, c.len(), max_clusters
+                    row_idx,
+                    current_dist_sq,
+                    relaxed_radius,
+                    c.len(),
+                    max_clusters
                 );
 
                 #[cfg(test)]
@@ -851,7 +859,9 @@ pub(crate) fn run_incremental_clustering_with_sampling(
     let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
         trace!(
             "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
-            flat, x_out, nfeatures
+            flat,
+            x_out,
+            nfeatures
         );
         let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
         dm

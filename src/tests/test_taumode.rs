@@ -509,7 +509,7 @@ fn test_rayleigh_quotient_scale_invariance() {
     // When tau=0: λ = 0·E_bounded + 1·G = G (no energy contribution)
     // When tau≈1: λ ≈ E_bounded (mostly energy)
     // To extract pure Rayleigh quotient, we compute E_raw directly from the parallel function
-    
+
     // Extract E_raw by computing with tau and back-calculating
     let tau = 0.5; // arbitrary tau for testing
     let lambda1 = TauMode::compute_synthetic_lambda_csr(&vector, &sparse_matrix, tau);
