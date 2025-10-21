@@ -3,3 +3,4 @@ TODOs.md
 ./checkpoints
 test_data/
 examples/03_cve_test.rs
+examples/cve-full-run.txt

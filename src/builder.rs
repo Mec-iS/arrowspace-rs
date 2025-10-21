@@ -119,7 +119,7 @@ impl ArrowSpaceBuilder {
         sigma_override: Option<f64>,
     ) -> Self {
         info!(
-            "Configuring lambda graph: eps={}, k={}, p={}, sigma={:?}",
+            "Configuring lambda graph: eps={:?}, k={}, p={}, sigma={:?}",
             eps, k, p, sigma_override
         );
         debug!(
