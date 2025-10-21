@@ -9,7 +9,11 @@
 
 use log::debug;
 
-use crate::{builder::ArrowSpaceBuilder, core::ArrowItem, tests::{init, test_data::make_gaussian_hd}};
+use crate::{
+    builder::ArrowSpaceBuilder,
+    core::ArrowItem,
+    tests::{init, test_data::make_gaussian_hd},
+};
 
 /// Helper: return test data (training + query split from same distribution)
 fn create_test_data(n_train: usize, n_query: usize) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {

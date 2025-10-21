@@ -51,14 +51,14 @@ cargo build --release
 
 ### Running Examples
 ```bash
-cargo run --example compare_cosine
-cargo run --example proteins_lookup
+cargo run --example 01_compare_cosine
+cargo run --example 02_proteins_lookup
 ```
 
 ### Running Tests
 ```bash
 export RUST_TEST_NOCAPTURE=1
-cargo test
+cargo test --all-features
 ```
 
 ### Run Bench

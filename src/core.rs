@@ -553,7 +553,7 @@ impl ArrowSpace {
         };
 
         let tau = TauMode::select_tau(item.as_slice(), self.taumode);
-        TauMode::compute_item_vector_synthetic_lambda(item.as_slice(), &gl.matrix, tau)
+        TauMode::compute_synthetic_lambda_csr(item.as_slice(), &gl.matrix, tau)
     }
 
     /// Returns a shared reference to all lambdas.
@@ -719,7 +719,7 @@ impl ArrowSpace {
     pub fn recompute_lambdas(&mut self, gl: &GraphLaplacian) {
         debug!("Recomputing lambdas with tau mode: {:?}", self.taumode);
         // Use the existing synthetic lambda computation
-        TauMode::compute_taumode_lambdas(self, gl, self.taumode);
+        TauMode::compute_taumode_lambdas_parallel(self, gl, self.taumode);
 
         let lambda_stats = {
             let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));

@@ -185,11 +185,15 @@ fn _main_laplacian(
 ) -> sprs::TriMatBase<Vec<usize>, Vec<f64>> {
     let n = items.shape().0;
 
+    let start = std::time::Instant::now();
+
     let adj_rows = _build_adjacency(items, params, n);
 
     let sym = _symmetrise_adjancency(adj_rows, n);
 
     let triplets = _build_sparse_laplacian(sym, n);
+
+    info!("Total Laplacian construction time: {:?}", start.elapsed());
 
     triplets
 }
@@ -407,7 +411,7 @@ pub(crate) fn _build_sparse_laplacian(
     }
 
     debug!("Inserted triplets in {:?}", insert_start.elapsed());
-    info!("Total Laplacian construction time: {:?}", start.elapsed());
+    info!("Sparse Laplacian construction time: {:?}", start.elapsed());
 
     trimat
 }

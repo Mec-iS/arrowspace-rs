@@ -60,16 +60,19 @@
 //! 5. **Numerical stability**: Values are finite (no NaN/infinity)
 //! 6. **Statistical properties**: Basic variance analysis to understand feature discrimination
 //!
+use std::fmt;
+
 use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
 
+use serde::{Deserialize, Serialize};
 use sprs::CsMat;
 
 use rayon::prelude::*;
 
-use log::{debug, trace};
+use log::{info, trace};
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum TauMode {
     Fixed(f64),
     #[default]
@@ -123,224 +126,547 @@ impl TauMode {
         }
     }
 
-    /// Compute synthetic lambdas using Laplacian as passed by the `GraphLaplacian`
-    /// Use this to compute the Rayleigh quotient space-wide.
+    /// Compute synthetic lambdas in parallel using adaptive optimization
     ///
-    /// This function implements the synthetic index computation described in the design:
-    /// 1) Compute per-feature Rayleigh energy E_f and dispersion G_f using DenseMatrix operations
-    /// 2) Aggregate feature contributions to per-item raw energies weighted by feature magnitudes  
-    /// 3) Apply bounded transformation with tau normalization
-    /// 4) Blend energy and dispersion components with alpha parameter
-    /// 5) Store resulting synthetic lambdas in ArrowSpace
+    /// This function computes synthetic lambda values for all items in the ArrowSpace
+    /// using a parallel, cache-optimized implementation with adaptive algorithm selection.
     ///
-    /// Compute **taumode synthetic lambdas** using a formula involving:
-    /// - Feature energies ($E_f$)
-    /// - G values
-    /// - Tau parameter (0.9)
-    /// - Tau computation using median selection
-    /// - Final synthetic indices calculation
-    // ///
+    /// # Algorithm Overview
+    ///
+    /// For each item vector, the synthetic lambda is computed as:
+    /// ```ignore
+    /// λ_synthetic = τ · E_bounded + (1-τ) · G_clamped
+    /// ```
+    /// where:
+    /// - `E_bounded = E_raw / (E_raw + τ)` is the bounded Rayleigh quotient energy
+    /// - `E_raw = (x^T · L · x) / (x^T · x)` is the raw Rayleigh quotient
+    /// - `G_clamped` is the dispersion measure clamped to [0, 1]
+    /// - `τ` is selected according to the `TauMode` strategy
+    ///
+    /// # Implementation Details
+    ///
+    /// 1. **Parallel Processing**: Uses Rayon to compute lambdas across all items in parallel
+    /// 2. **Adaptive Selection**: Automatically chooses between sequential and parallel
+    ///    computation per-item based on graph size:
+    ///    - Sequential for small graphs (< 1000 nodes or < 10,000 edges)
+    ///    - Parallel chunked for large graphs
+    /// 3. **Graph Selection**: Uses precomputed signals if available, otherwise falls
+    ///    back to the graph Laplacian
+    /// 4. **Memory Efficient**: Processes items in batches with optimal chunk sizing
+    ///
+    /// # Performance Characteristics
+    ///
+    /// - **Time Complexity**: O(n · nnz) where n is number of items and nnz is
+    ///   average non-zeros per row
+    /// - **Space Complexity**: O(n) for result storage
+    /// - **Parallelism**: Scales near-linearly with available CPU cores
+    /// - **Cache Efficiency**: Chunked processing improves cache locality
+    ///
     /// # Arguments
-    /// * `aspace` - Mutable ArrowSpace to update with synthetic lambdas
-    /// * `gl` - GraphLaplacian with DenseMatrix representation
-    /// * `alpha` - Blending parameter for energy vs dispersion (typically 0.7)
-    /// * `tau_mode` - Tau selection policy for bounded transformation
-    pub fn compute_taumode_lambdas(
+    ///
+    /// * `aspace` - Mutable reference to ArrowSpace to update with computed lambdas
+    /// * `gl` - Reference to GraphLaplacian containing the spectral information
+    /// * `taumode` - Strategy for computing tau parameter:
+    ///   - `TauMode::Fixed(τ)`: Use constant tau value
+    ///   - `TauMode::Median`: Compute tau as median of item vector
+    ///   - `TauMode::Mean`: Compute tau as mean of item vector
+    ///   - `TauMode::Percentile(p)`: Use p-th percentile of item vector
+    pub fn compute_taumode_lambdas_parallel(
         aspace: &mut ArrowSpace,
         gl: &GraphLaplacian,
-        taumode: TauMode, // used if different taumode from ArrowSpace is needed
+        taumode: TauMode,
     ) {
         let n_items = aspace.nitems;
+        let n_features = aspace.nfeatures;
+        let num_threads = rayon::current_num_threads();
+        let start_total = std::time::Instant::now();
 
-        // Parallel processing of all features
+        // Log configuration
+        info!("╔═════════════════════════════════════════════════════════════╗");
+        info!("║          Parallel TauMode Lambda Computation                ║");
+        info!("╠═════════════════════════════════════════════════════════════╣");
+        info!("║ Configuration:                                              ║");
+        info!("║   Items:           {:<40} ║", n_items);
+        info!("║   Features:        {:<40} ║", n_features);
+        info!("║   Threads:         {:<40} ║", num_threads);
+        info!("║   TauMode:         {:<40} ║", format!("{:?}", taumode));
+
+        // Determine graph source
+        let using_signals = aspace.signals.shape() != (0, 0);
+        let graph = if using_signals {
+            &aspace.signals
+        } else {
+            &gl.matrix
+        };
+        let (graph_rows, graph_cols) = graph.shape();
+        let graph_nnz = graph.nnz();
+        let sparsity = (graph_nnz as f64) / ((graph_rows * graph_cols) as f64);
+
+        info!(
+            "║   Graph Source:    {:<40} ║",
+            if using_signals {
+                "Precomputed Signals"
+            } else {
+                "Laplacian Matrix"
+            }
+        );
+        info!("║   Graph Shape:     {}×{:<36} ║", graph_rows, graph_cols);
+        info!("║   Graph NNZ:       {:<40} ║", graph_nnz);
+        info!("║   Graph Sparsity:  {:<40.6} ║", sparsity);
+        info!("╚═════════════════════════════════════════════════════════════╝");
+
+        // Threshold for adaptive algorithm selection
+        const PARALLEL_THRESHOLD: usize = 1000;
+
+        // Counters for algorithm selection statistics
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let sequential_count = AtomicUsize::new(0);
+        let parallel_count = AtomicUsize::new(0);
+
+        info!("Starting parallel lambda computation...");
+        let start_compute = std::time::Instant::now();
+
+        // Parallel computation with adaptive algorithm selection
         let synthetic_lambdas: Vec<f64> = (0..n_items)
             .into_par_iter()
-            .map(|f| {
-                let item = aspace.get_item(f);
+            .map(|item_idx| {
+                let item = aspace.get_item(item_idx);
                 let tau = Self::select_tau(&item.item, taumode);
 
-                // compute synthetic index from:
-                // * signals if computed in `ArrowSpace`
-                // * standard L(FxN) in `GraphLaplacian`
-                Self::compute_item_vector_synthetic_lambda(
-                    &item.item,
-                    match aspace.signals.shape() {
-                        (0, 0) => &gl.matrix,
-                        _ => &aspace.signals,
-                    },
-                    tau,
-                )
+                let n = graph.rows();
+                let nnz = graph.nnz();
+
+                // Adaptive selection: sequential for small, parallel for large
+                let lambda = if n < PARALLEL_THRESHOLD || nnz < PARALLEL_THRESHOLD * 10 {
+                    sequential_count.fetch_add(1, Ordering::Relaxed);
+                    Self::compute_synthetic_lambda_csr(&item.item, graph, tau)
+                } else {
+                    parallel_count.fetch_add(1, Ordering::Relaxed);
+                    Self::compute_synthetic_lambda_parallel(&item.item, graph, tau)
+                };
+
+                // Log progress for large datasets
+                if n_items > 10000 && item_idx % (n_items / 10) == 0 {
+                    let progress = (item_idx as f64 / n_items as f64) * 100.0;
+                    info!(
+                        "  Progress: {:.1}% ({}/{} items)",
+                        progress, item_idx, n_items
+                    );
+                }
+
+                lambda
             })
             .collect();
 
+        let compute_time = start_compute.elapsed();
+
+        // Log algorithm selection statistics
+        let seq_count = sequential_count.load(Ordering::Relaxed);
+        let par_count = parallel_count.load(Ordering::Relaxed);
+
+        info!("╔═════════════════════════════════════════════════════════════╗");
+        info!("║          Computation Statistics                             ║");
+        info!("╠═════════════════════════════════════════════════════════════╣");
+        info!("║   Sequential Items: {:<39} ║", seq_count);
+        info!("║   Parallel Items:   {:<39} ║", par_count);
+        info!("║   Compute Time:     {:<39.3?} ║", compute_time);
+
+        // Update ArrowSpace
+        let start_update = std::time::Instant::now();
         aspace.update_lambdas(synthetic_lambdas);
+        let update_time = start_update.elapsed();
+
+        let total_time = start_total.elapsed();
+        let items_per_sec = n_items as f64 / total_time.as_secs_f64();
+
+        info!("║   Update Time:      {:<39.3?} ║", update_time);
+        info!("║   Total Time:       {:<39.3?} ║", total_time);
+        info!("║   Throughput:       {:<39.0} items/sec ║", items_per_sec);
+
+        // Compute lambda statistics
+        #[cfg(test)]
+        if !aspace.lambdas.is_empty() {
+            let lambdas = &aspace.lambdas;
+            let min_lambda = lambdas.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_lambda = lambdas.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let mean_lambda = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+            let variance = lambdas
+                .iter()
+                .map(|&x| (x - mean_lambda).powi(2))
+                .sum::<f64>()
+                / lambdas.len() as f64;
+            let std_lambda = variance.sqrt();
+
+            info!("╠═════════════════════════════════════════════════════════════╣");
+            info!("║          Lambda Statistics                                  ║");
+            info!("╠═════════════════════════════════════════════════════════════╣");
+            info!("║   Min:              {:<39.6} ║", min_lambda);
+            info!("║   Max:              {:<39.6} ║", max_lambda);
+            info!("║   Mean:             {:<39.6} ║", mean_lambda);
+            info!("║   Std Dev:          {:<39.6} ║", std_lambda);
+            info!("║   Range:            {:<39.6} ║", max_lambda - min_lambda);
+        }
+
+        info!("╚═════════════════════════════════════════════════════════════╝");
+        info!("✓ Parallel taumode lambda computation completed successfully");
     }
 
-    /// Compute synthetic lambda for a single external query vector
-    /// This follows the same algorithm as compute_taumode_lambdas but for one vector.
-    /// compute synthetic index from:
-    /// * aspace.signals: if computed in `ArrowSpace`
-    /// * graph.matrix: standard L(FxN) in `GraphLaplacian`
-    pub fn compute_item_vector_synthetic_lambda(
-        item_vector: &[f64], // F-dimensional external query vector
-        graph: &CsMat<f64>,  // Existing ArrowSpace with computed spectrum
+    /// Compute synthetic lambda for a single item using parallel processing
+    ///
+    /// This function computes the synthetic lambda index for a single item vector
+    /// by parallelizing the computation of Rayleigh quotient energy (E) and
+    /// dispersion measure (G) across graph rows.
+    ///
+    /// # Algorithm
+    ///
+    /// The synthetic lambda is computed as:
+    /// ```ignore
+    /// λ = τ · E_bounded + (1-τ) · G_clamped
+    /// ```
+    ///
+    /// Where:
+    /// - **E_bounded** = E_raw / (E_raw + τ) is the bounded Rayleigh energy
+    /// - **E_raw** = (x^T · L · x) / (x^T · x) is the Rayleigh quotient
+    /// - **G_clamped** is the dispersion measure, clamped to [0, 1]
+    /// - **τ** is the tau parameter controlling the energy-dispersion tradeoff
+    ///
+    /// ## Computation Stages
+    ///
+    /// 1. **First Pass (Parallel)**:
+    ///    - Compute Rayleigh quotient numerator: Σᵢⱼ xᵢ·Lᵢⱼ·xⱼ
+    ///    - Compute edge energy sum: Σᵢⱼ wᵢⱼ·(xᵢ - xⱼ)²
+    ///    - Both computed in single pass for efficiency
+    ///
+    /// 2. **Denominator (Parallel)**:
+    ///    - Compute x^T·x = Σᵢ xᵢ²
+    ///    - Calculate E_raw = numerator / denominator
+    ///
+    /// 3. **Second Pass (Parallel)**:
+    ///    - Compute dispersion: G = Σᵢⱼ (wᵢⱼ·(xᵢ-xⱼ)² / edge_energy_sum)²
+    ///    - Only executed if edge_energy_sum > 0
+    ///
+    /// 4. **Final Combination**:
+    ///    - Apply bounded transformation to E_raw
+    ///    - Clamp G to [0, 1]
+    ///    - Blend with tau parameter
+    ///
+    /// # Arguments
+    ///
+    /// * `item_vector` - The item/feature vector (length = graph dimension)
+    /// * `graph` - Sparse graph Laplacian or signal matrix (CSR format preferred)
+    /// * `tau` - Tau parameter in [0, 1] controlling energy vs dispersion weight
+    ///
+    /// # Returns
+    ///
+    /// The synthetic lambda value in range [0, 1]
+    ///
+    /// # Performance
+    ///
+    /// - **Time Complexity**: O(nnz) where nnz is number of non-zero entries
+    /// - **Space Complexity**: O(1) per-thread temporary storage
+    /// - **Parallelism**: Scales linearly with number of CPU cores
+    /// - **Cache Efficiency**: Row-wise iteration maximizes cache hits
+    ///
+    /// # Notes
+    ///
+    /// - Best performance when graph is in CSR format
+    /// - For small graphs (< 1000 nodes), sequential version may be faster
+    /// - Logs detailed trace information when RUST_LOG=trace is set
+    /// - Uses Rayon for work-stealing parallelism
+    ///
+    /// # See Also
+    ///
+    /// - `compute_synthetic_lambda_csr` - Sequential version for small graphs
+    /// - `compute_taumode_lambdas_parallel` - Batch computation for all items
+    pub fn compute_synthetic_lambda_parallel(
+        item_vector: &[f64],
+        graph: &CsMat<f64>,
         tau: f64,
     ) -> f64 {
-        // assert_eq!(
-        //     item_vector.len(),
-        //     graph.shape().0,
-        //     "Item vector length {} must match ArrowSpace features {}",
-        //     item_vector.len(),
-        //     graph.shape().0,
-        // );
+        let n = graph.rows();
+        let nnz = graph.nnz();
 
-        if item_vector
-            .iter()
-            .all(|&v| approx::relative_eq!(v, 0.0, epsilon = 1e-10))
-        {
-            panic!(r#"This vector {:?} is a constant zero vector"#, item_vector)
-        }
+        trace!("=== Starting parallel synthetic lambda computation ===");
+        trace!("  Graph dimensions: {}×{}", graph.rows(), graph.cols());
+        trace!(
+            "  Graph NNZ: {} (sparsity: {:.4}%)",
+            nnz,
+            (nnz as f64 / ((n * n) as f64)) * 100.0
+        );
+        trace!("  Tau parameter: {:.6}", tau);
+        trace!(
+            "  Vector norm: {:.6}",
+            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt()
+        );
 
-        #[cfg(debug_assertions)]
-        {
-            debug!("=== COMPUTING SYNTHETIC LAMBDA FOR ITEM VECTOR ===");
-            debug!("Item vector dimensions: {}", item_vector.len());
-        }
+        let start_first_pass = std::time::Instant::now();
 
-        // Step 1: Compute Rayleigh energy E_q = query^T * spectrum * query / (query^T * query)
-        let e_raw = Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
+        // Parallel first pass: compute numerator and edge_energy_sum
+        let (numerator, edge_energy_sum): (f64, f64) = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let row = graph.outer_view(i).unwrap();
+                let xi = item_vector[i];
+                let mut local_numerator = 0.0;
+                let mut local_edge_energy = 0.0;
 
-        // Step 2: Compute dispersion G_q using edge-wise energy distribution
-        let g_raw = Self::compute_item_dispersion(item_vector, graph);
+                for (j, &lij) in row.iter() {
+                    // Rayleigh quotient numerator
+                    local_numerator += xi * lij * item_vector[j];
 
-        // Step 3: Apply bounded transformation
+                    // Dispersion computation (only off-diagonal)
+                    if i != j {
+                        let w = (-lij).max(0.0);
+                        if w > 0.0 {
+                            let d = xi - item_vector[j];
+                            local_edge_energy += w * d * d;
+                        }
+                    }
+                }
+
+                (local_numerator, local_edge_energy)
+            })
+            .reduce(|| (0.0, 0.0), |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2));
+
+        trace!("  First pass completed in {:?}", start_first_pass.elapsed());
+        trace!("    Rayleigh numerator: {:.8}", numerator);
+        trace!("    Edge energy sum: {:.8}", edge_energy_sum);
+
+        // Parallel computation of denominator
+        let start_denominator = std::time::Instant::now();
+        let denominator: f64 = item_vector.par_iter().map(|&x| x * x).sum();
+        let e_raw = if denominator > 1e-12 {
+            numerator / denominator
+        } else {
+            trace!(
+                "    WARNING: Near-zero denominator ({:.2e}), setting E_raw = 0",
+                denominator
+            );
+            0.0
+        };
+
+        trace!(
+            "  Denominator computed in {:?}",
+            start_denominator.elapsed()
+        );
+        trace!("    Denominator: {:.8}", denominator);
+        trace!("    E_raw (Rayleigh quotient): {:.8}", e_raw);
+
+        // Second pass for G (parallel)
+        let start_second_pass = std::time::Instant::now();
+        let g_sq_sum_parts = if edge_energy_sum > 0.0 {
+            trace!("  Computing dispersion (G) - second pass...");
+
+            let result = (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let row = graph.outer_view(i).unwrap();
+                    let xi = item_vector[i];
+                    let mut local_g_sq_sum = 0.0;
+
+                    for (j, &lij) in row.iter() {
+                        if i != j {
+                            let w = (-lij).max(0.0);
+                            if w > 0.0 {
+                                let d = xi - item_vector[j];
+                                let contrib = w * d * d;
+                                let share = contrib / edge_energy_sum;
+                                local_g_sq_sum += share * share;
+                            }
+                        }
+                    }
+
+                    local_g_sq_sum
+                })
+                .sum();
+
+            trace!(
+                "  Second pass completed in {:?}",
+                start_second_pass.elapsed()
+            );
+            result
+        } else {
+            trace!("  Skipping dispersion computation (edge_energy_sum = 0)");
+            0.0
+        };
+
+        let g_raw = g_sq_sum_parts.clamp(0.0, 1.0);
+        trace!("    G_raw (dispersion): {:.8}", g_sq_sum_parts);
+        trace!("    G_clamped: {:.8}", g_raw);
+
+        // Apply bounded transformation
         let e_bounded = e_raw / (e_raw + tau);
         let g_clamped = g_raw.clamp(0.0, 1.0);
 
-        // Step 4: Compute synthetic index S_q = α * E_bounded + (1-α) * G_clamped
+        trace!("  Applying bounded transformation:");
+        trace!("    E_bounded = E_raw / (E_raw + τ) = {:.8}", e_bounded);
+        trace!("    G_clamped = {:.8}", g_clamped);
+
         let synthetic_lambda = tau * e_bounded + (1.0 - tau) * g_clamped;
 
-        #[cfg(debug_assertions)]
+        trace!("  Final synthetic lambda: {:.8}", synthetic_lambda);
         trace!(
-            "Query synthetic lambda: E_raw={:.8}, G_raw={:.8}, tau={:.8}, final={:.8}",
-            e_raw, g_raw, tau, synthetic_lambda
+            "    Energy contribution:     τ·E_bounded = {:.8}",
+            tau * e_bounded
         );
+        trace!(
+            "    Dispersion contribution: (1-τ)·G = {:.8}",
+            (1.0 - tau) * g_clamped
+        );
+        trace!("=== Parallel synthetic lambda computation complete ===");
 
         synthetic_lambda
     }
 
-    /// Compute dispersion G_q for the query vector using edge-wise energy distribution
-    fn compute_item_dispersion(item_vector: &[f64], spectrum: &CsMat<f64>) -> f64 {
-        let n_features = item_vector.len();
+    /// Compute synthetic lambda using CSR-optimized parallel processing
+    ///
+    /// This function computes the synthetic lambda for a single item vector using
+    /// parallel row iteration optimized for CSR (Compressed Sparse Row) format.
+    /// It combines Rayleigh quotient energy and dispersion measures into a single
+    /// synthetic index.
+    ///
+    /// # Algorithm
+    ///
+    /// Computes: λ = τ · E_bounded + (1-τ) · G_clamped
+    ///
+    /// Where:
+    /// - E_bounded = E_raw / (E_raw + τ)
+    /// - E_raw = (x^T · L · x) / (x^T · x) (Rayleigh quotient)
+    /// - G_clamped = dispersion measure clamped to [0, 1]
+    ///
+    /// # Arguments
+    ///
+    /// * `item_vector` - Item/feature vector
+    /// * `graph` - Sparse graph matrix (CSR or CSC format)
+    /// * `tau` - Tau parameter in [0, 1]
+    ///
+    /// # Returns
+    ///
+    /// Synthetic lambda value in [0, 1]
+    ///
+    /// # Performance
+    ///
+    /// - Uses `outer_iterator()` which works efficiently for both CSR and CSC
+    /// - Parallel row-wise iteration with `par_bridge()`
+    /// - Two-pass algorithm with fused first pass for E and G computation
+    pub fn compute_synthetic_lambda_csr(item_vector: &[f64], graph: &CsMat<f64>, tau: f64) -> f64 {
+        let n = graph.rows();
+        let nnz = graph.nnz();
 
-        // Compute total edge energy: sum over all edges w_ij * (x_i - x_j)^2
-        let mut edge_energy_sum = 0.0;
-        for i in 0..n_features {
-            let xi = item_vector[i];
-            for (j, item) in item_vector.iter().enumerate() {
-                if i != j {
-                    let lij = match spectrum.get(i, j) {
-                        Some(v) => *v,
-                        _ => 0.0,
-                    };
-                    // For Laplacian, off-diagonal entries are -w_ij, so w_ij = -lij
-                    let w = (-lij).max(0.0);
-                    if w > 0.0 {
-                        let d = xi - item;
-                        edge_energy_sum += w * d * d;
-                    }
-                }
-            }
-        }
+        trace!("=== CSR synthetic lambda computation ===");
+        trace!("  Graph: {}×{}, NNZ: {}", n, graph.cols(), nnz);
+        trace!("  Tau: {:.6}", tau);
+        trace!(
+            "  Vector L2 norm: {:.6}",
+            item_vector.iter().map(|&x| x * x).sum::<f64>().sqrt()
+        );
 
-        // Compute G_q as sum of squared normalized edge shares
-        let mut g_sq_sum = 0.0;
-        if edge_energy_sum > 0.0 {
-            for i in 0..n_features {
+        // Directly use the matrix - outer_iterator works for both CSR and CSC
+        let (numerator, edge_energy_sum): (f64, f64) = graph
+            .outer_iterator()
+            .enumerate()
+            .par_bridge()
+            .map(|(i, row)| {
                 let xi = item_vector[i];
-                for (j, item) in item_vector.iter().enumerate() {
+                let mut local_num = 0.0;
+                let mut local_edge = 0.0;
+
+                for (j, &lij) in row.iter() {
+                    local_num += xi * lij * item_vector[j];
+
                     if i != j {
-                        let lij = match spectrum.get(i, j) {
-                            Some(v) => *v,
-                            _ => 0.0,
-                        };
                         let w = (-lij).max(0.0);
                         if w > 0.0 {
-                            let d = xi - item;
-                            let contrib = w * d * d;
-                            let share = contrib / edge_energy_sum;
-                            g_sq_sum += share * share;
+                            let d = xi - item_vector[j];
+                            local_edge += w * d * d;
                         }
                     }
                 }
-            }
-        }
 
-        g_sq_sum.clamp(0.0, 1.0)
-    }
+                (local_num, local_edge)
+            })
+            .reduce(|| (0.0, 0.0), |(n1, e1), (n2, e2)| (n1 + n2, e1 + e2));
 
-    /// Compute Rayleigh quotient for any vector against any matrix
-    ///
-    /// The Rayleigh quotient is defined as: R(M, x) = (x^T M x) / (x^T x)
-    /// where M is a symmetric matrix and x is a non-zero vector.
-    ///
-    /// Mathematical Properties:
-    /// - For symmetric positive semi-definite matrices: R(M,x) ≥ 0
-    /// - Scale invariant: R(M, cx) = R(M, x) for any non-zero scalar c
-    /// - Bounds eigenvalues: λ_min ≤ R(M,x) ≤ λ_max for any x
-    /// - Maximized by largest eigenvector, minimized by smallest eigenvector
-    ///
-    /// # Arguments
-    /// * `matrix` - A symmetric matrix (typically a Laplacian or similarity matrix)
-    /// * `vector` - The vector for which to compute the quotient
-    ///
-    /// # Returns
-    /// The Rayleigh quotient value
-    ///
-    /// # Panics
-    /// Panics if vector length doesn't match matrix dimensions
-    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
-        let n = matrix.shape().0;
-        // assert_eq!(
-        //     vector.len(),
-        //     n,
-        //     "Vector length {} must match matrix size {}",
-        //     vector.len(),
-        //     n
-        // );
-        assert_eq!(
-            matrix.shape().0,
-            matrix.shape().1,
-            "Matrix must be square for Rayleigh quotient computation"
+        trace!(
+            "  First pass: numerator={:.8}, edge_energy={:.8}",
+            numerator,
+            edge_energy_sum
         );
 
-        // Compute x^T M x (numerator)
-        let mut numerator = 0.0;
-        for i in 0..n {
-            for j in 0..n {
-                match matrix.get(i, j) {
-                    Some(value) => numerator += vector[i] * value * vector[j],
-                    _ => numerator += 0.0,
-                };
-            }
-        }
-
-        // Compute x^T x (denominator)
-        let denominator: f64 = vector.iter().map(|&x| x * x).sum();
-
-        // Return quotient or 0 for zero vector
-        if denominator > 1e-12 {
+        let denominator: f64 = item_vector.par_iter().map(|&x| x * x).sum();
+        let e_raw = if denominator > 1e-12 {
             numerator / denominator
         } else {
-            0.0 // Return 0 for zero vector (convention)
-        }
-    }
+            trace!("  WARNING: Near-zero denominator ({:.2e})", denominator);
+            0.0
+        };
 
-    /// Batch computation for multiple vectors (efficient for multiple queries)
-    pub fn compute_rayleigh_quotients_batch(matrix: &CsMat<f64>, vectors: &[Vec<f64>]) -> Vec<f64> {
-        vectors
-            .iter()
-            .map(|v| Self::compute_rayleigh_quotient_from_matrix(matrix, v))
-            .collect()
+        trace!(
+            "  E_raw: {:.8} (num={:.8}, denom={:.8})",
+            e_raw,
+            numerator,
+            denominator
+        );
+
+        let g_sq_sum = if edge_energy_sum > 0.0 {
+            trace!("  Computing dispersion (G)...");
+            graph
+                .outer_iterator()
+                .enumerate()
+                .par_bridge()
+                .map(|(i, row)| {
+                    let xi = item_vector[i];
+                    let mut local_g = 0.0;
+
+                    for (j, &lij) in row.iter() {
+                        if i != j {
+                            let w = (-lij).max(0.0);
+                            if w > 0.0 {
+                                let d = xi - item_vector[j];
+                                let contrib = w * d * d;
+                                let share = contrib / edge_energy_sum;
+                                local_g += share * share;
+                            }
+                        }
+                    }
+
+                    local_g
+                })
+                .sum()
+        } else {
+            trace!("  Skipping G computation (zero edge energy)");
+            0.0
+        };
+
+        let g_raw = g_sq_sum.clamp(0.0, 1.0);
+        let e_bounded = e_raw / (e_raw + tau);
+
+        trace!("  G_raw: {:.8} (clamped from {:.8})", g_raw, g_sq_sum);
+        trace!("  E_bounded: {:.8}", e_bounded);
+
+        let result = tau * e_bounded + (1.0 - tau) * g_raw;
+
+        trace!(
+            "  Result: {:.8} = {:.8}·{:.8} + {:.8}·{:.8}",
+            result,
+            tau,
+            e_bounded,
+            1.0 - tau,
+            g_raw
+        );
+        trace!("=== CSR computation complete ===");
+
+        result
+    }
+}
+
+impl fmt::Display for TauMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TauMode::Fixed(value) => write!(f, "Fixed({})", value),
+            TauMode::Median => write!(f, "Median"),
+            TauMode::Mean => write!(f, "Mean"),
+            TauMode::Percentile(p) => write!(f, "Percentile({})", p),
+        }
     }
 }

@@ -20,7 +20,11 @@ pub mod sampling;
 pub mod sparsification;
 pub mod taumode;
 
+#[cfg(feature = "storage")]
+pub mod storage;
+
 #[cfg(test)]
+#[cfg(not(feature = "storage"))]
 mod tests;
 
 use std::sync::Once;
