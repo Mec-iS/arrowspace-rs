@@ -469,7 +469,7 @@ pub fn print_section(title: &str) {
     
     info!("");
     info!("┌─────────────────────────────────────────────────────────────────────────┐");
-    info!("│ {}{}│", title, " ".repeat((padding as usize)));
+    info!("│ {}{}│", title, " ".repeat(padding as usize));
     info!("└─────────────────────────────────────────────────────────────────────────┘");
 }
 
@@ -502,7 +502,7 @@ pub fn print_comparison_table(methods: &[(&str, f64, usize)]) {
     info!("│ Method                         │  Time (ms)   │  Results/sec       │");
     info!("├────────────────────────────────┼──────────────┼────────────────────┤");
     
-    for (name, time_ms, k) in methods {
+    for (name, time_ms, _k) in methods {
         let results_per_sec = if *time_ms > 0.0 {
             (1000.0 / time_ms) as u64
         } else {
