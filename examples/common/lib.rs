@@ -1,15 +1,31 @@
+#![allow(dead_code)]
+
 use arrowspace::core::{ArrowItem, ArrowSpace};
 use arrowspace::graph::GraphLaplacian;
 
+use rand_distr::num_traits::SaturatingSub;
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
+
+use log::info;
 
 use sprs::CsMat;
 
 const VECTORS_DATA: &str = include_str!("datasets/vectors_data_3000.txt");
 
+// Traditional cosine similarity for f64 slices
+pub fn cosine_sim(a: &[f64], b: &[f64]) -> f64 {
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if na > 0.0 && nb > 0.0 {
+        dot / (na * nb)
+    } else {
+        0.0
+    }
+}
+
 /// Parse string and feature rows (N×F).
-#[allow(dead_code)]
 pub fn parse_vectors_string(vectors_string: &str) -> (Vec<String>, Vec<Vec<f64>>) {
     let mut ids = Vec::new();
     let mut rows = Vec::new();
@@ -34,7 +50,6 @@ pub fn parse_vectors_string(vectors_string: &str) -> (Vec<String>, Vec<Vec<f64>>
 }
 
 /// Parse block into item IDs and feature rows (N×F).
-#[allow(dead_code)]
 pub fn parse_vectors_block() -> (Vec<String>, Vec<Vec<f64>>) {
     let mut ids = Vec::new();
     let mut rows = Vec::new();
@@ -60,7 +75,6 @@ pub fn parse_vectors_block() -> (Vec<String>, Vec<Vec<f64>>) {
 
 /// Parse block into item IDs and feature rows (N×F).
 /// Returns n records starting at offset
-#[allow(dead_code)]
 pub fn parse_vectors_slice(n: usize, offset: usize) -> (Vec<String>, Vec<Vec<f64>>) {
     let mut ids = Vec::new();
     let mut rows = Vec::new();
@@ -96,7 +110,6 @@ pub fn parse_vectors_slice(n: usize, offset: usize) -> (Vec<String>, Vec<Vec<f64
     (ids, rows)
 }
 
-#[allow(dead_code)]
 pub fn parse_vectors_slice_features(
     n: usize,
     offset: usize,
@@ -147,7 +160,6 @@ pub fn parse_vectors_slice_features(
 }
 
 /// cosine similarity using smartcore 0.4 API (thread-safe)
-#[allow(dead_code)]
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -178,7 +190,6 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 
 /// Compute the ratio of connected components to total possible connections
 /// Returns a value between 0 and 1, where values > 0.95 indicate good connectivity
-#[allow(dead_code)]
 pub fn graph_connectivity_ratio(matrix: &CsMat<f64>) -> f64 {
     let (nrows, ncols) = matrix.shape();
 
@@ -217,7 +228,6 @@ pub fn graph_connectivity_ratio(matrix: &CsMat<f64>) -> f64 {
 
 /// Assess the quality of lambda distribution
 /// Returns a value between 0 and 1, where higher values indicate better distribution
-#[allow(dead_code)]
 pub fn lambda_distribution_quality(lambdas: &[f64]) -> f64 {
     if lambdas.is_empty() {
         return 0.0;
@@ -259,7 +269,6 @@ pub fn lambda_distribution_quality(lambdas: &[f64]) -> f64 {
 
 /// Evaluate edge count efficiency (sparse but connected)
 /// Returns a value between 0 and 1, where higher values indicate better efficiency
-#[allow(dead_code)]
 pub fn edge_count_efficiency(adjacency_matrix: &CsMat<f64>) -> f64 {
     let (nrows, ncols) = adjacency_matrix.shape();
 
@@ -302,19 +311,16 @@ pub fn edge_count_efficiency(adjacency_matrix: &CsMat<f64>) -> f64 {
 }
 
 /// Compute overall graph connectivity score
-#[allow(dead_code)]
 pub fn graph_connectivity_score(gl: &GraphLaplacian) -> f64 {
     graph_connectivity_ratio(&gl.matrix)
 }
 
 /// Compute lambda quality score
-#[allow(dead_code)]
 pub fn lambda_quality_score(lambdas: &[f64]) -> f64 {
     lambda_distribution_quality(lambdas)
 }
 
 /// Evaluate search effectiveness using actual queries
-#[allow(dead_code)]
 pub fn search_effectiveness_score(
     aspace: &ArrowSpace,
     queries: &[Vec<f64>],
@@ -387,7 +393,6 @@ pub fn search_effectiveness_score(
     total_score / valid_queries as f64
 }
 
-#[allow(dead_code)]
 pub fn evaluate_graph_quality(aspace: &ArrowSpace, gl: &GraphLaplacian) -> f64 {
     let connectivity = graph_connectivity_ratio(&gl.matrix); // Should be > 0.95
     let lambda_variance = lambda_distribution_quality(aspace.lambdas());
@@ -397,7 +402,6 @@ pub fn evaluate_graph_quality(aspace: &ArrowSpace, gl: &GraphLaplacian) -> f64 {
     0.4 * connectivity + 0.3 * lambda_variance + 0.3 * edge_efficiency
 }
 
-#[allow(dead_code)]
 pub fn evaluate_parameter_quality(
     aspace: &ArrowSpace,
     gl: &GraphLaplacian,
@@ -419,9 +423,7 @@ pub fn evaluate_parameter_quality(
         + 0.2 * search_quality_score
 }
 
-
 /// Optimized statistical computations using smartcore DenseMatrix (thread-safe)
-#[allow(dead_code)]
 fn compute_statistics(values: &[f64]) -> (f64, f64, f64) {
     if values.is_empty() {
         return (0.0, 0.0, 0.0);
@@ -442,4 +444,118 @@ fn compute_statistics(values: &[f64]) -> (f64, f64, f64) {
     let std_dev = variance.sqrt();
 
     (mean, variance, std_dev)
+}
+
+/// Print a centered title in a box
+pub fn print_box(title: &str) {
+    let width = 80;
+    let title_len = title.len();
+    let padding = (width - title_len - 2) / 2;
+    let right_pad = width - padding - title_len - 2;
+    
+    info!("╔{}╗", "═".repeat(width));
+    info!("║{}{}{}║", 
+          " ".repeat(padding), 
+          title, 
+          " ".repeat(right_pad));
+    info!("╚{}╝", "═".repeat(width));
+}
+
+/// Print a section header
+pub fn print_section(title: &str) {
+    let width = 75;
+    let title_len = title.len();
+    let padding = width.saturating_sub(&(title_len as i32)).saturating_sub(1);
+    
+    info!("");
+    info!("┌─────────────────────────────────────────────────────────────────────────┐");
+    info!("│ {}{}│", title, " ".repeat((padding as usize)));
+    info!("└─────────────────────────────────────────────────────────────────────────┘");
+}
+
+/// Print search results as a formatted table
+pub fn print_results_table(title: &str, results: &[(usize, f64)], ids: &[String]) {
+    info!("");
+    info!("{}", title);
+    info!("┌──────┬─────────┬─────────────┐");
+    info!("│ Rank │   ID    │    Score    │");
+    info!("├──────┼─────────┼─────────────┤");
+    
+    for (rank, (idx, score)) in results.iter().enumerate() {
+        let id_str = if *idx < ids.len() {
+            ids[*idx].clone()
+        } else {
+            format!("ID{}", idx)
+        };
+        info!("│ {:4} │ {:7} │ {:11.6} │", rank + 1, id_str, score);
+    }
+    
+    info!("└──────┴─────────┴─────────────┘");
+}
+
+/// Print a comparison table for multiple methods
+pub fn print_comparison_table(methods: &[(&str, f64, usize)]) {
+    info!("");
+    info!("┌─────────────────────────────────────────────────────────────────────┐");
+    info!("│ SEARCH PERFORMANCE COMPARISON                                       │");
+    info!("├────────────────────────────────┬──────────────┬────────────────────┤");
+    info!("│ Method                         │  Time (ms)   │  Results/sec       │");
+    info!("├────────────────────────────────┼──────────────┼────────────────────┤");
+    
+    for (name, time_ms, k) in methods {
+        let results_per_sec = if *time_ms > 0.0 {
+            (1000.0 / time_ms) as u64
+        } else {
+            u64::MAX
+        };
+        
+        info!("│ {:30} │ {:12.3} │ {:18} │", 
+              name, 
+              time_ms,
+              format!("~{} q/s", results_per_sec));
+    }
+    
+    info!("└────────────────────────────────┴──────────────┴────────────────────┘");
+}
+
+/// Print a horizontal bar chart for performance comparison
+pub fn print_performance_bar(label: &str, value: f64) {
+    let max_bar_width = 50;
+    let bar_char = '█';
+    let empty_char = '░';
+    
+    // Normalize to max_bar_width (assume max value is roughly 1000ms)
+    let max_value = 1000.0;
+    let normalized = (value / max_value * max_bar_width as f64).min(max_bar_width as f64) as usize;
+    let empty = max_bar_width.saturating_sub(&normalized);
+    
+    let bar = bar_char.to_string().repeat(normalized);
+    let empty_bar = empty_char.to_string().repeat(empty);
+    
+    info!("│ {} │ {}{} {:8.2} ms │", 
+          label, 
+          bar, 
+          empty_bar, 
+          value);
+}
+
+/// Calculate Jaccard similarity between two sets of indices
+pub fn jaccard_similarity(a: &[usize], b: &[usize]) -> f64 {
+    use std::collections::HashSet;
+    
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    
+    let set_a: HashSet<usize> = a.iter().copied().collect();
+    let set_b: HashSet<usize> = b.iter().copied().collect();
+    
+    let intersection = set_a.intersection(&set_b).count();
+    let union = set_a.union(&set_b).count();
+    
+    if union > 0 {
+        intersection as f64 / union as f64
+    } else {
+        0.0
+    }
 }

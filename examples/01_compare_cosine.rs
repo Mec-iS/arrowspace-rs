@@ -6,17 +6,6 @@ use smartcore::linalg::basic::arrays::Array;
 #[path = "./common/lib.rs"]
 mod common;
 
-// Traditional cosine similarity for f64 slices
-fn cosine_sim(a: &[f64], b: &[f64]) -> f64 {
-    let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let nb = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if na > 0.0 && nb > 0.0 {
-        dot / (na * nb)
-    } else {
-        0.0
-    }
-}
 
 const VECTORS_DATA: &str = r#"
 P0001; 0.82,0.11,0.43,0.28,0.64,0.32,0.55,0.48,0.19,0.73,0.07,0.36,0.58,0.23,0.44,0.31,0.52,0.16,0.61,0.40,0.27,0.49,0.35,0.29
@@ -108,7 +97,7 @@ fn main() {
     let mut base_scores: Vec<(usize, f64)> = db
         .iter()
         .enumerate()
-        .map(|(i, v)| (i, cosine_sim(&query, v)))
+        .map(|(i, v)| (i, common::cosine_sim(&query, v)))
         .collect();
     base_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     base_scores.truncate(k + 1);
