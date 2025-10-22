@@ -1,4 +1,4 @@
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,8 @@ use smartcore::linalg::basic::arrays::Array;
 
 use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
+use crate::eigenmaps::{ClusteredOutput, EigenMaps};
+use crate::energymaps::{EnergyMaps, EnergyParams};
 use crate::graph::{GraphFactory, GraphLaplacian};
 use crate::reduction::{compute_jl_dimension, ImplicitProjection};
 use crate::sampling::{InlineSampler, SamplerType};
@@ -160,6 +162,7 @@ impl ArrowSpaceBuilder {
     /// use only on limited dataset for analysis, exploration and data QA
     pub fn with_spectral(mut self, compute_spectral: bool) -> Self {
         info!("Setting compute spectral: {}", compute_spectral);
+        warn!("with_spectral is an experimental feature, results may be unprecise. Keep the default to false");
         self.prebuilt_spectral = compute_spectral;
         self
     }
@@ -236,6 +239,26 @@ impl ArrowSpaceBuilder {
     }
 
     // -------------------- Build --------------------
+
+    pub fn build_energy(mut self, rows: Vec<Vec<f64>>, p: EnergyParams) -> (ArrowSpace, GraphLaplacian) {
+        let ClusteredOutput {
+            mut aspace,
+            mut centroids,
+            ..
+        } = ArrowSpace::start_clustering(&mut self, rows);
+
+        if let Some(tokens) = p.optical_tokens {
+            centroids = ArrowSpace::optical_compress_centroids(&centroids, tokens, p.trim_quantile);
+        }
+
+        let l0 = ArrowSpace::bootstrap_centroid_laplacian(&centroids, p.neighbor_k.max(p.k), p.normalise, p.sparsity_check);
+        let sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &p);
+        let (gl_energy, _, _) = ArrowSpace::build_energy_laplacian(&sub_centroids, &p);
+
+        aspace.compute_taumode(&gl_energy);
+
+        (aspace, gl_energy)
+    }
 
     /// Build the ArrowSpace and the selected Laplacian (if any).
     ///

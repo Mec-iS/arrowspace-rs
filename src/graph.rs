@@ -451,6 +451,8 @@ impl GraphLaplacian {
             x.len()
         );
 
+        trace!("multiplying x {:?} {:?}", x, self.matrix);
+
         // Initialize result vector
         let mut result = vec![0.0; self.nnodes];
 
@@ -480,7 +482,7 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get(i, j).unwrap() - self.matrix.get(j, i).unwrap()).abs();
+                let diff = (self.matrix.get(i, j).unwrap_or(&0.0) - self.matrix.get(j, i).unwrap_or(&0.0)).abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;
