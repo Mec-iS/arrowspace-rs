@@ -1,17 +1,13 @@
-use log::{debug, info, trace, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
-
 use serde::{Deserialize, Serialize};
-
-use smartcore::linalg::basic::arrays::Array;
 
 use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
-use crate::graph::{GraphFactory, GraphLaplacian};
-use crate::reduction::{compute_jl_dimension, ImplicitProjection};
-use crate::sampling::{InlineSampler, SamplerType};
+use crate::graph::GraphLaplacian;
+use crate::sampling::SamplerType;
+use crate::eigenmaps::{EigenMaps, ClusteredOutput};
 use crate::taumode::TauMode;
 
 #[derive(Clone, Debug)]
@@ -253,7 +249,6 @@ impl ArrowSpaceBuilder {
     pub fn build(mut self, rows: Vec<Vec<f64>>) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.len();
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
-
         let start = std::time::Instant::now();
 
         // set baseline for topk
@@ -273,280 +268,173 @@ impl ArrowSpaceBuilder {
             self.synthesis
         );
 
-        // 1) Create starting `ArrowSpace`
-        trace!("Creating ArrowSpace from items");
-        let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
-        debug!(
-            "ArrowSpace created with {} items and {} features",
-            n_items, n_features
-        );
-
+        // Save raw input if persistence is enabled
         #[cfg(feature = "storage")]
         {
-            use crate::storage::parquet::save_dense_matrix_with_builder;
-            use crate::storage::StorageError;
-
-            assert!(self.persistence.is_some());
-            assert!(self.persistence.clone().unwrap().1.is_dir());
-            let _name = self.persistence.clone().unwrap().0;
-            let name = _name.as_str();
-
-            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
-                &aspace.data,
-                self.persistence.clone().unwrap().1,
-                &format!("{}-raw_input", name),
-                Some(&self),
-            );
-            match saved {
-                Ok(_) => debug!("raw-input saved"),
-                Err(StorageError::Parquet(err)) => panic!("saving failed for raw-input {}", err),
-                _ => panic!("Error with {:?}", saved),
-            };
-        }
-
-        // Sampler switch
-        let sampler: Arc<Mutex<dyn InlineSampler>> = match self.sampling {
-            Some(SamplerType::Simple(r)) => Arc::new(Mutex::new(SamplerType::new_simple(r))),
-            Some(SamplerType::DensityAdaptive(r)) => {
-                Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-            }
-            None => Arc::new(Mutex::new(SamplerType::new_simple(1.0))),
-        };
-
-        // ---- Compute optimal K automatically ----
-        info!("Auto-computing optimal clustering parameters");
-        let params = self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
-        debug!(
-            "Auto K={}, radius={:.6}, intrinsic_dim={}",
-            params.0, params.1, params.2
-        );
-        // set clustering params
-        self.cluster_max_clusters = Some(params.0);
-        self.cluster_radius = params.1;
-
-        debug!(
-            "Clustering: {} centroids, radius= {}, intrinsic_dim ≈ {}",
-            self.cluster_max_clusters.unwrap(),
-            self.cluster_radius,
-            params.2
-        );
-
-        // Run incremental clustering
-        // include inline sampling if flag is on
-        let (clustered_dm, assignments, sizes) =
-            crate::clustering::run_incremental_clustering_with_sampling(
-                &self,
-                &rows,
-                n_features,
-                self.cluster_max_clusters.unwrap(),
-                self.cluster_radius,
-                sampler,
-            );
-
-        #[cfg(feature = "storage")]
-        {
-            use crate::storage::parquet::save_dense_matrix_with_builder;
-            use crate::storage::StorageError;
-
-            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
-                &clustered_dm,
-                "/datadisk/publish/arrowspace-rs/test_data/cve-dataset/",
-                "cve-clustered-dm",
-                Some(&self),
-            );
-            match saved {
-                Ok(_) => debug!("clustered_dm saved"),
-                Err(StorageError::Parquet(err)) => panic!("saving failed for clustered_dm {}", err),
-                _ => panic!("Error with {:?}", saved),
-            };
-        }
-
-        // Store clustering results in ArrowSpace
-        aspace.n_clusters = clustered_dm.shape().0;
-        aspace.cluster_assignments = assignments;
-        aspace.cluster_sizes = sizes;
-        aspace.cluster_radius = self.cluster_radius;
-
-        info!(
-            "Clustering complete: {} centroids, {} items assigned",
-            aspace.cluster_sizes.len(),
-            aspace
-                .cluster_assignments
-                .iter()
-                .filter(|x| x.is_some())
-                .count()
-        );
-
-        let (laplacian_input, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
-            let n_centroids = clustered_dm.shape().0;
-
-            // Compute target dimension using JL bound
-            let jl_dim = compute_jl_dimension(n_centroids, self.rp_eps);
-            let target_dim = jl_dim.min(n_features / 2);
-
-            if target_dim < n_features {
-                info!(
-                    "Applying random projection: {} centroids × {} features -> {} features (ε={:.2})",
-                    n_centroids, n_features, target_dim, self.rp_eps
-                );
-
-                // Create implicit projection
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
-
-                // Project centroids using the implicit projection
-                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
-
-                let compression = n_features as f64 / target_dim as f64;
-                info!(
-                    "Projection complete: {:.1}x compression, projection stored as seed (8 bytes)",
-                    compression
-                );
-
-                // Store the projection for query-time use
-                aspace.projection_matrix = Some(implicit_proj);
-                aspace.reduced_dim = Some(target_dim);
-
-                (projected, target_dim)
-            } else {
-                debug!(
-                    "Target dimension {} >= original {}, skipping projection",
-                    target_dim, n_features
-                );
-                (clustered_dm.clone(), n_features)
-            }
-        } else {
-            debug!("Random projection disabled or dimension too small");
-            (clustered_dm.clone(), n_features)
-        };
-
-        #[cfg(feature = "storage")]
-        {
-            use crate::storage::parquet::save_dense_matrix_with_builder;
-            use crate::storage::StorageError;
-            let _name = self.persistence.clone().unwrap().0;
-            let name = _name.as_str();
-
-            let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
-                &laplacian_input,
-                self.persistence.clone().unwrap().1,
-                &format!("{}-laplacian-input", name),
-                Some(&self),
-            );
-            match saved {
-                Ok(_) => debug!("laplacian_input saved"),
-                Err(StorageError::Parquet(err)) => {
-                    panic!("saving failed for laplacian_input {}", err)
-                }
-                _ => panic!("Error with {:?}", saved),
-            };
-        }
-
-        // Resolve λτ-graph params with conservative defaults
-        info!(
-            "Building Laplacian matrix on {} × {} input",
-            laplacian_input.shape().0,
-            reduced_dim
-        );
-
-        // 3) Compute synthetic indices on resulting graph
-        let gl = GraphFactory::build_laplacian_matrix_from_k_cluster(
-            &laplacian_input,
-            self.lambda_eps,
-            self.lambda_k,
-            self.lambda_topk,
-            self.lambda_p,
-            self.lambda_sigma,
-            self.normalise,
-            self.sparsity_check,
-            n_items,
-        );
-        debug!("Laplacian matrix built successfully");
-
-        #[cfg(feature = "storage")]
-        {
-            use crate::storage::parquet::save_sparse_matrix_with_builder;
-            use crate::storage::StorageError;
-            let _name = self.persistence.clone().unwrap().0;
-            let name = _name.as_str();
-
-            let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
-                &gl.matrix,
-                self.persistence.clone().unwrap().1,
-                &format!("{}-gl-matrix", name),
-                Some(&self),
-            );
-            match saved {
-                Ok(_) => debug!("gl.matrix saved"),
-                Err(StorageError::Parquet(err)) => panic!("saving failed for gl.matrix {}", err),
-                _ => panic!("Error with {:?}", saved),
-            };
-        }
-
-        // Branch: if spectral L_2 laplacian is required, compute
-        // if aspace.signals is not set, gl.matrix will be used
-        if self.prebuilt_spectral {
-            // Compute signals FxF laplacian
-            trace!("Building spectral Laplacian for ArrowSpace");
-            GraphFactory::build_spectral_laplacian(&mut aspace, &gl);
-            debug!(
-                "Spectral Laplacian built with signals shape: {:?}",
-                aspace.signals.shape()
-            );
-
-            #[cfg(feature = "storage")]
-            {
-                use crate::storage::parquet::save_sparse_matrix_with_builder;
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::parquet::save_dense_matrix_with_builder;
                 use crate::storage::StorageError;
-                let _name = self.persistence.clone().unwrap().0;
-                let name = _name.as_str();
-
-                let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
-                    &aspace.signals,
-                    self.persistence.clone().unwrap().1,
-                    &format!("{}-aspace-signals", name),
+                
+                // Create temporary ArrowSpace for saving raw data
+                let temp_aspace = ArrowSpace::new(rows.clone(), self.synthesis);
+                
+                let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                    &temp_aspace.data,
+                    path.clone(),
+                    &format!("{}-raw_input", name),
                     Some(&self),
                 );
                 match saved {
-                    Ok(_) => debug!("aspace.signals saved"),
+                    Ok(_) => debug!("raw-input saved"),
+                    Err(StorageError::Parquet(err)) => panic!("saving failed for raw-input {}", err),
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
+        }
+
+        // ============================================================
+        // Stage 1: Clustering with sampling and optional projection
+        // ============================================================
+        let ClusteredOutput {
+            mut aspace,
+            centroids,
+            n_items: _n_items,
+            n_features: _n_features,
+            ..
+        } = ArrowSpace::start_clustering(&mut self, rows.clone());
+
+        // Save clustered centroids if persistence is enabled
+        #[cfg(feature = "storage")]
+        {
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::parquet::save_dense_matrix_with_builder;
+                use crate::storage::StorageError;
+
+                let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                    &centroids,
+                    path.clone(),
+                    &format!("{}-clustered-dm", name),
+                    Some(&self),
+                );
+                match saved {
+                    Ok(_) => debug!("clustered_dm saved"),
+                    Err(StorageError::Parquet(err)) => panic!("saving failed for clustered_dm {}", err),
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
+        }
+
+        // Save laplacian input (projected centroids) if persistence is enabled
+        #[cfg(feature = "storage")]
+        {
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::parquet::save_dense_matrix_with_builder;
+                use crate::storage::StorageError;
+
+                let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
+                    &centroids,
+                    path.clone(),
+                    &format!("{}-laplacian-input", name),
+                    Some(&self),
+                );
+                match saved {
+                    Ok(_) => debug!("laplacian_input saved"),
                     Err(StorageError::Parquet(err)) => {
-                        panic!("saving failed for aspace.signals {}", err)
+                        panic!("saving failed for laplacian_input {}", err)
                     }
                     _ => panic!("Error with {:?}", saved),
                 };
             }
         }
 
-        // Compute taumode lambdas
+        // ============================================================
+        // Stage 2: Build item-graph Laplacian
+        // ============================================================
+        let gl = aspace.eigenmaps(&self, &centroids, n_items);
+
+        // Save graph Laplacian matrix if persistence is enabled
+        #[cfg(feature = "storage")]
+        {
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::parquet::save_sparse_matrix_with_builder;
+                use crate::storage::StorageError;
+
+                let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
+                    &gl.matrix,
+                    path.clone(),
+                    &format!("{}-gl-matrix", name),
+                    Some(&self),
+                );
+                match saved {
+                    Ok(_) => debug!("gl.matrix saved"),
+                    Err(StorageError::Parquet(err)) => panic!("saving failed for gl.matrix {}", err),
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
+        }
+
+        // ============================================================
+        // Stage 3: Optional spectral feature Laplacian (F×F) if prebuilt_spectral is true
+        // ============================================================
+        if self.prebuilt_spectral {
+            // Save spectral signals if persistence is enabled
+            #[cfg(feature = "storage")]
+            {
+                if let Some((ref name, ref path)) = self.persistence {
+                    use crate::storage::parquet::save_sparse_matrix_with_builder;
+                    use crate::storage::StorageError;
+
+                    let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
+                        &aspace.signals,
+                        path.clone(),
+                        &format!("{}-aspace-signals", name),
+                        Some(&self),
+                    );
+                    match saved {
+                        Ok(_) => debug!("aspace.signals saved"),
+                        Err(StorageError::Parquet(err)) => {
+                            panic!("saving failed for aspace.signals {}", err)
+                        }
+                        _ => panic!("Error with {:?}", saved),
+                    };
+                }
+            }
+        }
+
+        // ============================================================
+        // Stage 4: Compute taumode lambdas
+        // ============================================================
         info!(
             "Computing taumode lambdas with synthesis: {:?}",
             self.synthesis
         );
-        TauMode::compute_taumode_lambdas_parallel(&mut aspace, &gl, self.synthesis);
+        aspace.compute_taumode(&gl);
 
+        // Save lambdas if persistence is enabled
         #[cfg(feature = "storage")]
         {
-            use crate::storage::parquet::save_lambda_with_builder;
-            use crate::storage::StorageError;
-            let _name = self.persistence.clone().unwrap().0;
-            let name = _name.as_str();
+            if let Some((ref name, ref path)) = self.persistence {
+                use crate::storage::parquet::save_lambda_with_builder;
+                use crate::storage::StorageError;
 
-            let saved: Result<(), StorageError> = save_lambda_with_builder(
-                &aspace.lambdas,
-                self.persistence.clone().unwrap().1,
-                &format!("{}-lambdas", name),
-                Some(&self),
-            );
-            match saved {
-                Ok(_) => debug!("cve-lambdas saved"),
-                Err(StorageError::Parquet(err)) => panic!("saving failed for cve-lambdas {}", err),
-                _ => panic!("Error with {:?}", saved),
-            };
+                let saved: Result<(), StorageError> = save_lambda_with_builder(
+                    &aspace.lambdas,
+                    path.clone(),
+                    &format!("{}-lambdas", name),
+                    Some(&self),
+                );
+                match saved {
+                    Ok(_) => debug!("{}-lambdas saved", name),
+                    Err(StorageError::Parquet(err)) => panic!("saving failed for {}-lambdas {}", name, err),
+                    _ => panic!("Error with {:?}", saved),
+                };
+            }
         }
 
         let lambda_stats = {
             let lambdas = aspace.lambdas();
             let min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-            let max: f64 = lambdas.iter().fold(0.0, |a, &b| a.max(b));
+            let max: f64 = lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
             let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
             (min, max, mean)
         };
@@ -562,8 +450,10 @@ impl ArrowSpaceBuilder {
         );
         debug!("ArrowSpaceBuilder configuration: {}", self);
         info!("ArrowSpace build completed successfully");
+        
         (aspace, gl)
     }
+
 }
 
 impl fmt::Display for ArrowSpaceBuilder {

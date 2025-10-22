@@ -95,7 +95,7 @@ fn test_builder_normalisation_flag_is_preserved() {
 #[test]
 fn test_builder_clustering_produces_valid_assignments() {
     // Test that the builder produces valid cluster assignments
-    let items = make_moons_hd(6, 0.1, 0.3, 3, 456);
+    let items = make_moons_hd(99, 0.05, 1.5, 3, 456);
 
     let (aspace, _gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 3, 2, 2.0, None)
