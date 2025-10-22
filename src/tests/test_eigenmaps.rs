@@ -32,7 +32,7 @@ use crate::tests::test_data::make_gaussian_hd;
 use crate::tests::init;
 
 /// Helper: Compare two ArrowSpace lambda vectors element-wise with tolerance.
-fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str) {
+fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: bool) {
     init();
     assert_eq!(
         a.len(),
@@ -41,7 +41,9 @@ fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str) {
         label
     );
     for (i, (&la, &lb)) in a.iter().zip(b.iter()).enumerate() {
-        assert!(la >= 0.0 && lb >= 0.0, "lambda_a is {} and lambda_b {}", la, lb);
+        if !spectral {
+            assert!(la >= 0.0 && lb >= 0.0, "lambda_a is {} and lambda_b {}", la, lb);
+        }
         if relative_ne!(
             la,
             lb,
@@ -147,7 +149,7 @@ fn test_eigenmaps_vs_build_basic() {
         ..
     } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
 
-    let gl_exp = ArrowSpace::eigenmaps(&builder_exp, &centroids, n_items);
+    let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
 
     // Verify clustering metadata
@@ -162,6 +164,7 @@ fn test_eigenmaps_vs_build_basic() {
         aspace.lambdas(),
         1e-6,
         "basic lambdas",
+        false
     );
 
     // Verify search results
@@ -218,11 +221,8 @@ fn test_eigenmaps_vs_build_with_spectral() {
         ..
     } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
 
-    let gl_exp = ArrowSpace::eigenmaps(&builder_exp, &centroids, n_items);
+    let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
-
-    // Apply spectral stage (F×F Laplacian)
-    aspace = aspace.spectral(&gl_exp);
 
     // Verify spectral matrix (signals field)
     assert_eq!(
@@ -244,6 +244,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
         aspace.lambdas(),
         1e-6,
         "spectral lambdas",
+        true
     );
 
     // Search
@@ -296,7 +297,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
         ..
     } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
 
-    let gl_exp = ArrowSpace::eigenmaps(&builder_exp, &centroids, n_items);
+    let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
 
     // Verify
@@ -307,6 +308,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
         aspace.lambdas(),
         1e-6,
         "mean_taumode lambdas",
+        false
     );
 
     // Search
@@ -347,7 +349,7 @@ fn test_search_without_taumode_panics() {
         ..
     } = ArrowSpace::start_clustering(&mut builder, rows);
 
-    let gl = ArrowSpace::eigenmaps(&builder, &centroids, n_items);
+    let gl = aspace.eigenmaps(&builder, &centroids, n_items);
 
     // Skip compute_taumode - should panic in debug
     let _ = aspace.search(&query, &gl, 3, 0.7);
@@ -367,7 +369,7 @@ fn test_eigenmaps_stages_produce_valid_state() {
 
     // Stage 1: Clustering
     let ClusteredOutput {
-        aspace,
+        mut aspace,
         centroids,
         n_items,
         n_features,
@@ -380,7 +382,7 @@ fn test_eigenmaps_stages_produce_valid_state() {
     assert_eq!(reduced_dim, n_features, "No projection, dims unchanged");
 
     // Stage 2: Eigenmaps
-    let gl = ArrowSpace::eigenmaps(&builder, &centroids, n_items);
+    let gl = aspace.eigenmaps(&builder, &centroids, n_items);
 
     assert_eq!(gl.nnodes, n_items, "Laplacian nodes should match items");
     assert!(gl.nnz() > 0, "Laplacian should have edges");

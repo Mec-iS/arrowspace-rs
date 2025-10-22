@@ -487,7 +487,7 @@ impl ArrowSpaceBuilder {
         if self.prebuilt_spectral {
             // Compute signals FxF laplacian
             trace!("Building spectral Laplacian for ArrowSpace");
-            aspace = GraphFactory::build_spectral_laplacian(aspace, &gl);
+            GraphFactory::build_spectral_laplacian(&mut aspace, &gl);
             debug!(
                 "Spectral Laplacian built with signals shape: {:?}",
                 aspace.signals.shape()

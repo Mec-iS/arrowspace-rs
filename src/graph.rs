@@ -210,9 +210,9 @@ impl GraphFactory {
     /// * `aspace` - The data from the ArrowSpace data  
     /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
     pub fn build_spectral_laplacian(
-        mut aspace: ArrowSpace,
+        aspace: &mut ArrowSpace,
         graph_laplacian: &GraphLaplacian,
-    ) -> ArrowSpace {
+    ) {
         info!("Building F×F spectral feature matrix");
         debug!(
             "ArrowSpace dimensions: {} features, {} items",
@@ -267,8 +267,6 @@ impl GraphFactory {
             stats.0,
             stats.1 * 100.0
         );
-
-        aspace
     }
 }
 

@@ -7,9 +7,12 @@
 
 use log::{debug, info, trace, warn};
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
+use rayon::prelude::*;
+use dashmap::DashMap;
 
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
@@ -171,7 +174,7 @@ impl EnergyMaps for ArrowSpace {
 
         let rows = out.len() / f;
         info!("Optical compression complete: {} → {} centroids ({:.1}% compression)", x, rows, 100.0 * (1.0 - rows as f64 / x as f64));
-        DenseMatrix::new(rows, f, out, false).unwrap()
+        DenseMatrix::<f64>::from_iterator(out.iter().copied(),rows, f, 1)
     }
 
     fn bootstrap_centroid_laplacian(
@@ -578,24 +581,31 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         trace!("Bootstrapping L' for energy feature computation");
         let l_boot = ArrowSpace::bootstrap_centroid_laplacian(
-            sub_centroids, energy_params.neighbor_k.max(self.lambda_k), self.normalise, self.sparsity_check);
+            sub_centroids, 
+            energy_params.neighbor_k.max(self.lambda_k), 
+            self.normalise, 
+            self.sparsity_check
+        );
 
         trace!("Computing energy and dispersion features");
         let (lambda, gini) = node_energy_and_dispersion(
-            sub_centroids, &l_boot, energy_params.neighbor_k.max(self.lambda_k));
+            sub_centroids, 
+            &l_boot, 
+            energy_params.neighbor_k.max(self.lambda_k)
+        );
         let s_l = robust_scale(&lambda).max(1e-9);
         let s_g = robust_scale(&gini).max(1e-9);
         debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
 
-        debug!("Building energy-distance kNN with candidate pruning (M={})", energy_params.candidate_m);
+        debug!("Building energy-distance kNN with candidate pruning (M={}) [parallel]", energy_params.candidate_m);
         
-        // Build adjacency (W) as HashMap for easy symmetrization
-        let mut adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
+        // Parallel kNN computation using DashMap
+        let adjacency = Arc::new(DashMap::with_capacity(x * self.lambda_k));
+        let l_boot = Arc::new(l_boot);
         
-        for i in 0..x {
+        (0..x).into_par_iter().for_each(|i| {
             let cand = topm_by_l2(sub_centroids, i, energy_params.candidate_m.max(self.lambda_k));
-            trace!("Node {}: evaluating {} candidates", i, cand.len());
-
+            
             let mut scored: Vec<(usize, f64)> = cand
                 .into_iter()
                 .filter(|&j| j != i)
@@ -604,51 +614,75 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     let d_gini = (gini[i] - gini[j]).abs() / s_g;
                     let diff = pair_diff(sub_centroids, i, j);
                     let r_pair = rayleigh_dirichlet(&l_boot, &diff);
-                    let dist = energy_params.w_lambda * d_lambda + energy_params.w_disp * d_gini + energy_params.w_dirichlet * r_pair;
+                    let dist = energy_params.w_lambda * d_lambda 
+                            + energy_params.w_disp * d_gini 
+                            + energy_params.w_dirichlet * r_pair;
                     (j, dist)
                 })
                 .collect();
+            
             scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
             scored.truncate(self.lambda_k);
 
             for (j, d) in scored {
                 let w = (-d).exp();
-                // Store directed edge i→j
                 adjacency.insert((i, j), w);
             }
-        }
+        });
 
-        debug!("Symmetrizing adjacency: {} directed edges before symmetrization", adjacency.len());
+        debug!("Symmetrizing adjacency: {} directed edges before symmetrization [parallel]", adjacency.len());
         
-        // Symmetrize: for each edge (i,j), ensure (j,i) exists with max(w_ij, w_ji)
-        let mut sym_adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
-        let mut processed = std::collections::HashSet::new();
+        // Parallel symmetrization using DashMap
+        let sym_adjacency = Arc::new(DashMap::with_capacity(adjacency.len() * 2));
+        let processed = Arc::new(DashMap::with_capacity(adjacency.len()));
         
-        for (&(i, j), &w_ij) in adjacency.iter() {
-            if processed.contains(&(i, j)) {
-                continue;
+        adjacency.iter().par_bridge().for_each(|entry| {
+            let &(i, j) = entry.key();
+            let &w_ij = entry.value();
+            
+            // Use (min, max) ordering to ensure each pair is processed once
+            let (u, v) = if i < j { (i, j) } else { (j, i) };
+            
+            if processed.insert((u, v), true).is_none() {
+                // First thread to process this pair
+                let w_ji = adjacency.get(&(j, i)).map(|e| *e.value()).unwrap_or(0.0);
+                let w_sym = w_ij.max(w_ji);
+                
+                sym_adjacency.insert((i, j), w_sym);
+                sym_adjacency.insert((j, i), w_sym);
             }
-            
-            let w_ji = adjacency.get(&(j, i)).copied().unwrap_or(0.0);
-            // Use max for symmetrization (alternative: average)
-            let w_sym = w_ij.max(w_ji);
-            
-            sym_adjacency.insert((i, j), w_sym);
-            sym_adjacency.insert((j, i), w_sym);
-            processed.insert((i, j));
-            processed.insert((j, i));
-        }
+        });
         
         debug!("Symmetrization complete: {} symmetric edges", sym_adjacency.len());
         
-        // Build Laplacian from symmetrized adjacency
+        // Build Laplacian from symmetrized adjacency (sequential for triplet construction)
         let mut tri = sprs::TriMat::<f64>::new((x, x));
-        let mut degrees = vec![0.0; x];
+        let degrees: Vec<f64> = (0..x)
+            .into_par_iter()
+            .map(|i| {
+                sym_adjacency
+                    .iter()
+                    .filter(|entry| {
+                        let &(u, _) = entry.key();
+                        u == i
+                    })
+                    .filter(|entry| {
+                        let &(_, v) = entry.key();
+                        i != v
+                    })
+                    .map(|entry| *entry.value())
+                    .sum()
+            })
+            .collect();
         
-        for (&(i, j), &w) in sym_adjacency.iter() {
+        debug!("Populating sparse Laplacian matrix from {} edges", sym_adjacency.len());
+        
+        // Sequential insertion into TriMat (not thread-safe)
+        for entry in sym_adjacency.iter() {
+            let &(i, j) = entry.key();
+            let &w = entry.value();
             if i != j {
                 tri.add_triplet(i, j, -w);
-                degrees[i] += w;
             }
         }
         

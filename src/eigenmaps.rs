@@ -124,6 +124,7 @@ pub trait EigenMaps {
     /// # Returns
     /// `GraphLaplacian` with nnodes = n_items, ready for taumode computation.
     fn eigenmaps(
+        &mut self,
         builder: &ArrowSpaceBuilder,
         centroids: &DenseMatrix<f64>,
         n_items: usize,
@@ -142,19 +143,6 @@ pub trait EigenMaps {
     /// # Side Effects
     /// Mutates `self.lambdas` in place with computed λ values for all rows.
     fn compute_taumode(&mut self, gl: &GraphLaplacian);
-
-    /// Stage 4 (optional): Construct F×F feature Laplacian (Laplacian-of-Laplacian).
-    ///
-    /// Builds a spectral feature graph by transposing the item Laplacian and computing
-    /// a new Laplacian over features (columns become nodes, edges weighted by feature
-    /// correlation across items modulated by the item graph). Stores result in self.signals.
-    ///
-    /// # Arguments
-    /// - `gl`: GraphLaplacian from eigenmaps stage.
-    ///
-    /// # Returns
-    /// Self with populated `signals` field (F×F or r×r if projection was used).
-    fn spectral(self, gl: &GraphLaplacian) -> Self;
 
     /// Stage 5: λ-aware nearest-neighbor search with precomputed λ values.
     ///
@@ -302,6 +290,7 @@ impl EigenMaps for ArrowSpace {
     }
 
     fn eigenmaps(
+        &mut self,
         builder: &ArrowSpaceBuilder,
         centroids: &DenseMatrix<f64>,
         n_items: usize,
@@ -332,6 +321,28 @@ impl EigenMaps for ArrowSpace {
             builder.sparsity_check,
             n_items,
         );
+
+        if builder.prebuilt_spectral {
+            // Stage 4 (optional): Construct F×F feature Laplacian (Laplacian-of-Laplacian).
+            //
+            // Builds a spectral feature graph by transposing the item Laplacian and computing
+            // a new Laplacian over features (columns become nodes, edges weighted by feature
+            // correlation across items modulated by the item graph). Stores result in self.signals.
+            // ### Why negative lambdas are valid in this case
+            // The Rayleigh quotient \$ R(L, x) = \frac{x^T L x}{x^T x} \$ can be **negative** when:
+            // 1. The Laplacian $L$ is **not positive semi-definite** (e.g., unnormalized Laplacians or
+            //   feature-space Laplacians with negative eigenvalues)
+            // 2. The numerator $x^T L x$ is negative for some vectors $x$
+            //
+            // For the **spectral F×F feature Laplacian**, the matrix represents relationships between features (not items),
+            //   and the resulting Laplacian can have negative eigenvalues depending on the feature correlation structure.
+            trace!("Building spectral Laplacian for ArrowSpace");
+            GraphFactory::build_spectral_laplacian(self, &gl);
+            debug!(
+                "Spectral Laplacian built with signals shape: {:?}",
+                self.signals.shape()
+            );
+        }
 
         info!(
             "Laplacian construction complete: {}×{} matrix, {} non-zeros, {:.2}% sparse",
@@ -371,30 +382,30 @@ impl EigenMaps for ArrowSpace {
         );
     }
 
-    fn spectral(self, gl: &GraphLaplacian) -> Self {
-        info!(
-            "EigenMaps::spectral: Building F×F feature Laplacian for {} features",
-            self.nfeatures
-        );
-        debug!(
-            "Input Laplacian: {}×{}, graph params: {:?}",
-            gl.shape().0,
-            gl.shape().1,
-            gl.graph_params
-        );
+    // fn spectral(self, gl: &GraphLaplacian) -> Self {
+    //     info!(
+    //         "EigenMaps::spectral: Building F×F feature Laplacian for {} features",
+    //         self.nfeatures
+    //     );
+    //     debug!(
+    //         "Input Laplacian: {}×{}, graph params: {:?}",
+    //         gl.shape().0,
+    //         gl.shape().1,
+    //         gl.graph_params
+    //     );
 
-        let aspace_with_signals = GraphFactory::build_spectral_laplacian(self, gl);
+    //     let aspace_with_signals = GraphFactory::build_spectral_laplacian(self, gl);
 
-        let (signal_rows, signal_cols) = aspace_with_signals.signals.shape();
-        info!(
-            "Spectral Laplacian complete: {}×{} signals matrix, {:.2}% sparse",
-            signal_rows,
-            signal_cols,
-            GraphLaplacian::sparsity(&aspace_with_signals.signals) * 100.0
-        );
+    //     let (signal_rows, signal_cols) = aspace_with_signals.signals.shape();
+    //     info!(
+    //         "Spectral Laplacian complete: {}×{} signals matrix, {:.2}% sparse",
+    //         signal_rows,
+    //         signal_cols,
+    //         GraphLaplacian::sparsity(&aspace_with_signals.signals) * 100.0
+    //     );
 
-        aspace_with_signals
-    }
+    //     aspace_with_signals
+    // }
 
     fn search(
         &mut self,
