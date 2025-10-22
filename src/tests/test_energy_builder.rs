@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use crate::builder::ArrowSpaceBuilder;
-use crate::energymaps::{EnergyMaps, EnergyParams};
+use crate::energymaps::{EnergyParams, EnergyMapsBuilder};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
 use log::info;
@@ -20,7 +20,7 @@ fn test_energy_build_basic() {
     let rows = test_data::make_gaussian_hd(100, 0.2);
     let p = EnergyParams::default();
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
         .with_inline_sampling(None);
 
@@ -37,7 +37,7 @@ fn test_energy_build_basic() {
 
 #[test]
 fn test_energy_build_with_optical_compression() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy with optical compression");
 
     let rows = test_data::make_moons_hd(150, 0.2, 0.1, 100, 42);
@@ -45,7 +45,7 @@ fn test_energy_build_with_optical_compression() {
     p.optical_tokens = Some(30);
     p.trim_quantile = 0.15;
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
         .with_inline_sampling(None);
 
@@ -60,7 +60,7 @@ fn test_energy_build_with_optical_compression() {
 
 #[test]
 fn test_energy_build_diffusion_splits() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy diffusion and sub-centroid splitting");
 
     let rows = test_data::make_gaussian_hd(80, 0.3);
@@ -69,7 +69,7 @@ fn test_energy_build_diffusion_splits() {
     p.split_quantile = 0.85;
     p.split_tau = 0.2;
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(5555)
         .with_inline_sampling(None);
 
@@ -84,18 +84,13 @@ fn test_energy_build_diffusion_splits() {
 
 #[test]
 fn test_energy_laplacian_properties() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: energy Laplacian properties (connectivity, symmetry)");
 
     let rows = test_data::make_moons_hd(60, 0.2, 0.1, 99, 42);
-    let p = EnergyParams {
-        k: 5,
-        normalise: true,
-        sparsity_check: false,
-        ..EnergyParams::default()
-    };
+    let p = EnergyParams::default();
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
         .with_inline_sampling(None);
 
@@ -113,13 +108,13 @@ fn test_energy_laplacian_properties() {
 
 #[test]
 fn test_energy_build_with_projection() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy with JL projection");
 
     let rows = test_data::make_gaussian_hd(70, 0.4);
     let p = EnergyParams::default();
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(222)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
@@ -136,13 +131,13 @@ fn test_energy_build_with_projection() {
 
 #[test]
 fn test_energy_build_taumode_consistency() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy taumode consistency");
 
     let rows = test_data::make_moons_hd(50, 0.2, 0.08, 99, 42);
     let p = EnergyParams::default();
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_synthesis(TauMode::Mean)
         .with_seed(111)
         .with_inline_sampling(None);
@@ -159,7 +154,7 @@ fn test_energy_build_taumode_consistency() {
 
 #[test]
 fn test_energy_build_custom_params() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy with custom EnergyParams");
 
     let rows = test_data::make_gaussian_hd(40, 0.1);
@@ -175,18 +170,16 @@ fn test_energy_build_custom_params() {
         w_disp: 0.3,
         w_dirichlet: 0.15,
         candidate_m: 20,
-        k: 4,
-        normalise: false,
-        sparsity_check: true,
     };
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(333)
         .with_inline_sampling(None);
 
+    let lambda_k = builder.lambda_k.clone();
     let (aspace, gl_energy) = builder.build_energy(rows, p);
 
-    assert_eq!(gl_energy.graph_params.k, 4);
+    assert_eq!(gl_energy.graph_params.k, lambda_k);
     assert!(!gl_energy.graph_params.normalise);
     assert!(aspace.lambdas.iter().any(|&l| l > 0.0));
 
@@ -195,13 +188,13 @@ fn test_energy_build_custom_params() {
 
 #[test]
 fn test_energy_build_lambda_statistics() {
-    crate::tests::init();;
+    crate::tests::init();
     info!("Test: build_energy lambda statistics");
 
     let rows = test_data::make_moons_hd(100, 0.2, 0.1, 99, 42);
     let p = EnergyParams::default();
 
-    let builder = ArrowSpaceBuilder::new()
+    let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
         .with_inline_sampling(None);
 

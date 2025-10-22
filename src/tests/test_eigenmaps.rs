@@ -20,7 +20,7 @@
 //! processing in incremental clustering.
 
 use approx::relative_ne;
-use log::{info, debug};
+use log::info;
 
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
@@ -130,7 +130,7 @@ fn test_eigenmaps_vs_build_basic() {
         .with_inline_sampling(None) // Disable sampling for exact equivalence
         .with_dims_reduction(false, None);
 
-    let (mut aspace_control, gl_control) = builder_control.build(rows.clone());
+    let (aspace_control, gl_control) = builder_control.build(rows.clone());
 
     // Experimental: EigenMaps trait stages
     let mut builder_exp = ArrowSpaceBuilder::new()
@@ -200,7 +200,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
         .with_dims_reduction(false, None)
         .with_inline_sampling(None);
 
-    let (mut aspace_control, gl_control) = builder_control.build(rows.clone());
+    let (aspace_control, gl_control) = builder_control.build(rows.clone());
 
     // Experimental: EigenMaps with spectral stage
     let mut builder_exp = ArrowSpaceBuilder::new()
@@ -280,7 +280,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
         .with_seed(7777)
         .with_inline_sampling(None);
 
-    let (mut aspace_control, gl_control) = builder_control.build(rows.clone());
+    let (aspace_control, gl_control) = builder_control.build(rows.clone());
 
     // Experimental: EigenMaps with Mean taumode
     let mut builder_exp = ArrowSpaceBuilder::new()

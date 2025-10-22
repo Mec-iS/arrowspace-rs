@@ -11,11 +11,12 @@ use std::cmp::Ordering;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
-use crate::core::{ArrowItem, ArrowSpace};
+use crate::builder::ArrowSpaceBuilder;
+use crate::core::ArrowSpace;
+use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::reduction::ImplicitProjection;
-use crate::taumode::TauMode;
 
 #[derive(Clone, Debug)]
 pub struct EnergyParams {
@@ -30,9 +31,6 @@ pub struct EnergyParams {
     pub w_disp: f64,
     pub w_dirichlet: f64,
     pub candidate_m: usize,
-    pub k: usize,
-    pub normalise: bool,
-    pub sparsity_check: bool,
 }
 
 impl Default for EnergyParams {
@@ -50,9 +48,6 @@ impl Default for EnergyParams {
             w_disp: 0.5,
             w_dirichlet: 0.25,
             candidate_m: 32,
-            k: 6,
-            normalise: true,
-            sparsity_check: false,
         }
     }
 }
@@ -77,12 +72,7 @@ pub trait EnergyMaps {
         p: &EnergyParams,
     ) -> DenseMatrix<f64>;
 
-    fn build_energy_laplacian(
-        sub_centroids: &DenseMatrix<f64>,
-        p: &EnergyParams,
-    ) -> (GraphLaplacian, Vec<f64>, Vec<f64>);
-
-    fn search_energy_only(
+    fn search_energy(
         &self,
         query: &[f64],
         gl_energy: &GraphLaplacian,
@@ -299,123 +289,7 @@ impl EnergyMaps for ArrowSpace {
         DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
     }
 
-    fn build_energy_laplacian(
-        sub_centroids: &DenseMatrix<f64>,
-        p: &EnergyParams,
-    ) -> (GraphLaplacian, Vec<f64>, Vec<f64>) {
-        info!("EnergyMaps::build_energy_laplacian: k={}, w_λ={:.2}, w_G={:.2}, w_D={:.2}", 
-            p.k, p.w_lambda, p.w_disp, p.w_dirichlet);
-        let (x, f) = sub_centroids.shape();
-        debug!("Building energy Laplacian on {} sub-centroids × {} features", x, f);
-
-        trace!("Bootstrapping L' for energy feature computation");
-        let l_boot = Self::bootstrap_centroid_laplacian(
-            sub_centroids,
-            p.neighbor_k.max(p.k),
-            p.normalise,
-            p.sparsity_check,
-        );
-
-        trace!("Computing energy and dispersion features");
-        let (lambda, gini) = node_energy_and_dispersion(sub_centroids, &l_boot, p.neighbor_k);
-        let s_l = robust_scale(&lambda).max(1e-9);
-        let s_g = robust_scale(&gini).max(1e-9);
-        debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
-
-        debug!("Building energy-distance kNN with candidate pruning (M={})", p.candidate_m);
-        
-        // Build adjacency (W) as HashMap for easy symmetrization
-        let mut adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
-        
-        for i in 0..x {
-            let cand = topm_by_l2(sub_centroids, i, p.candidate_m.max(p.k));
-            trace!("Node {}: evaluating {} candidates", i, cand.len());
-
-            let mut scored: Vec<(usize, f64)> = cand
-                .into_iter()
-                .filter(|&j| j != i)
-                .map(|j| {
-                    let d_lambda = (lambda[i] - lambda[j]).abs() / s_l;
-                    let d_gini = (gini[i] - gini[j]).abs() / s_g;
-                    let diff = pair_diff(sub_centroids, i, j);
-                    let r_pair = rayleigh_dirichlet(&l_boot, &diff);
-                    let dist = p.w_lambda * d_lambda + p.w_disp * d_gini + p.w_dirichlet * r_pair;
-                    (j, dist)
-                })
-                .collect();
-            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-            scored.truncate(p.k);
-
-            for (j, d) in scored {
-                let w = (-d).exp();
-                // Store directed edge i→j
-                adjacency.insert((i, j), w);
-            }
-        }
-
-        debug!("Symmetrizing adjacency: {} directed edges before symmetrization", adjacency.len());
-        
-        // Symmetrize: for each edge (i,j), ensure (j,i) exists with max(w_ij, w_ji)
-        let mut sym_adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
-        let mut processed = std::collections::HashSet::new();
-        
-        for (&(i, j), &w_ij) in adjacency.iter() {
-            if processed.contains(&(i, j)) {
-                continue;
-            }
-            
-            let w_ji = adjacency.get(&(j, i)).copied().unwrap_or(0.0);
-            // Use max for symmetrization (alternative: average)
-            let w_sym = w_ij.max(w_ji);
-            
-            sym_adjacency.insert((i, j), w_sym);
-            sym_adjacency.insert((j, i), w_sym);
-            processed.insert((i, j));
-            processed.insert((j, i));
-        }
-        
-        debug!("Symmetrization complete: {} symmetric edges", sym_adjacency.len());
-        
-        // Build Laplacian from symmetrized adjacency
-        let mut tri = sprs::TriMat::<f64>::new((x, x));
-        let mut degrees = vec![0.0; x];
-        
-        for (&(i, j), &w) in sym_adjacency.iter() {
-            if i != j {
-                tri.add_triplet(i, j, -w);
-                degrees[i] += w;
-            }
-        }
-        
-        // Set diagonal to degree
-        for i in 0..x {
-            tri.add_triplet(i, i, degrees[i]);
-        }
-        
-        let csr = tri.to_csr();
-        let gl = GraphLaplacian {
-            init_data: sub_centroids.clone(),
-            matrix: csr,
-            nnodes: x,
-            graph_params: GraphParams {
-                eps: 0.0,
-                k: p.k,
-                topk: p.k.min(4),
-                p: 2.0,
-                sigma: None,
-                normalise: p.normalise,
-                sparsity_check: p.sparsity_check,
-            },
-        };
-
-        let sparsity = GraphLaplacian::sparsity(&gl.matrix);
-        info!("Energy Laplacian built: {}×{}, {} non-zeros, {:.2}% sparse", 
-            gl.shape().0, gl.shape().1, gl.nnz(), sparsity * 100.0);
-        (gl, lambda, gini)
-    }
-
-
-    fn search_energy_only(
+    fn search_energy(
         &self,
         query: &[f64],
         gl_energy: &GraphLaplacian,
@@ -423,7 +297,7 @@ impl EnergyMaps for ArrowSpace {
         w_lambda: f64,
         w_dirichlet: f64,
     ) -> Vec<(usize, f64)> {
-        info!("EnergyMaps::search_energy_only: k={}, w_λ={:.2}, w_D={:.2}", k, w_lambda, w_dirichlet);
+        info!("EnergyMaps::search_energy: k={}, w_λ={:.2}, w_D={:.2}", k, w_lambda, w_dirichlet);
         debug!("Query dimension: {}, index items: {}", query.len(), self.nitems);
 
         trace!("Preparing query λ with Laplacian and projection");
@@ -652,4 +526,156 @@ fn pair_diff(dm: &DenseMatrix<f64>, i: usize, j: usize) -> Vec<f64> {
         out.push(*dm.get((i, c)) - *dm.get((j, c)));
     }
     out
+}
+
+
+pub trait EnergyMapsBuilder {
+    fn build_energy(
+        &mut self,
+        rows: Vec<Vec<f64>>,
+        energy_params: EnergyParams
+    ) -> (ArrowSpace, GraphLaplacian);
+
+    fn build_energy_laplacian(
+        &self,
+        sub_centroids: &DenseMatrix<f64>,
+        p: &EnergyParams,
+    ) -> (GraphLaplacian, Vec<f64>, Vec<f64>);
+
+}
+
+impl EnergyMapsBuilder for ArrowSpaceBuilder {
+    fn build_energy(&mut self, rows: Vec<Vec<f64>>, energy_params: EnergyParams) -> (ArrowSpace, GraphLaplacian) {
+        let ClusteredOutput {
+            mut aspace,
+            mut centroids,
+            ..
+        } = ArrowSpace::start_clustering(self, rows);
+
+        if let Some(tokens) = energy_params.optical_tokens {
+            centroids = ArrowSpace::optical_compress_centroids(&centroids, tokens, energy_params.trim_quantile);
+        }
+
+        let l0 = ArrowSpace::bootstrap_centroid_laplacian(
+            &centroids, energy_params.neighbor_k.max(self.lambda_k), self.normalise, self.sparsity_check);
+        let sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
+
+        aspace.compute_taumode(&gl_energy);
+
+        (aspace, gl_energy)
+    }
+
+    fn build_energy_laplacian(
+        &self,
+        sub_centroids: &DenseMatrix<f64>,
+        energy_params: &EnergyParams,
+    ) -> (GraphLaplacian, Vec<f64>, Vec<f64>) {
+        info!("EnergyMaps::build_energy_laplacian: k={}, w_λ={:.2}, w_G={:.2}, w_D={:.2}", 
+            self.lambda_k, energy_params.w_lambda, energy_params.w_disp, energy_params.w_dirichlet);
+        let (x, f) = sub_centroids.shape();
+        debug!("Building energy Laplacian on {} sub-centroids × {} features", x, f);
+
+        trace!("Bootstrapping L' for energy feature computation");
+        let l_boot = ArrowSpace::bootstrap_centroid_laplacian(
+            sub_centroids, energy_params.neighbor_k.max(self.lambda_k), self.normalise, self.sparsity_check);
+
+        trace!("Computing energy and dispersion features");
+        let (lambda, gini) = node_energy_and_dispersion(
+            sub_centroids, &l_boot, energy_params.neighbor_k.max(self.lambda_k));
+        let s_l = robust_scale(&lambda).max(1e-9);
+        let s_g = robust_scale(&gini).max(1e-9);
+        debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
+
+        debug!("Building energy-distance kNN with candidate pruning (M={})", energy_params.candidate_m);
+        
+        // Build adjacency (W) as HashMap for easy symmetrization
+        let mut adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
+        
+        for i in 0..x {
+            let cand = topm_by_l2(sub_centroids, i, energy_params.candidate_m.max(self.lambda_k));
+            trace!("Node {}: evaluating {} candidates", i, cand.len());
+
+            let mut scored: Vec<(usize, f64)> = cand
+                .into_iter()
+                .filter(|&j| j != i)
+                .map(|j| {
+                    let d_lambda = (lambda[i] - lambda[j]).abs() / s_l;
+                    let d_gini = (gini[i] - gini[j]).abs() / s_g;
+                    let diff = pair_diff(sub_centroids, i, j);
+                    let r_pair = rayleigh_dirichlet(&l_boot, &diff);
+                    let dist = energy_params.w_lambda * d_lambda + energy_params.w_disp * d_gini + energy_params.w_dirichlet * r_pair;
+                    (j, dist)
+                })
+                .collect();
+            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            scored.truncate(self.lambda_k);
+
+            for (j, d) in scored {
+                let w = (-d).exp();
+                // Store directed edge i→j
+                adjacency.insert((i, j), w);
+            }
+        }
+
+        debug!("Symmetrizing adjacency: {} directed edges before symmetrization", adjacency.len());
+        
+        // Symmetrize: for each edge (i,j), ensure (j,i) exists with max(w_ij, w_ji)
+        let mut sym_adjacency: std::collections::HashMap<(usize, usize), f64> = std::collections::HashMap::new();
+        let mut processed = std::collections::HashSet::new();
+        
+        for (&(i, j), &w_ij) in adjacency.iter() {
+            if processed.contains(&(i, j)) {
+                continue;
+            }
+            
+            let w_ji = adjacency.get(&(j, i)).copied().unwrap_or(0.0);
+            // Use max for symmetrization (alternative: average)
+            let w_sym = w_ij.max(w_ji);
+            
+            sym_adjacency.insert((i, j), w_sym);
+            sym_adjacency.insert((j, i), w_sym);
+            processed.insert((i, j));
+            processed.insert((j, i));
+        }
+        
+        debug!("Symmetrization complete: {} symmetric edges", sym_adjacency.len());
+        
+        // Build Laplacian from symmetrized adjacency
+        let mut tri = sprs::TriMat::<f64>::new((x, x));
+        let mut degrees = vec![0.0; x];
+        
+        for (&(i, j), &w) in sym_adjacency.iter() {
+            if i != j {
+                tri.add_triplet(i, j, -w);
+                degrees[i] += w;
+            }
+        }
+        
+        // Set diagonal to degree
+        for i in 0..x {
+            tri.add_triplet(i, i, degrees[i]);
+        }
+        
+        let csr = tri.to_csr();
+        let gl = GraphLaplacian {
+            init_data: sub_centroids.clone(),
+            matrix: csr,
+            nnodes: x,
+            graph_params: GraphParams {
+                eps: self.lambda_eps,
+                k: self.lambda_k,
+                topk: self.lambda_topk,
+                p: 2.0,
+                sigma: None,
+                normalise: self.normalise,
+                sparsity_check: self.sparsity_check,
+            },
+        };
+
+        let sparsity = GraphLaplacian::sparsity(&gl.matrix);
+        info!("Energy Laplacian built: {}×{}, {} non-zeros, {:.2}% sparse", 
+            gl.shape().0, gl.shape().1, gl.nnz(), sparsity * 100.0);
+        (gl, lambda, gini)
+    }
 }
