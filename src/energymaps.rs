@@ -166,14 +166,16 @@ impl EnergyMaps for ArrowSpace {
         }
 
         trace!("Creating implicit projection F={} → 2D for spatial binning", f);
-        let proj = ImplicitProjection::new(f, 2);
-        let mut xy = Vec::with_capacity(x * 2);
-        for i in 0..x {
+        let proj = Arc::new(ImplicitProjection::new(f, 2)); // [PARALLEL] wrap for sharing
+        
+        // [PARALLEL] Project all centroids in parallel
+        let xy: Vec<f64> = (0..x).into_par_iter().flat_map(|i| {
             let row = (0..f).map(|c| *centroids.get((i, c))).collect::<Vec<_>>();
             let p2 = proj.project(&row);
-            xy.extend([p2[0], p2[1]]);
-        }
-        debug!("Projected {} centroids to 2D space", x);
+            vec![p2[0], p2[1]]
+        }).collect();
+        
+        debug!("Projected {} centroids to 2D space [parallel]", x);
 
         let g = (token_budget as f64).sqrt().ceil() as usize;
         let (minx, maxx, miny, maxy) = minmax2d(&xy);
@@ -214,13 +216,16 @@ impl EnergyMaps for ArrowSpace {
 
         if out.len() / f < token_budget {
             let deficit = token_budget - (out.len() / f);
-            debug!("Underfilled by {} tokens, topping up with low-norm centroids", deficit);
-            let mut norms: Vec<(usize, f64)> = (0..x)
+            debug!("Underfilled by {} tokens, topping up with low-norm centroids [parallel]", deficit);
+            
+            // [PARALLEL] Compute norms in parallel
+            let mut norms: Vec<(usize, f64)> = (0..x).into_par_iter()
                 .map(|i| {
                     let n = (0..f).map(|c| { let v = *centroids.get((i, c)); v * v }).sum::<f64>().sqrt();
                     (i, n)
                 })
                 .collect();
+            
             norms.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
             let mut added = 0;
             for (i, norm) in norms {
@@ -287,16 +292,19 @@ impl EnergyMaps for ArrowSpace {
         let mut work = centroids.clone();
 
         for step in 0..p.steps {
-            trace!("Diffusion step {}/{}", step + 1, p.steps);
-            for col in 0..f {
-                let mut col_vec = vec![0.0; x];
-                for i in 0..x {
-                    col_vec[i] = *work.get((i, col));
-                }
+            trace!("Diffusion step {}/{} [parallel]", step + 1, p.steps);
+            
+            // [PARALLEL] Process all columns in parallel
+            let updated_cols: Vec<Vec<f64>> = (0..f).into_par_iter().map(|col| {
+                let col_vec: Vec<f64> = (0..x).map(|i| *work.get((i, col))).collect();
                 let l_col = l0.multiply_vector(&col_vec);
-                for i in 0..x {
-                    let v = *work.get((i, col)) - p.eta * l_col[i];
-                    work.set((i, col), v);
+                (0..x).map(|i| *work.get((i, col)) - p.eta * l_col[i]).collect()
+            }).collect();
+            
+            // Write back (sequential due to DenseMatrix::set not being thread-safe)
+            for (col, values) in updated_cols.iter().enumerate() {
+                for (i, &val) in values.iter().enumerate() {
+                    work.set((i, col), val);
                 }
             }
         }
@@ -323,30 +331,33 @@ impl EnergyMaps for ArrowSpace {
         let thresh = g_sorted[q_idx];
         debug!("Split threshold (quantile {:.2}): G ≥ {:.6}", p.split_quantile, thresh);
 
-        let mut data: Vec<f64> = Vec::with_capacity(x * f * 2);
-        for i in 0..x {
-            for c in 0..f {
-                data.push(*work.get((i, c)));
-            }
-        }
+        let mut data: Vec<f64> = work.iterator(0).copied().collect();
 
-        let mut split_count = 0;
-        for i in 0..x {
-            if gini[i] >= thresh {
+        let split_data: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..x).into_par_iter()
+            .filter(|&i| gini[i] >= thresh)
+            .map(|i| {
                 let nbrs = topk_by_l2(&work, i, p.neighbor_k);
                 let mean = mean_rows(&work, &nbrs);
                 let dir = unit_diff(work.get_row(i).iterator(0).copied().collect(), &mean);
                 let std_loc = local_std(work.get_row(i).iterator(0).copied().collect(), &mean);
                 let tau = p.split_tau * std_loc.max(1e-6);
+                
+                let c = work.get_row(i).iterator(0).copied().collect::<Vec<_>>();
+                let c1 = add_scaled(&c, &dir, tau);
+                let c2 = add_scaled(&c, &dir, -tau);
+                
+                (i, c1, c2)
+            })
+            .collect();
 
-                let c = &work.get_row(i);
-                let c1 = add_scaled(&c.iterator(0).copied().collect(), &dir, tau);
-                let c2 = add_scaled(&c.iterator(0).copied().collect(), &dir, -tau);
-                data.extend(c1);
-                data.extend(c2);
-                split_count += 1;
-                trace!("Split centroid {}: G={:.6}, τ={:.6}", i, gini[i], tau);
-            }
+        let split_count = split_data.len();
+        debug!("Computed {} splits [parallel]", split_count);
+
+        // Extend data sequentially
+        for (i, c1, c2) in split_data {
+            data.extend(c1);
+            data.extend(c2);
+            trace!("Split centroid {}: G={:.6}", i, gini[i]);
         }
 
         let final_rows = data.len() / f;
@@ -371,12 +382,14 @@ impl EnergyMaps for ArrowSpace {
             eps_norm: 1e-9,
         };
 
-        trace!("Computing projection-aware energy scores for {} items", self.nitems);
+        trace!("Computing projection-aware energy scores for {} items [parallel]", self.nitems);
+        
+        // [PARALLEL] Score all items in parallel
         let mut scored: Vec<(usize, f64)> = (0..self.nitems)
+            .into_par_iter()
             .map(|i| {
-                // Use ProjectedEnergy trait for projection-consistent scoring
                 let energy_dist = self.score(gl_energy, query, i, params);
-                (i, -energy_dist)  // negate for descending sort
+                (i, -energy_dist)
             })
             .collect();
 
@@ -416,19 +429,21 @@ fn minmax2d(xy: &Vec<f64>) -> (f64, f64, f64, f64) {
 
 /// Remove high-norm items from a set using quantile-based trimming.
 fn trim_high_norm(dm: &DenseMatrix<f64>, idx: &Vec<usize>, q: f64) -> Vec<usize> {
-    trace!("Trimming high-norm items: {} candidates, quantile={:.2}", idx.len(), q);
+    trace!("Trimming high-norm items: {} candidates, quantile={:.2} [parallel]", idx.len(), q);
     let f = dm.shape().1;
-    let mut pairs: Vec<(usize, f64)> = idx
-        .iter()
+    
+    // [PARALLEL] Compute norms in parallel
+    let mut pairs: Vec<(usize, f64)> = idx.par_iter()
         .map(|&i| {
             let n = (0..f).map(|c| { let v = *dm.get((i, c)); v * v }).sum::<f64>().sqrt();
             (i, n)
         })
         .collect();
+    
     pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
     let cut = (pairs.len() as f64 * (1.0 - q)).round().clamp(1.0, pairs.len() as f64) as usize;
     let result = pairs.into_iter().take(cut).map(|(i, _)| i).collect::<Vec<_>>();
-    trace!("Trimmed to {} items", result.len());
+    trace!("Trimmed to {} items [parallel]", result.len());
     result
 }
 
@@ -538,26 +553,22 @@ fn node_energy_and_dispersion(
     k: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     let (n, f) = x.shape();
-    trace!("Computing node energy and dispersion: {} nodes, {} features, k={}", n, f, k);
+    trace!("Computing node energy and dispersion: {} nodes, {} features, k={} [parallel]", n, f, k);
 
-    let mut lx = vec![0.0; n * f];
-    for col in 0..f {
+    // Compute L·X column-wise in parallel
+    let lx: Vec<f64> = (0..f).into_par_iter().flat_map(|col| {
         let col_vec: Vec<f64> = (0..n).map(|i| *x.get((i, col))).collect();
-        let l_col = l.multiply_vector(&col_vec);
-        for i in 0..n {
-            lx[i * f + col] = l_col[i];
-        }
-    }
-    trace!("L·X precomputed");
+        l.multiply_vector(&col_vec)
+    }).collect();
+    
+    trace!("L·X precomputed [parallel]");
 
-    let mut lambda = vec![0.0; n];
-    let mut gini = vec![0.0; n];
-
-    for i in 0..n {
+    // Compute lambda and gini in parallel
+    let results: Vec<(f64, f64)> = (0..n).into_par_iter().map(|i| {
         let xi = x.get_row(i);
         let lxi = (0..f).map(|c| lx[i * f + c]).collect::<Vec<_>>();
         let denom = xi.iterator(0).map(|v| v * v).sum::<f64>().max(1e-9);
-        lambda[i] = xi.iterator(0).zip(lxi.iter()).map(|(a, b)| a * b).sum::<f64>() / denom;
+        let lambda_i = xi.iterator(0).zip(lxi.iter()).map(|(a, b)| a * b).sum::<f64>() / denom;
 
         let nbrs = topk_by_l2(x, i, k);
         let mut parts: Vec<f64> = Vec::with_capacity(nbrs.len());
@@ -570,14 +581,17 @@ fn node_energy_and_dispersion(
             parts.push((w * d).max(0.0));
         }
         let sum = parts.iter().sum::<f64>();
-        gini[i] = if sum > 0.0 {
+        let gini_i = if sum > 0.0 {
             parts.iter().map(|e| (e / sum).powi(2)).sum::<f64>()
         } else {
             0.0
         };
-    }
+        
+        (lambda_i, gini_i)
+    }).collect();
 
-    debug!("Energy and dispersion computed for {} nodes", n);
+    let (lambda, gini): (Vec<_>, Vec<_>) = results.into_iter().unzip();
+    debug!("Energy and dispersion computed for {} nodes [parallel]", n);
     (lambda, gini)
 }
 
