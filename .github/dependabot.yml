@@ -4,8 +4,4 @@ updates:
   directory: "/"
   schedule:
     interval: daily
-  open-pull-requests-limit: 10
-  ignore:
-  - dependency-name: rand_distr
-    versions:
-    - 0.4.0
+  open-pull-requests-limit: 3

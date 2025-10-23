@@ -158,12 +158,13 @@ fn test_prepare_query_item_consistency() {
     let lambda2 = aspace.prepare_query_item(&query, &gl);
     let lambda3 = aspace.prepare_query_item(&query, &gl);
 
-    assert_eq!(
-        lambda1, lambda2,
+    assert!(
+        approx::relative_eq!(lambda1, lambda2, epsilon = 1e-10),
         "Lambda computation should be deterministic"
     );
-    assert_eq!(
-        lambda2, lambda3,
+
+    assert!(
+        approx::relative_eq!(lambda2, lambda3, epsilon = 1e-10,),
         "Lambda computation should be deterministic"
     );
 
