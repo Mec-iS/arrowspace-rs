@@ -629,7 +629,39 @@ pub trait EnergyMapsBuilder {
 }
 
 impl EnergyMapsBuilder for ArrowSpaceBuilder {
+    /// Build an ArrowSpace index using the energy-only pipeline (no cosine similarity).
+    ///
+    /// This method constructs a graph-based index where edges are weighted purely by energy features:
+    /// node lambda (Rayleigh quotient), dispersion (edge concentration), and Dirichlet smoothness.
+    /// The pipeline completely removes cosine similarity dependence from both construction and search.
+    ///
+    /// # Pipeline Stages
+    ///
+    /// 1. **Clustering & Projection**: Runs incremental clustering with optional JL dimensionality
+    ///    reduction to produce a compact centroid representation.
+    ///
+    /// 2. **Optical Compression** (optional): If `energy_params.optical_tokens` is set, applies
+    ///    2D spatial binning with low-activation pooling inspired by DeepSeek-OCR to further
+    ///    compress centroids while preserving structural information.
+    ///
+    /// 3. **Bootstrap Laplacian L₀**: Builds an initial Euclidean kNN Laplacian over centroids
+    ///    in the (possibly projected) feature space using neutral distance metrics.
+    ///
+    /// 4. **Diffusion & Sub-Centroid Generation**: Applies heat-flow diffusion over L₀ to smooth
+    ///    the centroid manifold, then splits high-dispersion nodes along local gradients to
+    ///    generate sub-centroids that better capture local geometry.
+    ///
+    /// 5. **Energy Laplacian Construction**: Builds the final graph where edge weights are computed
+    ///    from energy distances: `d = w_λ·|Δλ| + w_G·|ΔG| + w_D·Dirichlet(Δfeatures)`, using
+    ///    parallel candidate pruning and symmetric kNN with DashMap for efficiency.
+    ///
+    /// 6. **Taumode Lambda Computation**: Computes per-item Rayleigh quotients (lambdas) over the
+    ///    energy graph using the selected synthesis mode (Mean/Median/Max), enabling energy-aware
+    ///    ranking during search.
+    ///
+    /// 2x/3x slower than `build(...)`
     fn build_energy(&mut self, rows: Vec<Vec<f64>>, energy_params: EnergyParams) -> (ArrowSpace, GraphLaplacian) {
+        assert!(self.use_dims_reduction == true, "When using build energy, dim reduction is needed");
         let ClusteredOutput {
             mut aspace,
             mut centroids,
@@ -681,7 +713,6 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         debug!("Building energy-distance kNN with candidate pruning (M={}) [parallel]", energy_params.candidate_m);
         
         let adjacency = Arc::new(DashMap::with_capacity(x * self.lambda_k));
-        let l_boot_arc = Arc::new(l_boot);
         
         (0..x).into_par_iter().for_each(|i| {
             let cand = topm_by_l2(sub_centroids, i, energy_params.candidate_m.max(self.lambda_k));

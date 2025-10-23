@@ -22,6 +22,7 @@ fn test_energy_build_basic() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows, p);
@@ -47,6 +48,7 @@ fn test_energy_build_with_optical_compression() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows, p);
@@ -71,6 +73,7 @@ fn test_energy_build_diffusion_splits() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(5555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows, p);
@@ -92,6 +95,7 @@ fn test_energy_laplacian_properties() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (_, gl_energy) = builder.build_energy(rows, p);
@@ -140,6 +144,7 @@ fn test_energy_build_taumode_consistency() {
     let mut builder = ArrowSpaceBuilder::new()
         .with_synthesis(TauMode::Mean)
         .with_seed(111)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, _) = builder.build_energy(rows, p);
@@ -174,6 +179,7 @@ fn test_energy_build_custom_params() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(333)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let lambda_k = builder.lambda_k.clone();
@@ -196,6 +202,7 @@ fn test_energy_build_lambda_statistics() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, _) = builder.build_energy(rows, p);

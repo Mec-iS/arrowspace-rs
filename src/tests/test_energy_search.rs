@@ -21,6 +21,7 @@ fn test_energy_search_basic() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -45,6 +46,7 @@ fn test_energy_search_self_retrieval() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -69,6 +71,7 @@ fn test_energy_search_weight_tuning() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(5555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -91,30 +94,6 @@ fn test_energy_search_weight_tuning() {
 }
 
 #[test]
-fn test_energy_search_with_projection() {
-    crate::init();
-    info!("Test: search_energy with JL projection");
-
-    let rows = test_data::make_moons_hd(70, 0.3, 0.05, 99, 42);
-    let p = EnergyParams::default();
-
-    let mut builder = ArrowSpaceBuilder::new()
-        .with_seed(222)
-        .with_dims_reduction(true, Some(0.3))
-        .with_inline_sampling(None);
-
-    let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
-
-    let query = rows[5].clone();
-    let results = aspace.search_energy(&query, &gl_energy, 3, 1.0, 0.5);
-
-    assert_eq!(results.len(), 3);
-    assert!(results[0].1.is_finite());
-
-    info!("✓ Projection search: {} results, top={:.6}", results.len(), results[0].1);
-}
-
-#[test]
 fn test_energy_search_k_scaling() {
     crate::init();
     info!("Test: search_energy k-scaling behavior");
@@ -124,6 +103,7 @@ fn test_energy_search_k_scaling() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -152,6 +132,7 @@ fn test_energy_search_optical_compression() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(111)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -175,6 +156,7 @@ fn test_energy_search_lambda_proximity() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(333)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -206,6 +188,7 @@ fn test_energy_search_score_monotonicity() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -234,6 +217,7 @@ fn test_energy_search_empty_k() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
@@ -284,6 +268,7 @@ fn test_energy_vs_standard_search_overlap() {
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(12345)
         .with_inline_sampling(None)
+        .with_dims_reduction(true, Some(0.3))
         .with_synthesis(TauMode::Median);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
 
@@ -297,6 +282,7 @@ fn test_energy_vs_standard_search_overlap() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(12345)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), p);
 
@@ -331,6 +317,7 @@ fn test_energy_vs_standard_lambda_distribution() {
     // Standard pipeline
     let builder_std = ArrowSpaceBuilder::new()
         .with_seed(9999)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_std, _) = builder_std.build(rows.clone());
 
@@ -338,6 +325,7 @@ fn test_energy_vs_standard_lambda_distribution() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(9999)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_energy, _) = builder_energy.build_energy(rows.clone(), p);
 
@@ -375,6 +363,7 @@ fn test_energy_vs_standard_graph_structure() {
     // Standard cosine-based graph
     let builder_std = ArrowSpaceBuilder::new()
         .with_seed(5555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (_, gl_std) = builder_std.build(rows.clone());
 
@@ -382,6 +371,7 @@ fn test_energy_vs_standard_graph_structure() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(5555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (_, gl_energy) = builder_energy.build_energy(rows.clone(), p);
 
@@ -426,6 +416,8 @@ fn test_energy_vs_standard_precision_at_k() {
     // Standard search
     let builder_std = ArrowSpaceBuilder::new()
         .with_seed(111)
+        .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -440,6 +432,7 @@ fn test_energy_vs_standard_precision_at_k() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(111)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), p);
     let results_energy = aspace_energy.search_energy(&query, &gl_energy, k, 1.0, 0.5);
@@ -466,6 +459,7 @@ fn test_energy_vs_standard_recall_at_k() {
     let builder_std = ArrowSpaceBuilder::default()
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(333)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -479,6 +473,7 @@ fn test_energy_vs_standard_recall_at_k() {
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(333)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), p);
 
@@ -516,6 +511,7 @@ fn test_energy_vs_standard_build_time() {
     let start_std = std::time::Instant::now();
     let builder_std = ArrowSpaceBuilder::new()
         .with_seed(444)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (_, _) = builder_std.build(rows.clone());
     let time_std = start_std.elapsed();
@@ -525,6 +521,7 @@ fn test_energy_vs_standard_build_time() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(444)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (_, _) = builder_energy.build_energy(rows.clone(), p);
     let time_energy = start_energy.elapsed();
@@ -548,6 +545,7 @@ fn test_energy_no_cosine_dependence() {
     let p = EnergyParams::default();
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(555)
+        .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
 
