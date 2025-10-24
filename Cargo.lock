@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "arrowspace"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "approx 0.5.1",
  "arrow",

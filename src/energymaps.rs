@@ -688,7 +688,14 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         let l0 = ArrowSpace::bootstrap_centroid_laplacian(
             &centroids, energy_params.neighbor_k.max(self.lambda_k), self.normalise, self.sparsity_check);
-        let sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+        
+        let mut sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+        
+        // Apply optical compression to sub_centroids if specified
+        if let Some(tokens) = energy_params.optical_tokens {
+            sub_centroids = ArrowSpace::optical_compress_centroids(&sub_centroids, tokens, energy_params.trim_quantile);
+        }
+        
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
         aspace.compute_taumode(&gl_energy);
