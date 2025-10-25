@@ -56,11 +56,12 @@ fn main() {
     print_section("METHOD 1: Cosine-Based ArrowSpace (Standard Build)");
     
     info!("Building cosine-based index (graph + λ computation)...");
+    let eps = 0.5;
     let start = Instant::now();
     let (aspace_cosine, gl_cosine) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.5, 20, k, 2.0, None)
+        .with_lambda_graph(eps, 20, k, 2.0, None)
         .with_normalisation(false)
-        .with_dims_reduction(true, None)
+        .with_dims_reduction(true, Some(eps))
         .with_seed(42)
         .build(db.clone());
     let build_time_cosine = start.elapsed();
@@ -114,6 +115,9 @@ fn main() {
     let start = Instant::now();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(42)
+        .with_lambda_graph(eps, 20, k, 2.0, None)
+        .with_normalisation(false)
+        .with_dims_reduction(true, Some(eps))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) = builder_energy.build_energy(db.clone(), p);
     let build_time_energy = start.elapsed();
@@ -123,7 +127,7 @@ fn main() {
     
     // Energy-only search (no cosine)
     let start = Instant::now();
-    let results_energy = aspace_energy.search_energy(&query, &gl_energy, k + 1, 1.0, 0.5);
+    let results_energy = aspace_energy.search_energy(&query, &gl_energy, k + 1);
     let search_time_energy = start.elapsed();
     
     print_results_table("Energy-Only Results (pure λ + Dirichlet)", &results_energy, &ids);

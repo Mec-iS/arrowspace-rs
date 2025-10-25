@@ -142,8 +142,6 @@ pub trait EnergyMaps {
         query: &[f64],
         gl_energy: &GraphLaplacian,
         k: usize,
-        w_lambda: f64,
-        w_dirichlet: f64,
     ) -> Vec<(usize, f64)>;
 }
 
@@ -372,13 +370,32 @@ impl EnergyMaps for ArrowSpace {
         query: &[f64],
         gl_energy: &GraphLaplacian,
         k: usize,
-        w_lambda: f64,
-        w_dirichlet: f64,
     ) -> Vec<(usize, f64)> {
-        info!("EnergyMaps::search_energy: k={}, w_λ={:.2}, w_D={:.2}", k, w_lambda, w_dirichlet);
-        
-        // Compute query lambda from energy graph
+        info!(
+            "EnergyMaps::search_energy: k={}, query_dim={}",
+            k, query.len()
+        );
+
+        // Ensure lambdas have been precomputed
+        debug_assert!(
+            self.lambdas[0..self.nitems.min(4)]
+                .iter()
+                .any(|&v| v != 0.0)
+                || self.nitems == 0,
+            "call build_energy before search_energy to populate lambdas"
+        );
+
+        trace!("Preparing query λ with projection and energy policy");
         let query_lambda = self.prepare_query_item(query, gl_energy);
+        let projected_query = self.project_query(query);
+
+        debug!(
+            "Query λ={:.6}, projected_dim={}",
+            query_lambda,
+            projected_query.len()
+        );
+
+        trace!("Scanning {} precomputed lambdas", self.nitems);
         
         // Scan precomputed lambdas and rank by proximity
         let mut scored: Vec<(usize, f64)> = (0..self.nitems)
@@ -389,12 +406,24 @@ impl EnergyMaps for ArrowSpace {
                 (i, score)
             })
             .collect();
-        
+
+        trace!("Sorting and truncating to top-{}", k);
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
         scored.truncate(k);
-        
+
+        if !scored.is_empty() {
+            info!(
+                "Search complete: {} results returned, top_score={:.6}",
+                scored.len(),
+                scored[0].1
+            );
+        } else {
+            warn!("Search returned no results for k={}", k);
+        }
+
         scored
     }
+
 }
 
 // ------- helpers with logging -------
@@ -486,6 +515,7 @@ fn add_scaled(a: &Vec<f64>, dir: &Vec<f64>, t: f64) -> Vec<f64> {
 }
 
 /// Compute element-wise difference between two vectors.
+#[allow(dead_code)]
 fn vec_diff(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     a.iter().zip(b.iter()).map(|(x, y)| x - y).collect()
 }
@@ -834,53 +864,4 @@ fn l2_norm(v: &[f64]) -> f64 {
 fn bounded_l2_energy(diff: &[f64]) -> f64 {
     let num = l2_norm(diff);
     (num / (1.0 + num)).min(1.0)
-}
-
-trait ProjectedEnergy {
-    fn project_vec(&self, v: &[f64]) -> Vec<f64>;
-    fn projected_dirichlet(&self, diff_proj: &[f64]) -> f64;
-    fn score(&self, gl: &GraphLaplacian, query: &[f64], item_index: usize, p: ProjectedEnergyParams) -> f64;
-}
-
-impl ProjectedEnergy for ArrowSpace {
-    #[inline]
-    fn project_vec(&self, v: &[f64]) -> Vec<f64> {
-        if let Some(proj) = &self.projection_matrix {
-            proj.project(v)
-        } else {
-            v.to_vec()
-        }
-    }
-
-    fn projected_dirichlet(&self, diff_proj: &[f64]) -> f64 {
-        // Use spectral signals (F×F) if available and dimension matches
-        if self.signals.rows() > 0 && self.signals.cols() == diff_proj.len() {
-            let mut y = vec![0.0; self.signals.rows()];
-            for (row_idx, row) in self.signals.outer_iterator().enumerate() {
-                let mut sum = 0.0f64;
-                for (col_idx, &val) in row.iter() {
-                    sum += val * diff_proj[col_idx];
-                }
-                y[row_idx] = sum;
-            }
-            let num = l2_norm(&y);
-            return (num / (1.0 + num)).min(1.0);
-        }
-        // Fallback: bounded L2
-        bounded_l2_energy(diff_proj)
-    }
-
-    fn score(&self, gl: &GraphLaplacian, query: &[f64], item_index: usize, p: ProjectedEnergyParams) -> f64 {
-        let lambda_q = self.prepare_query_item(query, gl);
-        let lambda_i = self.get_item(item_index).lambda;
-        let d_lambda = (lambda_q - lambda_i).abs();
-
-        let q_proj = self.project_vec(query);
-        let it = self.get_item(item_index);
-        let i_proj = self.project_vec(&it.item);
-        let diff = vec_diff(&q_proj, &i_proj);
-
-        let d_dir = self.projected_dirichlet(&diff);
-        p.w_lambda * d_lambda + p.w_dirichlet * d_dir
-    }
 }

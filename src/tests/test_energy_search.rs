@@ -46,19 +46,31 @@ fn test_energy_search_self_retrieval() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
+        .with_lambda_graph(0.25, 2, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (aspace, gl_energy) = builder.build_energy(rows.clone(), p);
 
+    // Pick a query from the indexed data
     let query_idx = 10;
-    let query = rows[query_idx].clone();
-    let results = aspace.search_energy(&query, &gl_energy, 1, 1.0, 0.5);
+    let query_item = aspace.get_item(query_idx);
+    let query = query_item.item.clone();
+    
+    let results = aspace.search_energy(&query, &gl_energy, 3, 1.0, 0.5);
 
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].0, query_idx, "Should retrieve self as top result");
+    assert!(!results.is_empty(), "Search should return results");
+    assert_eq!(results[0].0, query_idx, 
+        "Self-retrieval: indexed item should be top result (lambda distance = 0)");
+    
+    // Verify the lambda distance for self is minimal
+    let query_lambda = aspace.prepare_query_item(&query, &gl_energy);
+    let self_lambda = query_item.lambda;
+    let lambda_diff = (query_lambda - self_lambda).abs();
+    assert!(lambda_diff < 1e-6, "Self lambda distance should be ~0, got {}", lambda_diff);
 
-    info!("✓ Self-retrieval: query_idx={}, result_idx={}", query_idx, results[0].0);
+    info!("✓ Self-retrieval: query_idx={}, result_idx={}, λ_diff={:.9}", 
+          query_idx, results[0].0, lambda_diff);
 }
 
 #[test]
