@@ -365,6 +365,8 @@ impl EnergyMaps for ArrowSpace {
         DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
     }
 
+
+    /// Look-up query item against lambdas computed at build time
     fn search_energy(
         &self,
         query: &[f64],
@@ -374,35 +376,23 @@ impl EnergyMaps for ArrowSpace {
         w_dirichlet: f64,
     ) -> Vec<(usize, f64)> {
         info!("EnergyMaps::search_energy: k={}, w_λ={:.2}, w_D={:.2}", k, w_lambda, w_dirichlet);
-        debug!("Query dimension: {}, index items: {}", query.len(), self.nitems);
-
-        let params = ProjectedEnergyParams {
-            w_lambda,
-            w_dirichlet,
-            eps_norm: 1e-9,
-        };
-
-        trace!("Computing projection-aware energy scores for {} items [parallel]", self.nitems);
         
-        // [PARALLEL] Score all items in parallel
+        // Compute query lambda from energy graph
+        let query_lambda = self.prepare_query_item(query, gl_energy);
+        
+        // Scan precomputed lambdas and rank by proximity
         let mut scored: Vec<(usize, f64)> = (0..self.nitems)
-            .into_par_iter()
             .map(|i| {
-                let energy_dist = self.score(gl_energy, query, i, params);
-                (i, -energy_dist)
+                let item_lambda = self.lambdas[i];
+                let lambda_dist = (query_lambda - item_lambda).abs();
+                let score = -lambda_dist; // negative for descending sort
+                (i, score)
             })
             .collect();
-
-        trace!("Sorting and truncating to top-{}", k);
+        
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
         scored.truncate(k);
-
-        if !scored.is_empty() {
-            debug!("Search complete: {} results, top_score={:.6}, bottom_score={:.6}", 
-                   scored.len(), scored[0].1, scored[scored.len() - 1].1);
-        } else {
-            warn!("Search returned no results for k={}", k);
-        }
+        
         scored
     }
 }
