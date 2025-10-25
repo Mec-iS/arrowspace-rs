@@ -4,7 +4,7 @@
 //! - Uses ArrowSpace.projection_matrix for consistent feature-space operations
 //! - Falls back to spectral signals (F×F) when available, else bounded L2
 
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::reduction::ImplicitProjection;
+use crate::taumode::TauMode;
 
 /// Parameters for the energy-only pipeline.
 ///
@@ -55,17 +56,124 @@ impl Default for EnergyParams {
     fn default() -> Self {
         debug!("Creating default EnergyParams");
         Self {
-            optical_tokens: None,
+            optical_tokens: Some(50),
             trim_quantile: 0.1,
             eta: 0.1,
             steps: 4,
             split_quantile: 0.9,
-            neighbor_k: 8,
+            neighbor_k: 20,
             split_tau: 0.15,
             w_lambda: 1.0,
             w_disp: 0.5,
             w_dirichlet: 0.25,
             candidate_m: 32,
+        }
+    }
+}
+
+impl EnergyParams {
+    /// Creates EnergyParams optimized for the given ArrowSpaceBuilder configuration.
+    /// 
+    /// Adapts parameters based on:
+    /// - lambda_k: Graph connectivity parameter from builder
+    /// - Expected dataset size (inferred from clustering/reduction settings)
+    /// - Dimension reduction ratio (if enabled)
+    /// 
+    /// # Arguments
+    /// * `builder` - Reference to ArrowSpaceBuilder to extract configuration
+    /// 
+    /// # Returns
+    /// EnergyParams with adaptive settings for optimal sub_centroid resolution
+    pub fn new(builder: &ArrowSpaceBuilder) -> Self {
+        info!("Creating adaptive EnergyParams from ArrowSpaceBuilder");
+        
+        // Extract builder parameters
+        let base_k = builder.lambda_k;
+        let dim_reduction_ratio = builder.rp_eps;
+        
+        // Adaptive neighbor_k: scale with graph connectivity
+        // Rule: neighbor_k should be 2-3x lambda_k for dense energy graph
+        let neighbor_k = (base_k * 2).max(15).min(50);
+        
+        // Adaptive candidate_m: larger pool for better neighbor selection
+        // Rule: candidate_m ≈ 2-3x neighbor_k
+        let candidate_m = (neighbor_k * 3).max(30).min(128);
+        
+        // Adaptive optical compression
+        // Rule: If dim reduction is aggressive, use more tokens to preserve structure
+        let optical_tokens = if builder.use_dims_reduction {
+            // More tokens when dimensions are reduced to compensate for information loss
+            let tokens = (80.0 / dim_reduction_ratio).ceil() as usize;
+            Some(tokens.max(40).min(200))
+        } else {
+            // Moderate compression when no dim reduction
+            Some(60)
+        };
+        
+        debug!(
+            "Adaptive params: neighbor_k={}, candidate_m={}, optical_tokens={:?}",
+            neighbor_k, candidate_m, optical_tokens
+        );
+        
+        Self {
+            optical_tokens,
+            trim_quantile: 0.1,
+            eta: 0.1,
+            steps: 4,
+            split_quantile: 0.9,
+            neighbor_k,
+            split_tau: 0.15,
+            
+            // Balanced energy weights (default)
+            w_lambda: 1.0,
+            w_disp: 0.5,
+            w_dirichlet: 0.25,
+            
+            candidate_m,
+        }
+    }
+    
+    /// Creates EnergyParams with minimal compression for maximum resolution.
+    /// 
+    /// Use when:
+    /// - Self-retrieval accuracy is critical
+    /// - Dataset is small (<1000 items)
+    /// - Memory is not a constraint
+    pub fn high_resolution(builder: &ArrowSpaceBuilder) -> Self {
+        info!("Creating high-resolution EnergyParams");
+        
+        Self {
+            optical_tokens: None,  // No compression on sub_centroids
+            neighbor_k: (builder.lambda_k * 3).max(25),
+            candidate_m: (builder.lambda_k * 5).max(50),
+            
+            // Higher split threshold to create more sub_centroids
+            split_quantile: 0.85,
+            steps: 5,
+            
+            ..Self::new(builder)
+        }
+    }
+    
+    /// Creates EnergyParams optimized for large datasets (>10K items).
+    /// 
+    /// Use when:
+    /// - Dataset is large
+    /// - Memory efficiency is important
+    /// - Slight accuracy trade-off is acceptable
+    pub fn large_dataset(builder: &ArrowSpaceBuilder) -> Self {
+        info!("Creating large-dataset EnergyParams");
+        
+        Self {
+            optical_tokens: Some(100),  // Aggressive compression
+            neighbor_k: builder.lambda_k.max(15).min(30),
+            candidate_m: (builder.lambda_k * 2).max(30).min(80),
+            
+            // Fewer diffusion steps for speed
+            steps: 3,
+            split_quantile: 0.92,
+            
+            ..Self::new(builder)
         }
     }
 }
@@ -371,58 +479,30 @@ impl EnergyMaps for ArrowSpace {
         gl_energy: &GraphLaplacian,
         k: usize,
     ) -> Vec<(usize, f64)> {
-        info!(
-            "EnergyMaps::search_energy: k={}, query_dim={}",
-            k, query.len()
-        );
-
-        // Ensure lambdas have been precomputed
-        debug_assert!(
-            self.lambdas[0..self.nitems.min(4)]
-                .iter()
-                .any(|&v| v != 0.0)
-                || self.nitems == 0,
-            "call build_energy before search_energy to populate lambdas"
-        );
-
-        trace!("Preparing query λ with projection and energy policy");
-        let query_lambda = self.prepare_query_item(query, gl_energy);
-        let projected_query = self.project_query(query);
-
-        debug!(
-            "Query λ={:.6}, projected_dim={}",
-            query_lambda,
-            projected_query.len()
-        );
-
-        trace!("Scanning {} precomputed lambdas", self.nitems);
+        let query_lambda = self.prepare_query_item(&query, gl_energy);
         
-        // Scan precomputed lambdas and rank by proximity
-        let mut scored: Vec<(usize, f64)> = (0..self.nitems)
-            .map(|i| {
-                let item_lambda = self.lambdas[i];
-                let lambda_dist = (query_lambda - item_lambda).abs();
-                let score = -lambda_dist; // negative for descending sort
+        let mut scored: Vec<(usize, f64)> = self.lambdas.iter().enumerate()
+            .map(|(i, lmbd)| {
+                let lambda_dist = (query_lambda - lmbd).abs();
+                
+                // Tie-breaking: if lambda_dist ~0, use cosine distance
+                let score = if lambda_dist < 1e-12 {
+                    let item = self.get_item(i);
+                    let cos_sim = item.cosine_similarity(&query);
+                    1.0 - cos_sim  // Convert similarity to distance
+                } else {
+                    lambda_dist
+                };
+                
                 (i, score)
             })
             .collect();
 
-        trace!("Sorting and truncating to top-{}", k);
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         scored.truncate(k);
-
-        if !scored.is_empty() {
-            info!(
-                "Search complete: {} results returned, top_score={:.6}",
-                scored.len(),
-                scored[0].1
-            );
-        } else {
-            warn!("Search returned no results for k={}", k);
-        }
-
         scored
     }
+
 
 }
 
@@ -694,34 +774,128 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
     ///    ranking during search.
     ///
     /// 2x/3x slower than `build(...)`
-    fn build_energy(&mut self, rows: Vec<Vec<f64>>, energy_params: EnergyParams) -> (ArrowSpace, GraphLaplacian) {
-        assert!(self.use_dims_reduction == true, "When using build energy, dim reduction is needed");
+    fn build_energy(
+        &mut self, 
+        rows: Vec<Vec<f64>>, 
+        energy_params: EnergyParams
+    ) -> (ArrowSpace, GraphLaplacian) {
+        assert!(
+            self.use_dims_reduction == true, 
+            "When using build_energy, dim reduction is needed"
+        );
+        
+        // Step 1: Build base ArrowSpace with clustering
         let ClusteredOutput {
             mut aspace,
             mut centroids,
             ..
         } = ArrowSpace::start_clustering(self, rows);
 
+        // Step 2: Optional optical compression on centroids
         if let Some(tokens) = energy_params.optical_tokens {
-            centroids = ArrowSpace::optical_compress_centroids(&centroids, tokens, energy_params.trim_quantile);
+            centroids = ArrowSpace::optical_compress_centroids(
+                &centroids, 
+                tokens, 
+                energy_params.trim_quantile
+            );
         }
 
+        // Step 3: Bootstrap Laplacian on centroids
         let l0 = ArrowSpace::bootstrap_centroid_laplacian(
-            &centroids, energy_params.neighbor_k.max(self.lambda_k), self.normalise, self.sparsity_check);
+            &centroids, 
+            energy_params.neighbor_k.max(self.lambda_k), 
+            self.normalise, 
+            self.sparsity_check
+        );
         
-        let mut sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+        // Step 4: Diffuse and split to create sub_centroids
+        let mut sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(
+            &centroids, 
+            &l0, 
+            &energy_params
+        );
         
-        // Apply optical compression to sub_centroids if specified
+        // Step 5: Optional optical compression on sub_centroids
         if let Some(tokens) = energy_params.optical_tokens {
-            sub_centroids = ArrowSpace::optical_compress_centroids(&sub_centroids, tokens, energy_params.trim_quantile);
+            sub_centroids = ArrowSpace::optical_compress_centroids(
+                &sub_centroids, 
+                tokens, 
+                energy_params.trim_quantile
+            );
         }
         
+        info!(
+            "Energy graph: {:?} centroids → {:?} sub_centroids",
+            centroids.shape(),
+            sub_centroids.shape()
+        );
+        
+        // Step 6: Build energy Laplacian on sub_centroids
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
-        aspace.compute_taumode(&gl_energy);
+        // Step 7: Compute lambdas on sub_centroids ONLY
+        let mut subcentroid_space = ArrowSpace::from_dense_matrix(
+            sub_centroids.clone(),
+        );
+        subcentroid_space.taumode = self.synthesis;
+
+        info!("Computing lambdas on {} sub_centroids...", subcentroid_space.nitems);
+        TauMode::compute_taumode_lambdas_parallel(&mut subcentroid_space, &gl_energy, self.synthesis);
+
+        // Store sub_centroids for query mapping
+        aspace.sub_centroids = Some(sub_centroids.clone());
+        aspace.subcentroid_lambdas = Some(subcentroid_space.lambdas.clone());
+        info!(
+            "Sub_centroid λ: min={:.6}, max={:.6}, mean={:.6}",
+            subcentroid_space.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+            subcentroid_space.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b)),
+            subcentroid_space.lambdas.iter().sum::<f64>() / subcentroid_space.nitems as f64
+        );
+
+        // Step 8: Build centroid_map and assign lambdas to all items
+        info!("Mapping {} items to {:?} sub_centroids...", aspace.nitems, sub_centroids.shape());
+        
+        let (centroid_map, item_lambdas): (Vec<usize>, Vec<f64>) = (0..aspace.nitems)
+            .into_par_iter()
+            .map(|i| {
+                let item = aspace.get_item(i);
+                
+                // Find nearest sub_centroid using L2 distance
+                let mut best_idx = 0;
+                let mut best_dist = f64::INFINITY;
+                
+                for sc_idx in 0..sub_centroids.shape().0 {
+                    let dist: f64 = item.item.iter()
+                        .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                        .map(|(a, b)| (a - b).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_idx = sc_idx;
+                    }
+                }
+                
+                // Assign sub_centroid's lambda to this item
+                (best_idx, subcentroid_space.lambdas[best_idx])
+            })
+            .unzip();
+        
+        // Store centroid map and lambdas in aspace
+        aspace.centroid_map = Some(centroid_map);
+        aspace.lambdas = item_lambdas;
+        
+        info!(
+            "Item λ assigned: min={:.6}, max={:.6}, mean={:.6}",
+            aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+            aspace.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b)),
+            aspace.lambdas.iter().sum::<f64>() / aspace.nitems as f64
+        );
 
         (aspace, gl_energy)
     }
+
 
     fn build_energy_laplacian(
         &self,

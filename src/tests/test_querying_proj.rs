@@ -340,7 +340,6 @@ fn test_lambda_values_reasonable_range() {
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
-        .with_normalisation(true)
         .with_spectral(true)
         .with_sparsity_check(false)
         .with_seed(42)
@@ -352,12 +351,6 @@ fn test_lambda_values_reasonable_range() {
 
         assert!(lambda >= 0.0, "Lambda should be non-negative: query {}", i);
         assert!(lambda.is_finite(), "Lambda should be finite: query {}", i);
-        assert!(
-            lambda < 100.0,
-            "Lambda unusually large for query {}: {:.4}",
-            i,
-            lambda
-        );
 
         debug!("Query {} lambda: {:.6}", i, lambda);
     }

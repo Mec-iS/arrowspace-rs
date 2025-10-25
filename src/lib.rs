@@ -36,7 +36,7 @@ static INIT: Once = Once::new();
 pub fn init() {
     INIT.call_once(|| {
         // Read RUST_LOG env variable, default to "info" if not set
-        let env = env_logger::Env::default().default_filter_or("info");
+        let env = env_logger::Env::default().default_filter_or("debug");
 
         // don't panic if called multiple times across binaries
         let _ = env_logger::Builder::from_env(env)

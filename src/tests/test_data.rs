@@ -6413,3 +6413,49 @@ pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
     rows.shuffle(&mut rng);
     rows
 }
+
+/// Generates well-structured dataset for energy search testing
+/// 
+/// Creates 5 Gaussian clusters in 100D space with controlled separation
+pub fn make_energy_test_dataset(
+    n_items: usize,
+    n_features: usize,
+    seed: u64
+) -> Vec<Vec<f64>> {
+    use rand::{Rng, SeedableRng};
+    use rand_xoshiro::Xoshiro256PlusPlus;
+    
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let n_clusters = 5;
+    let items_per_cluster = n_items / n_clusters;
+    
+    let mut data = Vec::with_capacity(n_items);
+    
+    // Generate cluster centers with good separation
+    let cluster_spacing = 10.0;
+    for cluster_id in 0..n_clusters {
+        // Cluster center: offset in first few dimensions
+        let mut center = vec![0.0; n_features];
+        center[0] = cluster_id as f64 * cluster_spacing;
+        center[1] = (cluster_id % 2) as f64 * cluster_spacing;
+        
+        // Generate items around center
+        for _ in 0..items_per_cluster {
+            let mut item = vec![0.0; n_features];
+            for j in 0..n_features {
+                // Gaussian noise around center
+                let noise: f64 = rng.random::<f64>() * 2.0 - 1.0; // [-1, 1]
+                item[j] = center[j] + noise * 0.8;
+            }
+            data.push(item);
+        }
+    }
+    
+    // Add remaining items if n_items % n_clusters != 0
+    let remaining = n_items % n_clusters;
+    for _ in 0..remaining {
+        data.push((0..n_features).map(|_| rng.random::<f64>() * 2.0 - 1.0).collect());
+    }
+    
+    data
+}

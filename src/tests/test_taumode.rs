@@ -10,6 +10,8 @@ use ordered_float::Float;
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
+use log::info;
+
 #[test]
 fn test_select_tau_fixed() {
     // Valid fixed tau
@@ -494,6 +496,149 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
 
     println!("✓ Lambda computation IS non-deterministic with random projection enabled");
 }
+
+#[test]
+#[allow(unused_mut)]
+fn test_taumode_consistency_with_projection() {
+    crate::init();
+
+    // Generate larger test dataset (100 items × 50 features)
+    let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);
+    
+    // Build ArrowSpace with dimensional reduction
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(9999)
+        .with_lambda_graph(0.25, 5, 1, 2.0, None)
+        .with_dims_reduction(true, Some(0.3)) // reduce to 30% of features
+        .with_synthesis(TauMode::Median);
+
+    let (aspace, gl) = builder.build(rows.clone());
+
+    // Pick a test vector from the indexed data
+    let test_idx = 25;
+    let test_vector = rows[test_idx].clone();
+    
+    info!("Original dim: {}, Reduced dim: {}", 
+          test_vector.len(), 
+          aspace.reduced_dim.unwrap_or(test_vector.len()));
+
+    // Compute lambda multiple times for the same vector
+    let lambda1 = aspace.prepare_query_item(&test_vector, &gl);
+    let lambda2 = aspace.prepare_query_item(&test_vector, &gl);
+    let lambda3 = aspace.prepare_query_item(&test_vector, &gl);
+
+    // All computations should produce identical results
+    assert!(
+        relative_eq!(lambda1, lambda2, epsilon = 1e-12),
+        "TauMode should be deterministic: λ1={:.15} vs λ2={:.15}",
+        lambda1,
+        lambda2
+    );
+
+    assert!(
+        relative_eq!(lambda2, lambda3, epsilon = 1e-12),
+        "TauMode should be deterministic: λ2={:.15} vs λ3={:.15}",
+        lambda2,
+        lambda3
+    );
+
+    // Verify it matches the precomputed lambda for indexed item
+    let indexed_lambda = aspace.lambdas[test_idx];
+    assert!(
+        relative_eq!(lambda1, indexed_lambda, epsilon = 1e-9),
+        "Query lambda should match indexed lambda: query={:.12} vs indexed={:.12}",
+        lambda1,
+        indexed_lambda
+    );
+
+    info!(
+        "✓ TauMode consistency verified: λ={:.12} (consistent across {} recomputations)",
+        lambda1,
+        3
+    );
+    
+    info!(
+        "✓ Projection consistency: original_dim={}, reduced_dim={}, indexed_lambda={:.12}",
+        test_vector.len(),
+        aspace.reduced_dim.unwrap_or(test_vector.len()),
+        indexed_lambda
+    );
+
+    println!("✓ TauMode is deterministic with dimensional reduction");
+}
+
+#[test]
+fn test_taumode_energy_consistency_with_projection() {
+    crate::init();
+    use crate::energymaps::{EnergyParams, EnergyMapsBuilder};
+
+    // Generate larger test dataset (100 items × 50 features)
+    let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);
+    
+    // Build ArrowSpace with dimensional reduction
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(9999)
+        .with_lambda_graph(0.25, 5, 1, 2.0, None)
+        .with_dims_reduction(true, Some(0.3)) // reduce to 30% of features
+        .with_synthesis(TauMode::Median);
+
+    let p = EnergyParams::default();
+
+    let (aspace, gl) = builder.build_energy(rows.clone(), p);
+
+    // Pick a test vector from the indexed data
+    let test_idx = 25;
+    let test_vector = rows[test_idx].clone();
+    
+    info!("Original dim: {}, Reduced dim: {}", 
+          test_vector.len(), 
+          aspace.reduced_dim.unwrap_or(test_vector.len()));
+
+    // Compute lambda multiple times for the same vector
+    let lambda1 = aspace.prepare_query_item(&test_vector, &gl);
+    let lambda2 = aspace.prepare_query_item(&test_vector, &gl);
+    let lambda3 = aspace.prepare_query_item(&test_vector, &gl);
+
+    // All computations should produce identical results
+    assert!(
+        relative_eq!(lambda1, lambda2, epsilon = 1e-12),
+        "TauMode should be deterministic: λ1={:.15} vs λ2={:.15}",
+        lambda1,
+        lambda2
+    );
+
+    assert!(
+        relative_eq!(lambda2, lambda3, epsilon = 1e-12),
+        "TauMode should be deterministic: λ2={:.15} vs λ3={:.15}",
+        lambda2,
+        lambda3
+    );
+
+    // Verify it matches the precomputed lambda for indexed item
+    let indexed_lambda = aspace.lambdas[test_idx];
+    assert!(
+        relative_eq!(lambda1, indexed_lambda, epsilon = 1e-9),
+        "Query lambda should match indexed lambda: query={:.12} vs indexed={:.12}",
+        lambda1,
+        indexed_lambda
+    );
+
+    info!(
+        "✓ TauMode consistency verified: λ={:.12} (consistent across {} recomputations)",
+        lambda1,
+        3
+    );
+    
+    info!(
+        "✓ Projection consistency: original_dim={}, reduced_dim={}, indexed_lambda={:.12}",
+        test_vector.len(),
+        aspace.reduced_dim.unwrap_or(test_vector.len()),
+        indexed_lambda
+    );
+
+    println!("✓ TauMode is deterministic with dimensional reduction");
+}
+
 
 #[test]
 fn test_rayleigh_quotient_scale_invariance() {

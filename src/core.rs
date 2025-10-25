@@ -371,6 +371,11 @@ pub struct ArrowSpace {
     pub lambdas: Vec<f64>,      // N lambdas (every lambda is a lambda for an item-row)
     pub taumode: TauMode,       // tau_mode as in select_tau_mode
 
+    // lambdas normalisation
+    min_lambdas: f64,
+    max_lambdas: f64,
+    range_lambdas: f64,
+
     pub n_clusters: usize,
     /// Cluster assignment per original row (N entries, each in 0..X or None for outliers)
     pub cluster_assignments: Vec<Option<usize>>,
@@ -382,6 +387,11 @@ pub struct ArrowSpace {
     // Projection data: dims reduction data (needed to prepare the query vector)
     pub projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
     pub reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
+
+    // energymaps specific
+    pub centroid_map: Option<Vec<usize>>, // Maps item_idx -> centroid_idx
+    pub sub_centroids: Option<DenseMatrix<f64>>,
+    pub subcentroid_lambdas: Option<Vec<f64>>,
 }
 
 pub const TAUDEFAULT: TauMode = TauMode::Median;
@@ -395,6 +405,10 @@ impl Default for ArrowSpace {
             data: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: Vec::new(),
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
             // enable synthetic λ with Median τ by default
             taumode: TAUDEFAULT,
             // Clustering defaults
@@ -405,6 +419,10 @@ impl Default for ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
         }
     }
 }
@@ -426,6 +444,10 @@ impl ArrowSpace {
             data: DenseMatrix::from_2d_vec(&items).unwrap(),
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
             taumode,
             // Clustering defaults
             n_clusters: 0,
@@ -435,13 +457,18 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
         }
     }
     /// Builds from a vector of equally-sized rows and per-row lambdas.
     /// Only to be used in tests. Use `ArrowSpaceBuilder`
     #[inline]
     #[cfg(test)]
-    pub fn from_items(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn from_items(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         warn!(
             "This is just a test method. Use ArrowSpaceBuilder. Creating ArrowSpace from {} items with custom tau mode: {:?}",
             items.len(),
@@ -456,7 +483,8 @@ impl ArrowSpace {
     /// Only to be used in tests. `ArrowSpaceBuilder`
     #[inline]
     #[cfg(test)]
-    pub fn from_items_default(items: Vec<Vec<f64>>) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn from_items_default(items: Vec<Vec<f64>>) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(
             items.len() > 1,
@@ -486,6 +514,10 @@ impl ArrowSpace {
             data: data_matrix,
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
             taumode: TAUDEFAULT,
             // Clustering defaults
             n_clusters: 0,
@@ -495,6 +527,43 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
+        }
+    }
+
+        /// Create ArrowSpace from a DenseMatrix without building a graph
+    /// Used for temporary spaces where only data storage and lambda computation are needed
+    pub(crate) fn from_dense_matrix(
+        matrix: DenseMatrix<f64>,
+    ) -> Self {
+        let (nitems, nfeatures) = matrix.shape();
+        
+        Self {
+            data: matrix,
+            nitems,
+            nfeatures,
+            signals: sprs::CsMat::zero((0, 0)), // will be computed later
+            lambdas: vec![0.0; nitems],        // will be computed later
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
+            taumode: TAUDEFAULT,
+            // Clustering defaults
+            n_clusters: 0,
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
         }
     }
 
@@ -531,22 +600,48 @@ impl ArrowSpace {
     /// Before searching a lambda-tau value has to be computed for the query
     ///  vector. Pass the query item and the `GraphLaplacian` to this method.
     pub fn prepare_query_item(&self, item: &[f64], gl: &GraphLaplacian) -> f64 {
-        assert!(
-            item.iter().all(|&x| x.is_finite()),
-            "Query item contains invalid values (NaN or infinity). All values must be finite."
-        );
-
-        // if dim reduction is active and if the target dimensions are lower that the original ones
-        let item = if self.projection_matrix.as_ref().is_some() {
-            let projected_item = self.project_query(item);
-            projected_item
+        assert!(item.iter().all(|x| x.is_finite()), "all elements should be finite");
+        let item = if self.projection_matrix.is_some() {
+            self.project_query(item)
         } else {
             item.to_vec()
         };
-
-        let tau = TauMode::select_tau(item.as_slice(), self.taumode);
-        TauMode::compute_synthetic_lambda_csr(item.as_slice(), &gl.matrix, tau)
+        
+        // Energy mode: map to nearest sub_centroid
+        if let (Some(sub_centroids), Some(sc_lambdas)) = 
+            (&self.sub_centroids, &self.subcentroid_lambdas) 
+        {
+            let mut best_idx = 0;
+            let mut best_dist = f64::INFINITY;
+            
+            for sc_idx in 0..sub_centroids.shape().0 {
+                let dist: f64 = item.iter()
+                    .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_idx = sc_idx;
+                }
+            }
+            
+            return sc_lambdas[best_idx];
+        }
+        
+        // Standard mode
+        let tau = TauMode::select_tau(&item, self.taumode);
+        let raw_lambda = TauMode::compute_synthetic_lambda_csr(&item, &gl.matrix, tau);
+        
+        // Normalize if stats are available
+        if self.range_lambdas.is_finite() {
+            self.normalise_query_lambda(raw_lambda)
+        } else {
+            raw_lambda
+        }
     }
+
 
     /// Returns a shared reference to all lambdas.
     #[inline]
@@ -927,6 +1022,37 @@ impl ArrowSpace {
         final_results
     }
 
+    /// Normalise lambdas to [0, 1] range for consistent search behavior
+    /// This is called every time taumode is recomputed
+    /// Lambdas stats are used by `prepare_query` to normalise the query item
+    #[inline]
+    pub fn normalise_lambdas(&mut self) {
+        self.min_lambdas = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        self.max_lambdas = self.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b));
+        self.range_lambdas = (self.max_lambdas - self.min_lambdas).max(1e-9);
+        
+        for lambda in &mut self.lambdas {
+            *lambda = (*lambda - self.min_lambdas) / self.range_lambdas;
+        }
+        
+        info!("Normalized lambdas to [0, 1] range (original spread: {:.6})", self.range_lambdas);
+    }
+
+    /// Normalise a single query lambda to [0, 1] range using stored statistics
+    /// 
+    /// This method applies the same normalization transform used for indexed lambdas
+    /// to a raw query lambda value, ensuring consistent distance calculations.
+    #[inline]
+    pub fn normalise_query_lambda(&self, raw_lambda: f64) -> f64 {
+        debug_assert!(
+            self.range_lambdas > 0.0,
+            "Call normalise_lambdas() before normalising query lambdas"
+        );
+        
+        // Apply same transform as batch normalization
+        (raw_lambda - self.min_lambdas) / self.range_lambdas
+    }
+
     /// Range search by Euclidean distance within `radius`.
     ///
     /// Returns (row_index, distance) pairs for all rows whose distance is
@@ -991,6 +1117,7 @@ impl ArrowSpace {
         };
 
         self.lambdas = new_lambdas;
+        self.normalise_lambdas();
 
         let new_stats = {
             let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));

@@ -51,6 +51,7 @@ criterion = "0.7.0"
 smartcore = {version = "0.4.5", features = ["datasets"]}
 rand_pcg = "0.9.0"
 tempfile = "3.23.0"
+rand_xoshiro = "0.7.0"
 
 [features]
 default = []

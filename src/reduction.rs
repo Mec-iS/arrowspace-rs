@@ -109,7 +109,7 @@
 //! `build_laplacian_matrix`, which internally uses CosinePair for neighbor queries. Each distance computation
 //! drops from O(F) to O(r), multiplied across all n_centroids × k operations.
 
-use log::debug;
+use log::{debug, trace};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, StandardNormal};
@@ -183,7 +183,7 @@ impl ImplicitProjection {
 
     /// Project query without storing matrix
     pub fn project(&self, query: &[f64]) -> Vec<f64> {
-        debug!("Project query {:?}", query);
+        trace!("Project query {:?}", query);
 
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let scale = 1.0 / (self.reduced_dim as f64).sqrt();
@@ -197,7 +197,7 @@ impl ImplicitProjection {
                 *reduced += original * sample * scale;
             }
         }
-
+        debug!("Query projected");
         result // Probability of all-zeros ≈ 0
     }
 }

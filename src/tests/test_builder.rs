@@ -1,5 +1,6 @@
-use log::debug;
+use log::{info, debug};
 use smartcore::linalg::basic::arrays::Array;
+use approx::relative_eq;
 
 use crate::tests::init;
 use crate::{
@@ -153,7 +154,7 @@ fn test_simple_random_high_rate() {
         .with_seed(42)
         .build(rows.clone());
 
-    let total_kept = aspace.cluster_sizes.into_iter().sum::<usize>();
+    let total_kept = aspace.cluster_sizes.clone().into_iter().sum::<usize>();
     let sampling_ratio = total_kept as f64 / rows.len() as f64;
 
     // With 90% target, should keep around 85-95% of rows (allowing variance)
@@ -167,6 +168,11 @@ fn test_simple_random_high_rate() {
     assert_eq!(aspace.data.shape().1, 10, "Should have 10 features");
     assert_eq!(aspace.data.shape(), (297, 10), "Should preserve all items");
     assert_eq!(gl.nnodes, 297, "Should have 50 nodes");
+
+    for i in 0..aspace.nitems {
+        let recomputed = aspace.prepare_query_item(&aspace.get_item(i).item, &gl);
+        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon=1e-9));
+    }
 }
 
 #[test]
@@ -174,7 +180,7 @@ fn test_simple_random_aggressive_sampling() {
     // Test very aggressive sampling (20%)
     let rows = make_gaussian_blob(99, 0.5);
 
-    let (_, gl) = ArrowSpaceBuilder::new()
+    let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_inline_sampling(Some(SamplerType::Simple(0.2))) // 20% keep rate
         .with_lambda_graph(1.0, 5, 5, 2.0, None)
         .with_dims_reduction(false, None)
@@ -197,7 +203,12 @@ fn test_simple_random_aggressive_sampling() {
         sampled_count
     );
 
-    println!(
+    for i in 0..aspace.nitems {
+        let recomputed = aspace.prepare_query_item(&aspace.get_item(i).item, &gl);
+        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon=1e-9));
+    }
+
+    info!(
         "✓ Aggressive sampling kept {} / {} points ({:.1}%)",
         sampled_count,
         rows.len(),
@@ -218,7 +229,7 @@ fn test_simple_random_vs_density_adaptive() {
         .build(rows.clone());
 
     // Density adaptive with 50% base rate
-    let (aspace_adapt, _) = ArrowSpaceBuilder::new()
+    let (aspace_adapt, gl_adapt) = ArrowSpaceBuilder::new()
         .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
         .with_lambda_graph(1e-3, 3, 3, 2.0, None)
         .with_seed(42)
@@ -227,7 +238,7 @@ fn test_simple_random_vs_density_adaptive() {
     let simple_ratio =
         aspace_simple.cluster_sizes.into_iter().sum::<usize>() as f64 / rows.len() as f64;
     let density_ratio =
-        aspace_adapt.cluster_sizes.into_iter().sum::<usize>() as f64 / rows.len() as f64;
+        aspace_adapt.cluster_sizes.clone().into_iter().sum::<usize>() as f64 / rows.len() as f64;
 
     // Simple random should be close to 50%
     assert!(
@@ -242,6 +253,11 @@ fn test_simple_random_vs_density_adaptive() {
         "Density adaptive in valid range, got {:.1}%",
         density_ratio * 100.0
     );
+
+    for i in 0..aspace_adapt.nitems {
+        let recomputed = aspace_adapt.prepare_query_item(&aspace_adapt.get_item(i).item, &gl_adapt);
+        assert!(relative_eq!(recomputed, aspace_adapt.lambdas[i], epsilon=1e-9));
+    }
 
     println!("Simple random kept: {:.1}%", simple_ratio * 100.0);
     println!("Density adaptive kept: {:.1}%", density_ratio * 100.0);
