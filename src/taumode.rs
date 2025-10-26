@@ -191,8 +191,10 @@ impl TauMode {
         info!("║   Threads:         {:<40} ║", num_threads);
         info!("║   TauMode:         {:<40} ║", format!("{:?}", taumode));
 
-        // Determine graph source
-        let using_signals = aspace.signals.shape() != (0, 0);
+        // Determine graph source, cannot use signals in the subcentroid space or when signals are off
+        let using_signals = aspace.signals.shape() != (0, 0)
+            && aspace.signals.rows() == gl.matrix.shape().0
+            && aspace.centroid_map.is_none(); 
         let graph = if using_signals {
             &aspace.signals
         } else {

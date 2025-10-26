@@ -197,7 +197,7 @@ impl ImplicitProjection {
                 *reduced += original * sample * scale;
             }
         }
-        debug!("Query projected");
+        trace!("Query projected");
         result // Probability of all-zeros ≈ 0
     }
 }
