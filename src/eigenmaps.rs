@@ -104,10 +104,7 @@ pub trait EigenMaps {
     ///
     /// # Returns
     /// `ClusteredOutput` containing centroids (X × F'), enriched ArrowSpace, and dimensions.
-    fn start_clustering(
-        builder: &mut ArrowSpaceBuilder,
-        rows: Vec<Vec<f64>>,
-    ) -> ClusteredOutput;
+    fn start_clustering(builder: &mut ArrowSpaceBuilder, rows: Vec<Vec<f64>>) -> ClusteredOutput;
 
     /// Stage 2: Construct item-graph Laplacian from clustered centroids.
     ///
@@ -172,10 +169,7 @@ pub trait EigenMaps {
 }
 
 impl EigenMaps for ArrowSpace {
-    fn start_clustering(
-        builder: &mut ArrowSpaceBuilder,
-        rows: Vec<Vec<f64>>,
-    ) -> ClusteredOutput {
+    fn start_clustering(builder: &mut ArrowSpaceBuilder, rows: Vec<Vec<f64>>) -> ClusteredOutput {
         let n_items = rows.len();
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
 
@@ -223,12 +217,7 @@ impl EigenMaps for ArrowSpace {
         );
         let (clustered_dm, assignments, sizes) =
             clustering::run_incremental_clustering_with_sampling(
-                builder,
-                &rows,
-                n_features,
-                k_opt,
-                radius,
-                sampler,
+                builder, &rows, n_features, k_opt, radius, sampler,
             );
 
         let n_clusters = clustered_dm.shape().0;
@@ -371,7 +360,10 @@ impl EigenMaps for ArrowSpace {
 
         let lambda_stats = {
             let min = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-            let max = self.lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+            let max = self
+                .lambdas
+                .iter()
+                .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
             let mean = self.lambdas.iter().sum::<f64>() / self.lambdas.len() as f64;
             (min, max, mean)
         };
@@ -406,7 +398,7 @@ impl EigenMaps for ArrowSpace {
 
     //     aspace_with_signals
     // }
-    
+
     fn search(
         &mut self,
         item: &[f64],

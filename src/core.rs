@@ -534,19 +534,17 @@ impl ArrowSpace {
         }
     }
 
-        /// Create ArrowSpace from a DenseMatrix without building a graph
+    /// Create ArrowSpace from a DenseMatrix without building a graph
     /// Used for temporary spaces where only data storage and lambda computation are needed
-    pub(crate) fn from_dense_matrix(
-        matrix: DenseMatrix<f64>,
-    ) -> Self {
+    pub(crate) fn from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
         let (nitems, nfeatures) = matrix.shape();
-        
+
         Self {
             data: matrix,
             nitems,
             nfeatures,
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
-            lambdas: vec![0.0; nitems],        // will be computed later
+            lambdas: vec![0.0; nitems],         // will be computed later
             // lambdas normalisation
             min_lambdas: f64::NAN,
             max_lambdas: f64::NAN,
@@ -600,57 +598,60 @@ impl ArrowSpace {
     /// Before searching a lambda-tau value has to be computed for the query
     ///  vector. Pass the query item and the `GraphLaplacian` to this method.
     pub fn prepare_query_item(&self, item: &[f64], gl: &GraphLaplacian) -> f64 {
-        assert!(item.iter().all(|x| x.is_finite()), "all elements should be finite");
+        assert!(
+            item.iter().all(|x| x.is_finite()),
+            "all elements should be finite"
+        );
         let item = if self.projection_matrix.is_some() {
             self.project_query(item)
         } else {
             item.to_vec()
         };
-        
+
         // Energy mode: map to nearest sub_centroid
-        if let (Some(sub_centroids), Some(sc_lambdas)) = 
-            (&self.sub_centroids, &self.subcentroid_lambdas) 
+        if let (Some(sub_centroids), Some(sc_lambdas)) =
+            (&self.sub_centroids, &self.subcentroid_lambdas)
         {
             let mut best_idx = 0;
             let mut best_dist = f64::INFINITY;
-            
+
             for sc_idx in 0..sub_centroids.shape().0 {
-                let dist: f64 = item.iter()
+                let dist: f64 = item
+                    .iter()
                     .zip(sub_centroids.get_row(sc_idx).iterator(0))
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f64>()
                     .sqrt();
-                
+
                 if dist < best_dist {
                     best_dist = dist;
                     best_idx = sc_idx;
                 }
             }
-            
+
             return sc_lambdas[best_idx];
         }
-        
+
         // Standard mode
         let tau = TauMode::select_tau(&item, self.taumode);
         let raw_lambda = TauMode::compute_synthetic_lambda_csr(&item, &gl.matrix, tau);
-        
+
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
             Also, the query item may be out of context for the dataset (undecidable), \
             despite all safeguards its lambda is 0.0";
         if self.range_lambdas.is_finite() {
-            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12){
+            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
                 panic!("{}", msg)
             }
-            return self.normalise_query_lambda(raw_lambda)
+            return self.normalise_query_lambda(raw_lambda);
         } else {
-            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12){
+            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12) {
                 panic!("{}", msg)
             }
-            return raw_lambda
+            return raw_lambda;
         }
     }
-
 
     /// Returns a shared reference to all lambdas.
     #[inline]
@@ -1039,16 +1040,19 @@ impl ArrowSpace {
         self.min_lambdas = self.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         self.max_lambdas = self.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b));
         self.range_lambdas = (self.max_lambdas - self.min_lambdas).max(1e-9);
-        
+
         for lambda in &mut self.lambdas {
             *lambda = (*lambda - self.min_lambdas) / self.range_lambdas;
         }
-        
-        info!("Normalized lambdas to [0, 1] range (original spread: {:.6})", self.range_lambdas);
+
+        info!(
+            "Normalized lambdas to [0, 1] range (original spread: {:.6})",
+            self.range_lambdas
+        );
     }
 
     /// Normalise a single query lambda to [0, 1] range using stored statistics
-    /// 
+    ///
     /// This method applies the same normalization transform used for indexed lambdas
     /// to a raw query lambda value, ensuring consistent distance calculations.
     #[inline]
@@ -1057,10 +1061,10 @@ impl ArrowSpace {
             self.range_lambdas > 0.0,
             "Call normalise_lambdas() before normalising query lambdas"
         );
-        
+
         // Apply same transform as batch normalization
         let normalized = (raw_lambda - self.min_lambdas) / self.range_lambdas;
-        
+
         // Clamp to [0, 1] to handle edge cases where query lambda is outside
         // the training range (e.g., out-of-distribution queries)
         normalized.clamp(0.0, 1.0)

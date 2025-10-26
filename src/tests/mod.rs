@@ -4,6 +4,9 @@ mod test_data;
 mod test_helpers;
 // mod test_dimensional;
 mod test_clustering;
+mod test_eigenmaps;
+mod test_energy_builder;
+mod test_energy_search;
 mod test_graph_factory;
 mod test_laplacian;
 mod test_laplacian_unnormalised;
@@ -11,9 +14,6 @@ mod test_querying_proj;
 mod test_reduction;
 mod test_sparsification;
 mod test_taumode;
-mod test_eigenmaps;
-mod test_energy_builder;
-mod test_energy_search;
 
 use std::sync::Once;
 

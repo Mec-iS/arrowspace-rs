@@ -504,7 +504,7 @@ fn test_taumode_consistency_with_projection() {
 
     // Generate larger test dataset (100 items × 50 features)
     let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);
-    
+
     // Build ArrowSpace with dimensional reduction
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
@@ -517,10 +517,12 @@ fn test_taumode_consistency_with_projection() {
     // Pick a test vector from the indexed data
     let test_idx = 25;
     let test_vector = rows[test_idx].clone();
-    
-    info!("Original dim: {}, Reduced dim: {}", 
-          test_vector.len(), 
-          aspace.reduced_dim.unwrap_or(test_vector.len()));
+
+    info!(
+        "Original dim: {}, Reduced dim: {}",
+        test_vector.len(),
+        aspace.reduced_dim.unwrap_or(test_vector.len())
+    );
 
     // Compute lambda multiple times for the same vector
     let lambda1 = aspace.prepare_query_item(&test_vector, &gl);
@@ -553,10 +555,9 @@ fn test_taumode_consistency_with_projection() {
 
     info!(
         "✓ TauMode consistency verified: λ={:.12} (consistent across {} recomputations)",
-        lambda1,
-        3
+        lambda1, 3
     );
-    
+
     info!(
         "✓ Projection consistency: original_dim={}, reduced_dim={}, indexed_lambda={:.12}",
         test_vector.len(),
@@ -570,11 +571,11 @@ fn test_taumode_consistency_with_projection() {
 #[test]
 fn test_taumode_energy_consistency_with_projection() {
     crate::init();
-    use crate::energymaps::{EnergyParams, EnergyMapsBuilder};
+    use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 
     // Generate larger test dataset (100 items × 50 features)
     let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);
-    
+
     // Build ArrowSpace with dimensional reduction
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
@@ -589,10 +590,12 @@ fn test_taumode_energy_consistency_with_projection() {
     // Pick a test vector from the indexed data
     let test_idx = 25;
     let test_vector = rows[test_idx].clone();
-    
-    info!("Original dim: {}, Reduced dim: {}", 
-          test_vector.len(), 
-          aspace.reduced_dim.unwrap_or(test_vector.len()));
+
+    info!(
+        "Original dim: {}, Reduced dim: {}",
+        test_vector.len(),
+        aspace.reduced_dim.unwrap_or(test_vector.len())
+    );
 
     // Compute lambda multiple times for the same vector
     let lambda1 = aspace.prepare_query_item(&test_vector, &gl);
@@ -625,10 +628,9 @@ fn test_taumode_energy_consistency_with_projection() {
 
     info!(
         "✓ TauMode consistency verified: λ={:.12} (consistent across {} recomputations)",
-        lambda1,
-        3
+        lambda1, 3
     );
-    
+
     info!(
         "✓ Projection consistency: original_dim={}, reduced_dim={}, indexed_lambda={:.12}",
         test_vector.len(),
@@ -638,7 +640,6 @@ fn test_taumode_energy_consistency_with_projection() {
 
     println!("✓ TauMode is deterministic with dimensional reduction");
 }
-
 
 #[test]
 fn test_rayleigh_quotient_scale_invariance() {

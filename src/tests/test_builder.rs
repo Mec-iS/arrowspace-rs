@@ -1,6 +1,6 @@
-use log::{info, debug};
-use smartcore::linalg::basic::arrays::Array;
 use approx::relative_eq;
+use log::{debug, info};
+use smartcore::linalg::basic::arrays::Array;
 
 use crate::tests::init;
 use crate::{
@@ -171,7 +171,7 @@ fn test_simple_random_high_rate() {
 
     for i in 0..aspace.nitems {
         let recomputed = aspace.prepare_query_item(&aspace.get_item(i).item, &gl);
-        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon=1e-9));
+        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon = 1e-9));
     }
 }
 
@@ -205,7 +205,7 @@ fn test_simple_random_aggressive_sampling() {
 
     for i in 0..aspace.nitems {
         let recomputed = aspace.prepare_query_item(&aspace.get_item(i).item, &gl);
-        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon=1e-9));
+        assert!(relative_eq!(recomputed, aspace.lambdas[i], epsilon = 1e-9));
     }
 
     info!(
@@ -237,8 +237,12 @@ fn test_simple_random_vs_density_adaptive() {
 
     let simple_ratio =
         aspace_simple.cluster_sizes.into_iter().sum::<usize>() as f64 / rows.len() as f64;
-    let density_ratio =
-        aspace_adapt.cluster_sizes.clone().into_iter().sum::<usize>() as f64 / rows.len() as f64;
+    let density_ratio = aspace_adapt
+        .cluster_sizes
+        .clone()
+        .into_iter()
+        .sum::<usize>() as f64
+        / rows.len() as f64;
 
     // Simple random should be close to 50%
     assert!(
@@ -256,7 +260,11 @@ fn test_simple_random_vs_density_adaptive() {
 
     for i in 0..aspace_adapt.nitems {
         let recomputed = aspace_adapt.prepare_query_item(&aspace_adapt.get_item(i).item, &gl_adapt);
-        assert!(relative_eq!(recomputed, aspace_adapt.lambdas[i], epsilon=1e-9));
+        assert!(relative_eq!(
+            recomputed,
+            aspace_adapt.lambdas[i],
+            epsilon = 1e-9
+        ));
     }
 
     println!("Simple random kept: {:.1}%", simple_ratio * 100.0);

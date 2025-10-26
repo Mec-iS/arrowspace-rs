@@ -349,14 +349,15 @@ fn test_lambda_values_reasonable_range() {
 
         assert!(lambda >= 0.0, "Lambda negative: query {}", i);
         assert!(lambda.is_finite(), "Lambda not finite: query {}", i);
-        
+
         // CRITICAL: Add upper bound check
         assert!(
-            lambda <= 1.0, 
-            "Lambda out of bounds: query {}, λ={:.2e} (expected [0, 1])", 
-            i, lambda
+            lambda <= 1.0,
+            "Lambda out of bounds: query {}, λ={:.2e} (expected [0, 1])",
+            i,
+            lambda
         );
-        
+
         // Warn if lambda > 1 but < 10 (indicates normalization issue)
         if lambda > 1.0 {
             warn!("Query {} lambda={:.6} exceeds [0,1] range", i, lambda);

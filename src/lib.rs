@@ -13,14 +13,14 @@
 pub mod builder;
 pub mod clustering;
 pub mod core;
+pub mod eigenmaps;
+pub mod energymaps;
 pub mod graph;
 pub mod laplacian;
 pub mod reduction;
 pub mod sampling;
 pub mod sparsification;
 pub mod taumode;
-pub mod eigenmaps;
-pub mod energymaps;
 
 #[cfg(feature = "storage")]
 pub mod storage;

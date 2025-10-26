@@ -148,12 +148,12 @@ impl GraphFactory {
     ///  so to be ready to be used to analyse signal features
     pub fn build_laplacian_matrix_from_k_cluster(
         clustered: &DenseMatrix<f64>, // X×F: X centroids of clusters, each with F features
-        eps: f64,                    // maximum rectified cosine distance (see `docs/`)
-        k: usize,                    // max number of neighbours for node
-        topk: usize,                 // number of results to be considered for closest neighbors
-        p: f64,                      // kernel parameter
-        sigma_override: Option<f64>, // tolerance for eps
-        normalise: bool,             // pre-normalisation before laplacian computation
+        eps: f64,                     // maximum rectified cosine distance (see `docs/`)
+        k: usize,                     // max number of neighbours for node
+        topk: usize,                  // number of results to be considered for closest neighbors
+        p: f64,                       // kernel parameter
+        sigma_override: Option<f64>,  // tolerance for eps
+        normalise: bool,              // pre-normalisation before laplacian computation
         sparsity_check: bool, // flag to disable sparsity check (some datasets works well even if sparse)
         n_items: usize,       // items number of the origina raw data
     ) -> GraphLaplacian {
@@ -209,10 +209,7 @@ impl GraphFactory {
     ///
     /// * `aspace` - The data from the ArrowSpace data  
     /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
-    pub fn build_spectral_laplacian(
-        aspace: &mut ArrowSpace,
-        graph_laplacian: &GraphLaplacian,
-    ) {
+    pub fn build_spectral_laplacian(aspace: &mut ArrowSpace, graph_laplacian: &GraphLaplacian) {
         info!("Building F×F spectral feature matrix");
         debug!(
             "ArrowSpace dimensions: {} features, {} items",
@@ -480,7 +477,9 @@ impl GraphLaplacian {
 
         for i in 0..self.nnodes {
             for j in 0..self.nnodes {
-                let diff = (self.matrix.get(i, j).unwrap_or(&0.0) - self.matrix.get(j, i).unwrap_or(&0.0)).abs();
+                let diff = (self.matrix.get(i, j).unwrap_or(&0.0)
+                    - self.matrix.get(j, i).unwrap_or(&0.0))
+                .abs();
                 max_asymmetry = max_asymmetry.max(diff);
                 if diff > tolerance {
                     violations += 1;

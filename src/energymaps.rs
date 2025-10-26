@@ -8,10 +8,10 @@ use log::{debug, info, trace};
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use dashmap::DashMap;
+use rayon::prelude::*;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
-use rayon::prelude::*;
-use dashmap::DashMap;
 
 use crate::builder::ArrowSpaceBuilder;
 use crate::core::ArrowSpace;
@@ -73,32 +73,32 @@ impl Default for EnergyParams {
 
 impl EnergyParams {
     /// Creates EnergyParams optimized for the given ArrowSpaceBuilder configuration.
-    /// 
+    ///
     /// Adapts parameters based on:
     /// - lambda_k: Graph connectivity parameter from builder
     /// - Expected dataset size (inferred from clustering/reduction settings)
     /// - Dimension reduction ratio (if enabled)
-    /// 
+    ///
     /// # Arguments
     /// * `builder` - Reference to ArrowSpaceBuilder to extract configuration
-    /// 
+    ///
     /// # Returns
     /// EnergyParams with adaptive settings for optimal sub_centroid resolution
     pub fn new(builder: &ArrowSpaceBuilder) -> Self {
         info!("Creating adaptive EnergyParams from ArrowSpaceBuilder");
-        
+
         // Extract builder parameters
         let base_k = builder.lambda_k;
         let dim_reduction_ratio = builder.rp_eps;
-        
+
         // Adaptive neighbor_k: scale with graph connectivity
         // Rule: neighbor_k should be 2-3x lambda_k for dense energy graph
         let neighbor_k = (base_k * 2).max(15).min(50);
-        
+
         // Adaptive candidate_m: larger pool for better neighbor selection
         // Rule: candidate_m ≈ 2-3x neighbor_k
         let candidate_m = (neighbor_k * 3).max(30).min(128);
-        
+
         // Adaptive optical compression
         // Rule: If dim reduction is aggressive, use more tokens to preserve structure
         let optical_tokens = if builder.use_dims_reduction {
@@ -109,12 +109,12 @@ impl EnergyParams {
             // Moderate compression when no dim reduction
             Some(60)
         };
-        
+
         debug!(
             "Adaptive params: neighbor_k={}, candidate_m={}, optical_tokens={:?}",
             neighbor_k, candidate_m, optical_tokens
         );
-        
+
         Self {
             optical_tokens,
             trim_quantile: 0.1,
@@ -123,56 +123,56 @@ impl EnergyParams {
             split_quantile: 0.9,
             neighbor_k,
             split_tau: 0.15,
-            
+
             // Balanced energy weights (default)
             w_lambda: 1.0,
             w_disp: 0.5,
             w_dirichlet: 0.25,
-            
+
             candidate_m,
         }
     }
-    
+
     /// Creates EnergyParams with minimal compression for maximum resolution.
-    /// 
+    ///
     /// Use when:
     /// - Self-retrieval accuracy is critical
     /// - Dataset is small (<1000 items)
     /// - Memory is not a constraint
     pub fn high_resolution(builder: &ArrowSpaceBuilder) -> Self {
         info!("Creating high-resolution EnergyParams");
-        
+
         Self {
-            optical_tokens: None,  // No compression on sub_centroids
+            optical_tokens: None, // No compression on sub_centroids
             neighbor_k: (builder.lambda_k * 3).max(25),
             candidate_m: (builder.lambda_k * 5).max(50),
-            
+
             // Higher split threshold to create more sub_centroids
             split_quantile: 0.85,
             steps: 5,
-            
+
             ..Self::new(builder)
         }
     }
-    
+
     /// Creates EnergyParams optimized for large datasets (>10K items).
-    /// 
+    ///
     /// Use when:
     /// - Dataset is large
     /// - Memory efficiency is important
     /// - Slight accuracy trade-off is acceptable
     pub fn large_dataset(builder: &ArrowSpaceBuilder) -> Self {
         info!("Creating large-dataset EnergyParams");
-        
+
         Self {
-            optical_tokens: Some(100),  // Aggressive compression
+            optical_tokens: Some(100), // Aggressive compression
             neighbor_k: builder.lambda_k.max(15).min(30),
             candidate_m: (builder.lambda_k * 2).max(30).min(80),
-            
+
             // Fewer diffusion steps for speed
             steps: 3,
             split_quantile: 0.92,
-            
+
             ..Self::new(builder)
         }
     }
@@ -267,25 +267,37 @@ impl EnergyMaps for ArrowSpace {
         debug!("Input centroids: {} × {} (X centroids, F features)", x, f);
 
         if token_budget == 0 || token_budget >= x {
-            info!("Optical compression skipped: budget {} >= centroids {}", token_budget, x);
+            info!(
+                "Optical compression skipped: budget {} >= centroids {}",
+                token_budget, x
+            );
             return centroids.clone();
         }
 
-        trace!("Creating implicit projection F={} → 2D for spatial binning", f);
+        trace!(
+            "Creating implicit projection F={} → 2D for spatial binning",
+            f
+        );
         let proj = Arc::new(ImplicitProjection::new(f, 2)); // [PARALLEL] wrap for sharing
-        
+
         // [PARALLEL] Project all centroids in parallel
-        let xy: Vec<f64> = (0..x).into_par_iter().flat_map(|i| {
-            let row = (0..f).map(|c| *centroids.get((i, c))).collect::<Vec<_>>();
-            let p2 = proj.project(&row);
-            vec![p2[0], p2[1]]
-        }).collect();
-        
+        let xy: Vec<f64> = (0..x)
+            .into_par_iter()
+            .flat_map(|i| {
+                let row = (0..f).map(|c| *centroids.get((i, c))).collect::<Vec<_>>();
+                let p2 = proj.project(&row);
+                vec![p2[0], p2[1]]
+            })
+            .collect();
+
         debug!("Projected {} centroids to 2D space [parallel]", x);
 
         let g = (token_budget as f64).sqrt().ceil() as usize;
         let (minx, maxx, miny, maxy) = minmax2d(&xy);
-        debug!("Grid size: {}×{}, bounds: x=[{:.3}, {:.3}], y=[{:.3}, {:.3}]", g, g, minx, maxx, miny, maxy);
+        debug!(
+            "Grid size: {}×{}, bounds: x=[{:.3}, {:.3}], y=[{:.3}, {:.3}]",
+            g, g, minx, maxx, miny, maxy
+        );
 
         let mut bins: Vec<Vec<usize>> = vec![Vec::new(); g * g];
         for i in 0..x {
@@ -297,7 +309,11 @@ impl EnergyMaps for ArrowSpace {
         }
 
         let non_empty = bins.iter().filter(|b| !b.is_empty()).count();
-        debug!("Binned centroids: {} non-empty bins out of {}", non_empty, g * g);
+        debug!(
+            "Binned centroids: {} non-empty bins out of {}",
+            non_empty,
+            g * g
+        );
 
         let mut out: Vec<f64> = Vec::new();
         let mut pooled_count = 0;
@@ -309,29 +325,47 @@ impl EnergyMaps for ArrowSpace {
             let orig_size = members.len();
             if members.len() > 4 {
                 members = trim_high_norm(centroids, &members, trim_quantile);
-                trace!("Bin {}: trimmed {} → {} members", bin_idx, orig_size, members.len());
+                trace!(
+                    "Bin {}: trimmed {} → {} members",
+                    bin_idx,
+                    orig_size,
+                    members.len()
+                );
             }
             let pooled = mean_rows(centroids, &members);
             out.extend(pooled);
             pooled_count += 1;
             if out.len() / f >= token_budget {
-                debug!("Reached token budget after {} pooled centroids", pooled_count);
+                debug!(
+                    "Reached token budget after {} pooled centroids",
+                    pooled_count
+                );
                 break;
             }
         }
 
         if out.len() / f < token_budget {
             let deficit = token_budget - (out.len() / f);
-            debug!("Underfilled by {} tokens, topping up with low-norm centroids [parallel]", deficit);
-            
+            debug!(
+                "Underfilled by {} tokens, topping up with low-norm centroids [parallel]",
+                deficit
+            );
+
             // [PARALLEL] Compute norms in parallel
-            let mut norms: Vec<(usize, f64)> = (0..x).into_par_iter()
+            let mut norms: Vec<(usize, f64)> = (0..x)
+                .into_par_iter()
                 .map(|i| {
-                    let n = (0..f).map(|c| { let v = *centroids.get((i, c)); v * v }).sum::<f64>().sqrt();
+                    let n = (0..f)
+                        .map(|c| {
+                            let v = *centroids.get((i, c));
+                            v * v
+                        })
+                        .sum::<f64>()
+                        .sqrt();
                     (i, n)
                 })
                 .collect();
-            
+
             norms.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
             let mut added = 0;
             for (i, norm) in norms {
@@ -346,8 +380,13 @@ impl EnergyMaps for ArrowSpace {
         }
 
         let rows = out.len() / f;
-        info!("Optical compression complete: {} → {} centroids ({:.1}% compression)", x, rows, 100.0 * (1.0 - rows as f64 / x as f64));
-        DenseMatrix::<f64>::from_iterator(out.iter().copied(),rows, f, 1)
+        info!(
+            "Optical compression complete: {} → {} centroids ({:.1}% compression)",
+            x,
+            rows,
+            100.0 * (1.0 - rows as f64 / x as f64)
+        );
+        DenseMatrix::<f64>::from_iterator(out.iter().copied(), rows, f, 1)
     }
 
     fn bootstrap_centroid_laplacian(
@@ -356,57 +395,80 @@ impl EnergyMaps for ArrowSpace {
         normalise: bool,
         sparsity_check: bool,
     ) -> GraphLaplacian {
-        info!("EnergyMaps::bootstrap_centroid_laplacian: k={}, normalise={}", k, normalise);
+        info!(
+            "EnergyMaps::bootstrap_centroid_laplacian: k={}, normalise={}",
+            k, normalise
+        );
         let (x, f) = centroids.shape();
-        debug!("Building bootstrap L₀ on {} centroids (nodes) × {} features", x, f);
+        debug!(
+            "Building bootstrap L₀ on {} centroids (nodes) × {} features",
+            x, f
+        );
 
         let params = GraphParams {
             eps: 1e-3,
-            k: k.min(x - 1),  // cap k at x-1 to avoid issues with small centroid counts
+            k: k.min(x - 1), // cap k at x-1 to avoid issues with small centroid counts
             topk: k.min(4).min(x - 1),
             p: 2.0,
             sigma: None,
             normalise,
-            sparsity_check: false,  // disable for small matrices
+            sparsity_check: false, // disable for small matrices
         };
-        trace!("GraphParams: eps={}, k={}, topk={}, p={}", params.eps, params.k, params.topk, params.p);
+        trace!(
+            "GraphParams: eps={}, k={}, topk={}, p={}",
+            params.eps,
+            params.k,
+            params.topk,
+            params.p
+        );
 
         // Build Laplacian where nodes = centroids (rows), edges based on centroid similarity
         // This produces an x×x Laplacian operating in centroid space
         let gl = build_laplacian_matrix(centroids.clone(), &params, Some(x));
-        
+
         if sparsity_check == true {
             let sparsity = GraphLaplacian::sparsity(&gl.matrix);
-            info!("Bootstrap L₀ complete: {}×{} (centroid space), {} non-zeros, {:.2}% sparse", 
-                gl.shape().0, gl.shape().1, gl.nnz(), sparsity * 100.0);
+            info!(
+                "Bootstrap L₀ complete: {}×{} (centroid space), {} non-zeros, {:.2}% sparse",
+                gl.shape().0,
+                gl.shape().1,
+                gl.nnz(),
+                sparsity * 100.0
+            );
         }
-        
+
         assert_eq!(gl.nnodes, x, "L₀ must be in centroid space ({}×{})", x, x);
         gl
     }
-
 
     fn diffuse_and_split_subcentroids(
         centroids: &DenseMatrix<f64>,
         l0: &GraphLaplacian,
         p: &EnergyParams,
     ) -> DenseMatrix<f64> {
-        info!("EnergyMaps::diffuse_and_split_subcentroids: eta={:.3}, steps={}, split_q={:.2}", 
-              p.eta, p.steps, p.split_quantile);
+        info!(
+            "EnergyMaps::diffuse_and_split_subcentroids: eta={:.3}, steps={}, split_q={:.2}",
+            p.eta, p.steps, p.split_quantile
+        );
         let (x, f) = centroids.shape();
         debug!("Diffusing {} centroids over {} steps", x, p.steps);
         let mut work = centroids.clone();
 
         for step in 0..p.steps {
             trace!("Diffusion step {}/{} [parallel]", step + 1, p.steps);
-            
+
             // [PARALLEL] Process all columns in parallel
-            let updated_cols: Vec<Vec<f64>> = (0..f).into_par_iter().map(|col| {
-                let col_vec: Vec<f64> = (0..x).map(|i| *work.get((i, col))).collect();
-                let l_col = l0.multiply_vector(&col_vec);
-                (0..x).map(|i| *work.get((i, col)) - p.eta * l_col[i]).collect()
-            }).collect();
-            
+            let updated_cols: Vec<Vec<f64>> = (0..f)
+                .into_par_iter()
+                .map(|col| {
+                    let col_vec: Vec<f64> = (0..x).map(|i| *work.get((i, col))).collect();
+                    let l_col = l0.multiply_vector(&col_vec);
+                    (0..x)
+                        .map(|i| *work.get((i, col)) - p.eta * l_col[i])
+                        .collect()
+                })
+                .collect();
+
             // Write back (sequential due to DenseMatrix::set not being thread-safe)
             for (col, values) in updated_cols.iter().enumerate() {
                 for (i, &val) in values.iter().enumerate() {
@@ -416,30 +478,43 @@ impl EnergyMaps for ArrowSpace {
         }
         debug!("Diffusion complete after {} steps", p.steps);
 
-        trace!("Computing node energy and dispersion with neighbor_k={}", p.neighbor_k);
+        trace!(
+            "Computing node energy and dispersion with neighbor_k={}",
+            p.neighbor_k
+        );
         let (lambda, gini) = node_energy_and_dispersion(&work, l0, p.neighbor_k);
         let lambda_stats = (
             lambda.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
             lambda.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
-            lambda.iter().sum::<f64>() / lambda.len() as f64
+            lambda.iter().sum::<f64>() / lambda.len() as f64,
         );
         let gini_stats = (
             gini.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
             gini.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
-            gini.iter().sum::<f64>() / gini.len() as f64
+            gini.iter().sum::<f64>() / gini.len() as f64,
         );
-        debug!("Energy: λ ∈ [{:.6}, {:.6}], mean={:.6}", lambda_stats.0, lambda_stats.1, lambda_stats.2);
-        debug!("Dispersion: G ∈ [{:.6}, {:.6}], mean={:.6}", gini_stats.0, gini_stats.1, gini_stats.2);
+        debug!(
+            "Energy: λ ∈ [{:.6}, {:.6}], mean={:.6}",
+            lambda_stats.0, lambda_stats.1, lambda_stats.2
+        );
+        debug!(
+            "Dispersion: G ∈ [{:.6}, {:.6}], mean={:.6}",
+            gini_stats.0, gini_stats.1, gini_stats.2
+        );
 
         let mut g_sorted = gini.clone();
         g_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let q_idx = ((g_sorted.len() as f64 - 1.0) * p.split_quantile).round() as usize;
         let thresh = g_sorted[q_idx];
-        debug!("Split threshold (quantile {:.2}): G ≥ {:.6}", p.split_quantile, thresh);
+        debug!(
+            "Split threshold (quantile {:.2}): G ≥ {:.6}",
+            p.split_quantile, thresh
+        );
 
         let mut data: Vec<f64> = work.iterator(0).copied().collect();
 
-        let split_data: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..x).into_par_iter()
+        let split_data: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..x)
+            .into_par_iter()
             .filter(|&i| gini[i] >= thresh)
             .map(|i| {
                 let nbrs = topk_by_l2(&work, i, p.neighbor_k);
@@ -447,11 +522,11 @@ impl EnergyMaps for ArrowSpace {
                 let dir = unit_diff(work.get_row(i).iterator(0).copied().collect(), &mean);
                 let std_loc = local_std(work.get_row(i).iterator(0).copied().collect(), &mean);
                 let tau = p.split_tau * std_loc.max(1e-6);
-                
+
                 let c = work.get_row(i).iterator(0).copied().collect::<Vec<_>>();
                 let c1 = add_scaled(&c, &dir, tau);
                 let c2 = add_scaled(&c, &dir, -tau);
-                
+
                 (i, c1, c2)
             })
             .collect();
@@ -467,10 +542,12 @@ impl EnergyMaps for ArrowSpace {
         }
 
         let final_rows = data.len() / f;
-        info!("Sub-centroid generation: {} → {} centroids ({} splits)", x, final_rows, split_count);
+        info!(
+            "Sub-centroid generation: {} → {} centroids ({} splits)",
+            x, final_rows, split_count
+        );
         DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
     }
-
 
     /// Look-up query item against lambdas computed at build time
     fn search_energy(
@@ -480,20 +557,23 @@ impl EnergyMaps for ArrowSpace {
         k: usize,
     ) -> Vec<(usize, f64)> {
         let query_lambda = self.prepare_query_item(&query, gl_energy);
-        
-        let mut scored: Vec<(usize, f64)> = self.lambdas.iter().enumerate()
+
+        let mut scored: Vec<(usize, f64)> = self
+            .lambdas
+            .iter()
+            .enumerate()
             .map(|(i, lmbd)| {
                 let lambda_dist = (query_lambda - lmbd).abs();
-                
+
                 // Tie-breaking: if lambda_dist ~0, use cosine distance
                 let score = if lambda_dist < 1e-12 {
                     let item = self.get_item(i);
                     let cos_sim = item.cosine_similarity(&query);
-                    1.0 - cos_sim  // Convert similarity to distance
+                    1.0 - cos_sim // Convert similarity to distance
                 } else {
                     lambda_dist
                 };
-                
+
                 (i, score)
             })
             .collect();
@@ -502,8 +582,6 @@ impl EnergyMaps for ArrowSpace {
         scored.truncate(k);
         scored
     }
-
-
 }
 
 // ------- helpers with logging -------
@@ -528,20 +606,37 @@ fn minmax2d(xy: &Vec<f64>) -> (f64, f64, f64, f64) {
 
 /// Remove high-norm items from a set using quantile-based trimming.
 fn trim_high_norm(dm: &DenseMatrix<f64>, idx: &Vec<usize>, q: f64) -> Vec<usize> {
-    trace!("Trimming high-norm items: {} candidates, quantile={:.2} [parallel]", idx.len(), q);
+    trace!(
+        "Trimming high-norm items: {} candidates, quantile={:.2} [parallel]",
+        idx.len(),
+        q
+    );
     let f = dm.shape().1;
-    
+
     // [PARALLEL] Compute norms in parallel
-    let mut pairs: Vec<(usize, f64)> = idx.par_iter()
+    let mut pairs: Vec<(usize, f64)> = idx
+        .par_iter()
         .map(|&i| {
-            let n = (0..f).map(|c| { let v = *dm.get((i, c)); v * v }).sum::<f64>().sqrt();
+            let n = (0..f)
+                .map(|c| {
+                    let v = *dm.get((i, c));
+                    v * v
+                })
+                .sum::<f64>()
+                .sqrt();
             (i, n)
         })
         .collect();
-    
+
     pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-    let cut = (pairs.len() as f64 * (1.0 - q)).round().clamp(1.0, pairs.len() as f64) as usize;
-    let result = pairs.into_iter().take(cut).map(|(i, _)| i).collect::<Vec<_>>();
+    let cut = (pairs.len() as f64 * (1.0 - q))
+        .round()
+        .clamp(1.0, pairs.len() as f64) as usize;
+    let result = pairs
+        .into_iter()
+        .take(cut)
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>();
     trace!("Trimmed to {} items [parallel]", result.len());
     result
 }
@@ -585,7 +680,8 @@ fn unit_diff(a: Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
 fn local_std(a: Vec<f64>, b: &Vec<f64>) -> f64 {
     let diffs: Vec<f64> = a.iter().zip(b.iter()).map(|(x, y)| x - y).collect();
     let mean = diffs.iter().sum::<f64>() / diffs.len().max(1) as f64;
-    let var = diffs.iter().map(|d| (d - mean) * (d - mean)).sum::<f64>() / diffs.len().max(1) as f64;
+    let var =
+        diffs.iter().map(|d| (d - mean) * (d - mean)).sum::<f64>() / diffs.len().max(1) as f64;
     var.sqrt()
 }
 
@@ -607,7 +703,11 @@ fn topk_by_l2(dm: &DenseMatrix<f64>, i: usize, k: usize) -> Vec<usize> {
         .filter(|&j| j != i)
         .map(|j| {
             let v = dm.get_row(j);
-            let d = target.iterator(0).zip(v.iterator(0)).map(|(a, b)| (a - b) * (a - b)).sum::<f64>();
+            let d = target
+                .iterator(0)
+                .zip(v.iterator(0))
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f64>();
             (j, d)
         })
         .collect();
@@ -634,7 +734,12 @@ fn robust_scale(x: &Vec<f64>) -> f64 {
     devs.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Equal));
     let mad = devs[devs.len() / 2];
     let scale = (1.4826 * mad).max(1e-9);
-    trace!("robust_scale: median={:.6}, MAD={:.6}, scale={:.6}", median, mad, scale);
+    trace!(
+        "robust_scale: median={:.6}, MAD={:.6}, scale={:.6}",
+        median,
+        mad,
+        scale
+    );
     scale
 }
 
@@ -653,42 +758,61 @@ fn node_energy_and_dispersion(
     k: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     let (n, f) = x.shape();
-    trace!("Computing node energy and dispersion: {} nodes, {} features, k={} [parallel]", n, f, k);
+    trace!(
+        "Computing node energy and dispersion: {} nodes, {} features, k={} [parallel]",
+        n,
+        f,
+        k
+    );
 
     // Compute L·X column-wise in parallel
-    let lx: Vec<f64> = (0..f).into_par_iter().flat_map(|col| {
-        let col_vec: Vec<f64> = (0..n).map(|i| *x.get((i, col))).collect();
-        l.multiply_vector(&col_vec)
-    }).collect();
-    
+    let lx: Vec<f64> = (0..f)
+        .into_par_iter()
+        .flat_map(|col| {
+            let col_vec: Vec<f64> = (0..n).map(|i| *x.get((i, col))).collect();
+            l.multiply_vector(&col_vec)
+        })
+        .collect();
+
     trace!("L·X precomputed [parallel]");
 
     // Compute lambda and gini in parallel
-    let results: Vec<(f64, f64)> = (0..n).into_par_iter().map(|i| {
-        let xi = x.get_row(i);
-        let lxi = (0..f).map(|c| lx[i * f + c]).collect::<Vec<_>>();
-        let denom = xi.iterator(0).map(|v| v * v).sum::<f64>().max(1e-9);
-        let lambda_i = xi.iterator(0).zip(lxi.iter()).map(|(a, b)| a * b).sum::<f64>() / denom;
+    let results: Vec<(f64, f64)> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let xi = x.get_row(i);
+            let lxi = (0..f).map(|c| lx[i * f + c]).collect::<Vec<_>>();
+            let denom = xi.iterator(0).map(|v| v * v).sum::<f64>().max(1e-9);
+            let lambda_i = xi
+                .iterator(0)
+                .zip(lxi.iter())
+                .map(|(a, b)| a * b)
+                .sum::<f64>()
+                / denom;
 
-        let nbrs = topk_by_l2(x, i, k);
-        let mut parts: Vec<f64> = Vec::with_capacity(nbrs.len());
-        for &j in nbrs.iter() {
-            let w = -l.matrix.get(i, j).copied().unwrap_or(0.0).max(0.0);
-            let d = {
-                let cj = x.get_row(j);
-                xi.iterator(0).zip(cj.iterator(0)).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
+            let nbrs = topk_by_l2(x, i, k);
+            let mut parts: Vec<f64> = Vec::with_capacity(nbrs.len());
+            for &j in nbrs.iter() {
+                let w = -l.matrix.get(i, j).copied().unwrap_or(0.0).max(0.0);
+                let d = {
+                    let cj = x.get_row(j);
+                    xi.iterator(0)
+                        .zip(cj.iterator(0))
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum::<f64>()
+                };
+                parts.push((w * d).max(0.0));
+            }
+            let sum = parts.iter().sum::<f64>();
+            let gini_i = if sum > 0.0 {
+                parts.iter().map(|e| (e / sum).powi(2)).sum::<f64>()
+            } else {
+                0.0
             };
-            parts.push((w * d).max(0.0));
-        }
-        let sum = parts.iter().sum::<f64>();
-        let gini_i = if sum > 0.0 {
-            parts.iter().map(|e| (e / sum).powi(2)).sum::<f64>()
-        } else {
-            0.0
-        };
-        
-        (lambda_i, gini_i)
-    }).collect();
+
+            (lambda_i, gini_i)
+        })
+        .collect();
 
     let (lambda, gini): (Vec<_>, Vec<_>) = results.into_iter().unzip();
     debug!("Energy and dispersion computed for {} nodes [parallel]", n);
@@ -721,7 +845,7 @@ pub trait EnergyMapsBuilder {
     fn build_energy(
         &mut self,
         rows: Vec<Vec<f64>>,
-        energy_params: EnergyParams
+        energy_params: EnergyParams,
     ) -> (ArrowSpace, GraphLaplacian);
 
     /// Build energy-distance kNN Laplacian with parallel symmetrization.
@@ -775,18 +899,18 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
     ///
     /// 2x/3x slower than `build(...)`
     fn build_energy(
-        &mut self, 
-        rows: Vec<Vec<f64>>, 
-        energy_params: EnergyParams
+        &mut self,
+        rows: Vec<Vec<f64>>,
+        energy_params: EnergyParams,
     ) -> (ArrowSpace, GraphLaplacian) {
         assert!(
-            self.use_dims_reduction == true, 
+            self.use_dims_reduction == true,
             "When using build_energy, dim reduction is needed"
         );
         if self.prebuilt_spectral == true {
             panic!("Spectral mode not compatible with build_energy, please do not enable for energy search");
         }
-        
+
         // Step 1: Build base ArrowSpace with clustering
         let ClusteredOutput {
             mut aspace,
@@ -797,98 +921,112 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         // Step 2: Optional optical compression on centroids
         if let Some(tokens) = energy_params.optical_tokens {
             centroids = ArrowSpace::optical_compress_centroids(
-                &centroids, 
-                tokens, 
-                energy_params.trim_quantile
+                &centroids,
+                tokens,
+                energy_params.trim_quantile,
             );
         }
 
         // Step 3: Bootstrap Laplacian on centroids
         let l0 = ArrowSpace::bootstrap_centroid_laplacian(
-            &centroids, 
-            energy_params.neighbor_k.max(self.lambda_k), 
-            self.normalise, 
-            self.sparsity_check
+            &centroids,
+            energy_params.neighbor_k.max(self.lambda_k),
+            self.normalise,
+            self.sparsity_check,
         );
-        
+
         // Step 4: Diffuse and split to create sub_centroids
-        let mut sub_centroids = ArrowSpace::diffuse_and_split_subcentroids(
-            &centroids, 
-            &l0, 
-            &energy_params
-        );
-        
+        let mut sub_centroids =
+            ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+
         // Step 5: Optional optical compression on sub_centroids
         if let Some(tokens) = energy_params.optical_tokens {
             sub_centroids = ArrowSpace::optical_compress_centroids(
-                &sub_centroids, 
-                tokens, 
-                energy_params.trim_quantile
+                &sub_centroids,
+                tokens,
+                energy_params.trim_quantile,
             );
         }
-        
+
         info!(
             "Energy graph: {:?} centroids → {:?} sub_centroids",
             centroids.shape(),
             sub_centroids.shape()
         );
-        
+
         // Step 6: Build energy Laplacian on sub_centroids
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
         // Step 7: Compute lambdas on sub_centroids ONLY
-        let mut subcentroid_space = ArrowSpace::from_dense_matrix(
-            sub_centroids.clone(),
-        );
+        let mut subcentroid_space = ArrowSpace::from_dense_matrix(sub_centroids.clone());
         subcentroid_space.taumode = self.synthesis;
 
-        info!("Computing lambdas on {} sub_centroids...", subcentroid_space.nitems);
-        TauMode::compute_taumode_lambdas_parallel(&mut subcentroid_space, &gl_energy, self.synthesis);
+        info!(
+            "Computing lambdas on {} sub_centroids...",
+            subcentroid_space.nitems
+        );
+        TauMode::compute_taumode_lambdas_parallel(
+            &mut subcentroid_space,
+            &gl_energy,
+            self.synthesis,
+        );
 
         // Store sub_centroids for query mapping
         aspace.sub_centroids = Some(sub_centroids.clone());
         aspace.subcentroid_lambdas = Some(subcentroid_space.lambdas.clone());
         info!(
             "Sub_centroid λ: min={:.6}, max={:.6}, mean={:.6}",
-            subcentroid_space.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-            subcentroid_space.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b)),
+            subcentroid_space
+                .lambdas
+                .iter()
+                .fold(f64::INFINITY, |a, &b| a.min(b)),
+            subcentroid_space
+                .lambdas
+                .iter()
+                .fold(0.0_f64, |a, &b| a.max(b)),
             subcentroid_space.lambdas.iter().sum::<f64>() / subcentroid_space.nitems as f64
         );
 
         // Step 8: Build centroid_map and assign lambdas to all items
-        info!("Mapping {} items to {:?} sub_centroids...", aspace.nitems, sub_centroids.shape());
-        
+        info!(
+            "Mapping {} items to {:?} sub_centroids...",
+            aspace.nitems,
+            sub_centroids.shape()
+        );
+
         let (centroid_map, item_lambdas): (Vec<usize>, Vec<f64>) = (0..aspace.nitems)
             .into_par_iter()
             .map(|i| {
                 let item = aspace.get_item(i);
-                
+
                 // Find nearest sub_centroid using L2 distance
                 let mut best_idx = 0;
                 let mut best_dist = f64::INFINITY;
-                
+
                 for sc_idx in 0..sub_centroids.shape().0 {
-                    let dist: f64 = item.item.iter()
+                    let dist: f64 = item
+                        .item
+                        .iter()
                         .zip(sub_centroids.get_row(sc_idx).iterator(0))
                         .map(|(a, b)| (a - b).powi(2))
                         .sum::<f64>()
                         .sqrt();
-                    
+
                     if dist < best_dist {
                         best_dist = dist;
                         best_idx = sc_idx;
                     }
                 }
-                
+
                 // Assign sub_centroid's lambda to this item
                 (best_idx, subcentroid_space.lambdas[best_idx])
             })
             .unzip();
-        
+
         // Store centroid map and lambdas in aspace
         aspace.centroid_map = Some(centroid_map);
         aspace.lambdas = item_lambdas;
-        
+
         info!(
             "Item λ assigned: min={:.6}, max={:.6}, mean={:.6}",
             aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
@@ -899,42 +1037,53 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         (aspace, gl_energy)
     }
 
-
     fn build_energy_laplacian(
         &self,
         sub_centroids: &DenseMatrix<f64>,
         energy_params: &EnergyParams,
     ) -> (GraphLaplacian, Vec<f64>, Vec<f64>) {
-        info!("EnergyMaps::build_energy_laplacian: k={}, w_λ={:.2}, w_G={:.2}, w_D={:.2}", 
-            self.lambda_k, energy_params.w_lambda, energy_params.w_disp, energy_params.w_dirichlet);
+        info!(
+            "EnergyMaps::build_energy_laplacian: k={}, w_λ={:.2}, w_G={:.2}, w_D={:.2}",
+            self.lambda_k, energy_params.w_lambda, energy_params.w_disp, energy_params.w_dirichlet
+        );
         let (x, f) = sub_centroids.shape();
-        debug!("Building energy Laplacian on {} sub-centroids × {} features", x, f);
+        debug!(
+            "Building energy Laplacian on {} sub-centroids × {} features",
+            x, f
+        );
 
         trace!("Bootstrapping L' for energy feature computation");
         let l_boot = ArrowSpace::bootstrap_centroid_laplacian(
-            sub_centroids, 
-            energy_params.neighbor_k.max(self.lambda_k), 
-            self.normalise, 
-            self.sparsity_check
+            sub_centroids,
+            energy_params.neighbor_k.max(self.lambda_k),
+            self.normalise,
+            self.sparsity_check,
         );
 
         trace!("Computing energy and dispersion features");
         let (lambda, gini) = node_energy_and_dispersion(
-            sub_centroids, 
-            &l_boot, 
-            energy_params.neighbor_k.max(self.lambda_k)
+            sub_centroids,
+            &l_boot,
+            energy_params.neighbor_k.max(self.lambda_k),
         );
         let s_l = robust_scale(&lambda).max(1e-9);
         let s_g = robust_scale(&gini).max(1e-9);
         debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
 
-        debug!("Building energy-distance kNN with candidate pruning (M={}) [parallel]", energy_params.candidate_m);
-        
+        debug!(
+            "Building energy-distance kNN with candidate pruning (M={}) [parallel]",
+            energy_params.candidate_m
+        );
+
         let adjacency = Arc::new(DashMap::with_capacity(x * self.lambda_k));
-        
+
         (0..x).into_par_iter().for_each(|i| {
-            let cand = topm_by_l2(sub_centroids, i, energy_params.candidate_m.max(self.lambda_k));
-            
+            let cand = topm_by_l2(
+                sub_centroids,
+                i,
+                energy_params.candidate_m.max(self.lambda_k),
+            );
+
             let mut scored: Vec<(usize, f64)> = cand
                 .into_iter()
                 .filter(|&j| j != i)
@@ -942,18 +1091,18 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     let d_lambda = (lambda[i] - lambda[j]).abs() / s_l;
                     let d_gini = (gini[i] - gini[j]).abs() / s_g;
                     let diff = pair_diff(sub_centroids, i, j);
-                    
+
                     // Use projection-aware Dirichlet: bounded L2 in feature space
                     // (no tiling since we're already in sub-centroid space)
                     let r_pair = bounded_l2_energy(&diff);
-                    
-                    let dist = energy_params.w_lambda * d_lambda 
-                            + energy_params.w_disp * d_gini 
-                            + energy_params.w_dirichlet * r_pair;
+
+                    let dist = energy_params.w_lambda * d_lambda
+                        + energy_params.w_disp * d_gini
+                        + energy_params.w_dirichlet * r_pair;
                     (j, dist)
                 })
                 .collect();
-            
+
             scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
             scored.truncate(self.lambda_k);
 
@@ -964,16 +1113,19 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         });
 
         // [Rest of symmetrization and Laplacian building unchanged]
-        
-        debug!("Symmetrizing adjacency: {} directed edges [parallel]", adjacency.len());
+
+        debug!(
+            "Symmetrizing adjacency: {} directed edges [parallel]",
+            adjacency.len()
+        );
         let sym_adjacency = Arc::new(DashMap::with_capacity(adjacency.len() * 2));
         let processed = Arc::new(DashMap::with_capacity(adjacency.len()));
-        
+
         adjacency.iter().par_bridge().for_each(|entry| {
             let &(i, j) = entry.key();
             let &w_ij = entry.value();
             let (u, v) = if i < j { (i, j) } else { (j, i) };
-            
+
             if processed.insert((u, v), true).is_none() {
                 let w_ji = adjacency.get(&(j, i)).map(|e| *e.value()).unwrap_or(0.0);
                 let w_sym = w_ij.max(w_ji);
@@ -981,39 +1133,59 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                 sym_adjacency.insert((j, i), w_sym);
             }
         });
-        
+
         let mut tri = sprs::TriMat::<f64>::new((x, x));
-        let degrees: Vec<f64> = (0..x).into_par_iter().map(|i| {
-            sym_adjacency.iter()
-                .filter(|e| { let &(u, v) = e.key(); u == i && i != v })
-                .map(|e| *e.value())
-                .sum()
-        }).collect();
-        
+        let degrees: Vec<f64> = (0..x)
+            .into_par_iter()
+            .map(|i| {
+                sym_adjacency
+                    .iter()
+                    .filter(|e| {
+                        let &(u, v) = e.key();
+                        u == i && i != v
+                    })
+                    .map(|e| *e.value())
+                    .sum()
+            })
+            .collect();
+
         for entry in sym_adjacency.iter() {
             let &(i, j) = entry.key();
             let &w = entry.value();
-            if i != j { tri.add_triplet(i, j, -w); }
+            if i != j {
+                tri.add_triplet(i, j, -w);
+            }
         }
-        for i in 0..x { tri.add_triplet(i, i, degrees[i]); }
-        
+        for i in 0..x {
+            tri.add_triplet(i, i, degrees[i]);
+        }
+
         let csr = tri.to_csr();
         let gl = GraphLaplacian {
             init_data: sub_centroids.clone(),
             matrix: csr,
             nnodes: x,
             graph_params: GraphParams {
-                eps: self.lambda_eps, k: self.lambda_k, topk: self.lambda_topk,
-                p: 2.0, sigma: None, normalise: self.normalise, sparsity_check: self.sparsity_check,
+                eps: self.lambda_eps,
+                k: self.lambda_k,
+                topk: self.lambda_topk,
+                p: 2.0,
+                sigma: None,
+                normalise: self.normalise,
+                sparsity_check: self.sparsity_check,
             },
         };
 
-        info!("Energy Laplacian built: {}×{}, {} nnz, {:.2}% sparse", 
-            gl.shape().0, gl.shape().1, gl.nnz(), GraphLaplacian::sparsity(&gl.matrix) * 100.0);
+        info!(
+            "Energy Laplacian built: {}×{}, {} nnz, {:.2}% sparse",
+            gl.shape().0,
+            gl.shape().1,
+            gl.nnz(),
+            GraphLaplacian::sparsity(&gl.matrix) * 100.0
+        );
         (gl, lambda, gini)
     }
 }
-
 
 /// ============================================================================
 // ProjectedEnergy: Projection-aware energy scoring (replaces tiling approach)
@@ -1028,7 +1200,11 @@ pub struct ProjectedEnergyParams {
 
 impl Default for ProjectedEnergyParams {
     fn default() -> Self {
-        Self { w_lambda: 1.0, w_dirichlet: 0.5, eps_norm: 1e-9 }
+        Self {
+            w_lambda: 1.0,
+            w_dirichlet: 0.5,
+            eps_norm: 1e-9,
+        }
     }
 }
 
