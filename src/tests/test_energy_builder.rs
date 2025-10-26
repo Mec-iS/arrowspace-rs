@@ -24,7 +24,7 @@ fn test_energy_build_basic() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows,EnergyParams::new(&builder));
+    let (aspace, gl_energy) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     assert!(aspace.nitems > 0);
     assert!(aspace.nfeatures == 100);

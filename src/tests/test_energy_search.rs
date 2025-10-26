@@ -187,7 +187,7 @@ fn test_energy_search_weight_tuning() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows.clone(),  EnergyParams::new(&builder));
+    let (aspace, gl_energy) = builder.build_energy(rows.clone(), EnergyParams::new(&builder));
 
     let query = rows[0].clone();
     let k = 10;
@@ -247,7 +247,7 @@ fn test_energy_search_optical_compression() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows.clone(),  EnergyParams::new(&builder));
+    let (aspace, gl_energy) = builder.build_energy(rows.clone(), EnergyParams::new(&builder));
 
     let query = rows[10].clone();
     let results = aspace.search_energy(&query, &gl_energy, 5);
@@ -275,7 +275,7 @@ fn test_energy_search_lambda_proximity() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows.clone(),  EnergyParams::new(&builder));
+    let (aspace, gl_energy) = builder.build_energy(rows.clone(), EnergyParams::new(&builder));
 
     let query = rows[0].clone();
     let results = aspace.search_energy(&query, &gl_energy, 10);
@@ -313,7 +313,7 @@ fn test_energy_search_score_monotonicity() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows.clone(),  EnergyParams::new(&builder));
+    let (aspace, gl_energy) = builder.build_energy(rows.clone(), EnergyParams::new(&builder));
 
     let query = rows[5].clone();
     let results = aspace.search_energy(&query, &gl_energy, 20);
@@ -407,7 +407,8 @@ fn test_energy_vs_standard_search_overlap() {
         .with_seed(12345)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
-    let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
+    let (aspace_energy, gl_energy) =
+        builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
     let results_energy = aspace_energy.search_energy(&query, &gl_energy, k);
 
@@ -459,7 +460,8 @@ fn test_energy_vs_standard_lambda_distribution() {
         .with_seed(9999)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
-    let (aspace_energy, _) = builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
+    let (aspace_energy, _) =
+        builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
     // Compare lambda distributions
     let std_lambdas = aspace_std.lambdas();
@@ -515,7 +517,8 @@ fn test_energy_vs_standard_graph_structure() {
         .with_seed(5555)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
-    let (_, gl_energy) = builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
+    let (_, gl_energy) =
+        builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
     let std_sparsity = crate::graph::GraphLaplacian::sparsity(&gl_std.matrix);
     let energy_sparsity = crate::graph::GraphLaplacian::sparsity(&gl_energy.matrix);
@@ -591,7 +594,8 @@ fn test_energy_vs_standard_precision_at_k() {
         .with_lambda_graph(1.0, 2, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
-    let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
+    let (aspace_energy, gl_energy) =
+        builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
     let results_energy = aspace_energy.search_energy(&query, &gl_energy, k);
     let energy_indices: HashSet<usize> = results_energy.iter().map(|(i, _)| *i).collect();
     let energy_precision = gt_indices.intersection(&energy_indices).count() as f64 / k as f64;
@@ -637,7 +641,8 @@ fn test_energy_vs_standard_recall_at_k() {
         .with_seed(333)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
-    let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
+    let (aspace_energy, gl_energy) =
+        builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
     let results_energy_balanced = aspace_energy.search_energy(&query, &gl_energy, k);
     let results_energy_lambda = aspace_energy.search_energy(&query, &gl_energy, k);
@@ -725,15 +730,15 @@ fn test_energy_no_cosine_dependence() {
     // Get lambda distances and cosine scores for results
     let query_lambda = aspace.prepare_query_item(&query, &gl_energy);
     let q_norm = query.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-9);
-    
+
     let mut lambda_dists: Vec<f64> = Vec::new();
     let mut cosine_scores: Vec<f64> = Vec::new();
-    
+
     for (idx, _) in results_energy.iter() {
         // Lambda distance
         let item_lambda = aspace.lambdas[*idx];
         lambda_dists.push((query_lambda - item_lambda).abs());
-        
+
         // Cosine similarity
         let item = aspace.get_item(*idx);
         let item_norm = item
@@ -757,9 +762,7 @@ fn test_energy_no_cosine_dependence() {
     sorted_lambda_dists.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     // Check if lambda distances are monotonically increasing (with tolerance for ties)
-    let lambda_monotonic = lambda_dists
-        .windows(2)
-        .all(|w| w[0] <= w[1] + 1e-8);  // Allow small numerical errors
+    let lambda_monotonic = lambda_dists.windows(2).all(|w| w[0] <= w[1] + 1e-8); // Allow small numerical errors
 
     info!(
         "Lambda distances: {:?}",
@@ -795,20 +798,20 @@ fn test_energy_no_cosine_dependence() {
             lambda_monotonic,
             "Lambda distances should be monotonically increasing"
         );
-        
+
         // Cosine may be sorted by coincidence, but should not dominate
         // Check: lambda ordering should differ from pure cosine ordering
         let cosine_ranking: Vec<usize> = {
-            let mut indexed: Vec<(usize, f64)> = 
+            let mut indexed: Vec<(usize, f64)> =
                 cosine_scores.iter().copied().enumerate().collect();
             indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
             indexed.iter().map(|(i, _)| *i).collect()
         };
-        
+
         let lambda_ranking: Vec<usize> = (0..k).collect();
-        
+
         let ranking_differs = cosine_ranking != lambda_ranking;
-        
+
         assert!(
             ranking_differs,
             "Energy ranking should differ from pure cosine ranking"

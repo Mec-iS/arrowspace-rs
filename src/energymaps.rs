@@ -73,15 +73,15 @@ impl Default for EnergyParams {
 
 impl EnergyParams {
     /// Create adaptive EnergyParams from ArrowSpaceBuilder configuration.
-    /// 
+    ///
     /// If the builder has `expected_nitems` set, uses dataset-size-aware adaptive tokens (2√N).
     /// Otherwise falls back to dimensionality-based compression heuristics.
-    /// 
+    ///
     /// # Arguments
     /// * `builder` - Reference to ArrowSpaceBuilder with configuration
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```ignore
     /// // Dataset-aware (recommended for large datasets)
     /// let builder = ArrowSpaceBuilder::new()
@@ -89,7 +89,7 @@ impl EnergyParams {
     ///     .with_lambda_graph(1.31, 25, 15, 2.0, Some(0.535));
     /// let params = EnergyParams::new(&builder);
     /// // → optical_tokens = 1119 (from 2√313841)
-    /// 
+    ///
     /// // Dimensionality-based (legacy behavior)
     /// let builder = ArrowSpaceBuilder::new()
     ///     .with_lambda_graph(1.31, 25, 15, 2.0, Some(0.535));
@@ -159,14 +159,14 @@ impl EnergyParams {
             candidate_m,
         }
     }
-    
+
     /// Compute adaptive optical token budget based on dataset size.
-    /// 
+    ///
     /// Uses the rule of thumb: 2√N tokens, clamped to [100, 2000].
     /// This provides good resolution while keeping compression effective.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```ignore
     /// let tokens = compute_adaptive_tokens(1000);    // ~63 tokens
     /// let tokens = compute_adaptive_tokens(10000);   // ~200 tokens
@@ -278,11 +278,11 @@ pub trait EnergyMaps {
     ) -> DenseMatrix<f64>;
 
     /// Compute adaptive w_lambda from normalized lambda range
-    /// 
+    ///
     /// Uses existing `range_lambdas` field (already normalized to [0,1]).
-    /// 
+    ///
     /// # Weight Mapping
-    /// 
+    ///
     /// | Range    | Quality      | Weight |
     /// |----------|--------------|--------|
     /// | 0.0-0.05 | Degenerate   | 0.5    |
@@ -291,7 +291,7 @@ pub trait EnergyMaps {
     fn adaptive_w_lambda(&self) -> f64;
 
     /// Compute balanced (w_lambda, w_dirichlet) pair
-    fn adaptive_energy_weights(&self) -> (f64, f64); 
+    fn adaptive_energy_weights(&self) -> (f64, f64);
 
     /// Perform energy-only nearest-neighbor search (no cosine).
     ///
@@ -612,7 +612,7 @@ impl EnergyMaps for ArrowSpace {
 
     /// Look-up query item against lambdas computed at build time
     /// Pure lambda-only search - ultra fast linear scan
-    /// 
+    ///
     /// Query lambda is computed once via subcentroid mapping,
     /// then search is O(N) comparison of pre-normalized lambdas.
     fn search_energy(
@@ -622,10 +622,10 @@ impl EnergyMaps for ArrowSpace {
         k: usize,
     ) -> Vec<(usize, f64)> {
         let query_lambda = self.prepare_query_item(query, gl_energy);
-        
+
         // Pre-compute query norm (once)
         let query_norm = query.iter().map(|x| x * x).sum::<f64>().sqrt();
-        
+
         let mut scored: Vec<(usize, f64)> = self
             .lambdas
             .iter()
@@ -633,68 +633,61 @@ impl EnergyMaps for ArrowSpace {
             .map(|(i, &lambda)| {
                 // Lambda distance (primary ranking)
                 let lambda_dist = (query_lambda - lambda).abs();
-                
+
                 // Tie-breaking: cosine similarity (only when lambdas match)
                 let tie_breaker = if lambda_dist < 1e-9 {
                     let item = self.get_item(i);
-                    
+
                     // Dot product (must compute)
-                    let dot: f64 = query
-                        .iter()
-                        .zip(item.item.iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    
+                    let dot: f64 = query.iter().zip(item.item.iter()).map(|(a, b)| a * b).sum();
+
                     // Item norm (pre-computed!)
                     let item_norm = self
                         .item_norms
                         .as_ref()
                         .map(|norms| norms[i])
-                        .unwrap_or_else(|| {
-                            item.item.iter().map(|x| x * x).sum::<f64>().sqrt()
-                        });
-                    
+                        .unwrap_or_else(|| item.item.iter().map(|x| x * x).sum::<f64>().sqrt());
+
                     let cosine = dot / (query_norm * item_norm + 1e-9);
-                    (1.0 - cosine) * 1e-12  // Distance (smaller = better)
+                    (1.0 - cosine) * 1e-12 // Distance (smaller = better)
                 } else {
-                    0.0  // Different lambdas: no tie-breaking
+                    0.0 // Different lambdas: no tie-breaking
                 };
-                
+
                 (i, lambda_dist + tie_breaker)
             })
             .collect();
-        
+
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         scored.truncate(k);
         scored
     }
 
-
     /// Compute adaptive w_lambda from normalized lambda range
     #[inline]
     fn adaptive_w_lambda(&self) -> f64 {
         if self.range_lambdas < 1e-9 {
-            return 0.5;  // Degenerate case
+            return 0.5; // Degenerate case
         }
-        
+
         // Linear mapping: range [0,1] → weight [0.5, 2.0]
         0.5 + 1.5 * self.range_lambdas
     }
-    
+
     /// Compute balanced (w_lambda, w_dirichlet) pair
     #[inline]
     fn adaptive_energy_weights(&self) -> (f64, f64) {
         let w_lambda = self.adaptive_w_lambda();
-        let w_dirichlet = 2.5 - w_lambda;  // Complementary
+        let w_dirichlet = 2.5 - w_lambda; // Complementary
         (w_lambda, w_dirichlet)
     }
-    
+
     // /// Energy-only search with automatic adaptive weighting
-    // /// 
+    // ///
     // /// Weights are computed automatically from lambda statistics:
     // /// - w_lambda: Based on range_lambdas (discriminative power)
     // /// - w_dirichlet: Complementary to balance contribution
-    // /// 
+    // ///
     // /// No manual parameter tuning required!
     // pub fn search_energy(
     //     &self,
@@ -704,12 +697,12 @@ impl EnergyMaps for ArrowSpace {
     // ) -> Vec<(usize, f64)> {
     //     // Auto-compute weights from lambda statistics
     //     let (w_lambda, w_dirichlet) = self.adaptive_energy_weights();
-        
+
     //     debug!(
     //         "Energy search: w_λ={:.3}, w_D={:.3} (range={:.4})",
     //         w_lambda, w_dirichlet, self.range_lambdas
     //     );
-        
+
     //     // Warn if lambdas are degenerate
     //     if self.range_lambdas < 0.05 {
     //         warn!(
@@ -717,22 +710,22 @@ impl EnergyMaps for ArrowSpace {
     //             self.range_lambdas
     //         );
     //     }
-        
+
     //     let query_lambda = self.prepare_query_item(query, gl_energy);
-        
+
     //     // Precompute query norm for feature distance normalization
     //     let query_norm = query.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-9);
-        
+
     //     let mut scored: Vec<(usize, f64)> = self
     //         .lambdas
     //         .iter()
     //         .enumerate()
     //         .map(|(i, &lambda)| {
     //             let item = self.get_item(i);
-                
+
     //             // Lambda distance (normalized via range_lambdas)
     //             let lambda_dist = (query_lambda - lambda).abs();
-                
+
     //             // Feature distance (L2, normalized by query norm)
     //             let feat_dist: f64 = query
     //                 .iter()
@@ -740,21 +733,20 @@ impl EnergyMaps for ArrowSpace {
     //                 .map(|(a, b)| (a - b).powi(2))
     //                 .sum::<f64>()
     //                 .sqrt() / query_norm;
-                
+
     //             // Combined energy distance with adaptive weights
     //             let score = w_lambda * lambda_dist + w_dirichlet * feat_dist;
-                
+
     //             (i, score)
     //         })
     //         .collect();
-        
+
     //     // Sort by score (ascending = best matches first)
     //     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
     //     scored.truncate(k);
-        
+
     //     scored
     // }
-
 }
 
 // ------- helpers with logging -------
@@ -1207,13 +1199,13 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             let mut cmap = Vec::with_capacity(results.len());
             let mut lambdas = Vec::with_capacity(results.len());
             let mut norms = Vec::with_capacity(results.len());
-            
+
             for (cidx, lambda, norm) in results {
                 cmap.push(cidx);
                 lambdas.push(lambda);
                 norms.push(norm);
             }
-            
+
             (cmap, lambdas, norms)
         };
 
@@ -1231,13 +1223,22 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         info!(
             "Item norms computed: min={:.6}, max={:.6}, mean={:.6}",
-            aspace.item_norms.as_ref().unwrap().iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-            aspace.item_norms.as_ref().unwrap().iter().fold(0.0_f64, |a, &b| a.max(b)),
+            aspace
+                .item_norms
+                .as_ref()
+                .unwrap()
+                .iter()
+                .fold(f64::INFINITY, |a, &b| a.min(b)),
+            aspace
+                .item_norms
+                .as_ref()
+                .unwrap()
+                .iter()
+                .fold(0.0_f64, |a, &b| a.max(b)),
             aspace.item_norms.as_ref().unwrap().iter().sum::<f64>() / aspace.nitems as f64
         );
 
         (aspace, gl_energy)
-
     }
 
     fn build_energy_laplacian(

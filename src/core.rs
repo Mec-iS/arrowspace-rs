@@ -394,7 +394,7 @@ pub struct ArrowSpace {
     pub subcentroid_lambdas: Option<Vec<f64>>,
 
     /// Pre-computed L2 norms for tie-breaking (energy mode)
-    /// 
+    ///
     /// Computed during build to accelerate cosine similarity in search.
     /// Only used when items have identical lambdas (same subcentroid).
     pub item_norms: Option<Vec<f64>>,
@@ -606,17 +606,17 @@ impl ArrowSpace {
     }
 
     /// Compute query lambda for energy mode
-    /// 
+    ///
     /// Maps query to nearest subcentroid and returns its lambda.
     /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
     pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
         // Energy mode: subcentroid mapping (fast)
-        if let (Some(subcentroids), Some(sc_lambdas)) = 
-            (&self.sub_centroids, &self.subcentroid_lambdas) 
+        if let (Some(subcentroids), Some(sc_lambdas)) =
+            (&self.sub_centroids, &self.subcentroid_lambdas)
         {
             let mut best_idx = 0;
             let mut best_dist = f64::INFINITY;
-            
+
             // Find nearest subcentroid
             for sc_idx in 0..subcentroids.shape().0 {
                 let dist: f64 = query
@@ -625,23 +625,26 @@ impl ArrowSpace {
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f64>()
                     .sqrt();
-                
+
                 if dist < best_dist {
                     best_dist = dist;
                     best_idx = sc_idx;
                 }
             }
-            
+
             let lambda = sc_lambdas[best_idx];
-            
+
             debug!(
                 "Query mapped to subcentroid {}/{} with λ={:.6} (dist={:.4})",
-                best_idx, subcentroids.shape().0, lambda, best_dist
+                best_idx,
+                subcentroids.shape().0,
+                lambda,
+                best_dist
             );
-            
+
             return lambda;
         }
-    
+
         // Standard mode
         let tau = TauMode::select_tau(&query, self.taumode);
         let raw_lambda = TauMode::compute_synthetic_lambda_csr(&query, &gl.matrix, tau);
