@@ -725,7 +725,7 @@ fn test_energy_no_cosine_dependence() {
     crate::init();
     info!("Test: verify energy search has no cosine dependence");
 
-    let rows = test_data::make_gaussian_hd(50, 0.6);
+    let rows = test_data::make_energy_test_dataset(50, 200, 42);
     let query = rows[5].clone();
     let k = 10;
 
