@@ -1133,10 +1133,26 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             "Subcentroid count must match energy graph dimensions"
         );
 
+        // extra assertions to spot parallelism errors
+        let actual_rows = sub_centroids.shape().0;
+        let space_items = subcentroid_space.nitems;
+        let graph_nodes = gl_energy.nnodes;
+
+        assert_eq!(actual_rows, space_items, 
+            "Matrix rows ({}) != space items ({}) at 300K scale", 
+            actual_rows, space_items);
+            
+        assert_eq!(space_items, graph_nodes,
+            "Space items ({}) != graph nodes ({}) at 300K scale",
+            space_items, graph_nodes);
+
         info!(
             "Computing lambdas on {} sub_centroids...",
             subcentroid_space.nitems
         );
+        // safeguard to clear signals
+        subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
+        // finally compute taumode on the subcentroids
         TauMode::compute_taumode_lambdas_parallel(
             &mut subcentroid_space,
             &gl_energy,

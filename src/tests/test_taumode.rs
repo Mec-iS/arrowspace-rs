@@ -3,12 +3,14 @@ use crate::{
     graph::dense_to_sparse,
     taumode::{TauMode, TAU_FLOOR},
     tests::test_data::{make_gaussian_blob, make_moons_hd},
+    energymaps::{EnergyParams, EnergyMapsBuilder, EnergyMaps},
 };
 
 use approx::relative_eq;
 use ordered_float::Float;
-use smartcore::linalg::basic::arrays::Array2;
+use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
+
 
 use log::info;
 
@@ -768,3 +770,132 @@ fn test_builder_lambdas_with_larger_dataset() {
     println!("✓ All mathematical properties satisfied");
     println!("✓ Multiple tau modes tested successfully");
 }
+
+#[test]
+fn test_energy_dimension_consistency() {
+    crate::init();
+    info!("Test: energy mode dimension consistency");
+    
+    // Generate test data
+    let rows = crate::tests::test_data::make_gaussian_hd(250, 0.6);
+    
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(9999)
+        .with_lambda_graph(0.25, 5, 1, 2.0, None)
+        .with_dims_reduction(true, Some(0.1))
+        .with_synthesis(TauMode::Median);
+    
+    let (aspace, gl_energy) = builder.build_energy(rows.clone(), EnergyParams::new(&builder));
+    
+    // Test 1: Verify dimensions
+    assert_eq!(
+        aspace.nitems,
+        rows.len(),
+        "ArrowSpace should have {} items, got {}",
+        rows.len(),
+        aspace.nitems
+    );
+    
+    // Test 2: Verify sub_centroids and energy graph match
+    if let Some(ref sub_centroids) = aspace.sub_centroids {
+        assert_eq!(
+            sub_centroids.shape().0,
+            gl_energy.nnodes,
+            "Sub_centroids ({} rows) must match energy graph ({} nodes)",
+            sub_centroids.shape().0,
+            gl_energy.nnodes
+        );
+        
+        info!("✓ Sub_centroids: {} rows", sub_centroids.shape().0);
+        info!("✓ Energy graph: {} nodes", gl_energy.nnodes);
+    } else {
+        panic!("Energy mode should have sub_centroids stored");
+    }
+    
+    // Test 3: Verify lambdas are assigned
+    assert_eq!(
+        aspace.lambdas.len(),
+        aspace.nitems,
+        "Lambdas length ({}) must match items ({})",
+        aspace.lambdas.len(),
+        aspace.nitems
+    );
+    
+    // Test 4: Verify centroid_map consistency
+    if let Some(ref centroid_map) = aspace.centroid_map {
+        assert_eq!(
+            centroid_map.len(),
+            aspace.nitems,
+            "Centroid map length ({}) must match items ({})",
+            centroid_map.len(),
+            aspace.nitems
+        );
+        
+        // Verify all centroid indices are valid
+        let num_subcentroids = aspace.sub_centroids.as_ref().unwrap().shape().0;
+        for (item_idx, &centroid_idx) in centroid_map.iter().enumerate() {
+            assert!(
+                centroid_idx < num_subcentroids,
+                "Item {} mapped to invalid centroid {} (max: {})",
+                item_idx,
+                centroid_idx,
+                num_subcentroids - 1
+            );
+        }
+        
+        info!("✓ Centroid map: {} items → {} sub_centroids", 
+              centroid_map.len(), num_subcentroids);
+    } else {
+        panic!("Energy mode should have centroid_map");
+    }
+    
+    // Test 5: Verify subcentroid_lambdas match
+    if let Some(ref sc_lambdas) = aspace.subcentroid_lambdas {
+        let num_subcentroids = aspace.sub_centroids.as_ref().unwrap().shape().0;
+        assert_eq!(
+            sc_lambdas.len(),
+            num_subcentroids,
+            "Subcentroid lambdas ({}) must match sub_centroids ({})",
+            sc_lambdas.len(),
+            num_subcentroids
+        );
+        
+        info!("✓ Subcentroid lambdas: {} values", sc_lambdas.len());
+    }
+    
+    // Test 6: Query doesn't panic
+    let query_idx = 42;
+    let query_item = aspace.get_item(query_idx);
+    let results = aspace.search_energy(&query_item.item, &gl_energy, 5);
+    
+    assert!(!results.is_empty(), "Search should return results");
+    info!("✓ Search completed without panic: {} results", results.len());
+    
+    info!("✓ All dimension consistency checks passed");
+}
+
+#[test]
+fn test_energy_lambda_computation_bounds() {
+    crate::init();
+    
+    let rows = crate::tests::test_data::make_gaussian_hd(100, 0.6);
+    
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_seed(42)
+        .with_lambda_graph(0.3, 3, 1, 2.0, None)
+        .with_dims_reduction(true, Some(0.2));
+    
+    let (aspace, _) = builder.build_energy(rows, EnergyParams::new(&builder));
+    
+    // Verify no out-of-bounds during build
+    assert_eq!(aspace.lambdas.len(), aspace.nitems);
+    
+    // Verify all lambdas are reasonable
+    for (i, &lambda) in aspace.lambdas.iter().enumerate() {
+        assert!(lambda.is_finite(), "Lambda[{}] is not finite: {}", i, lambda);
+        assert!(lambda >= 0.0, "Lambda[{}] is negative: {}", i, lambda);
+    }
+    
+    info!("✓ Lambda bounds check passed for {} items", aspace.nitems);
+}
+
