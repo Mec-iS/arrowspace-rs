@@ -1126,8 +1126,12 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
         // Step 7: Compute lambdas on sub_centroids ONLY
-        let mut subcentroid_space = ArrowSpace::from_dense_matrix(sub_centroids.clone());
+        let mut subcentroid_space = ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
         subcentroid_space.taumode = self.synthesis;
+        assert_eq!(
+            subcentroid_space.nitems, gl_energy.shape().0,
+            "Subcentroid count must match energy graph dimensions"
+        );
 
         info!(
             "Computing lambdas on {} sub_centroids...",
