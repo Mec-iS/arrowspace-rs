@@ -374,7 +374,7 @@ pub struct ArrowSpace {
     // lambdas normalisation
     min_lambdas: f64,
     max_lambdas: f64,
-    range_lambdas: f64,
+    pub(crate) range_lambdas: f64,
 
     pub n_clusters: usize,
     /// Cluster assignment per original row (N entries, each in 0..X or None for outliers)
@@ -392,6 +392,12 @@ pub struct ArrowSpace {
     pub centroid_map: Option<Vec<usize>>, // Maps item_idx -> centroid_idx
     pub sub_centroids: Option<DenseMatrix<f64>>,
     pub subcentroid_lambdas: Option<Vec<f64>>,
+
+    /// Pre-computed L2 norms for tie-breaking (energy mode)
+    /// 
+    /// Computed during build to accelerate cosine similarity in search.
+    /// Only used when items have identical lambdas (same subcentroid).
+    pub item_norms: Option<Vec<f64>>,
 }
 
 pub const TAUDEFAULT: TauMode = TauMode::Median;
@@ -423,6 +429,7 @@ impl Default for ArrowSpace {
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
+            item_norms: None,
         }
     }
 }
@@ -461,6 +468,7 @@ impl ArrowSpace {
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
+            item_norms: None,
         }
     }
     /// Builds from a vector of equally-sized rows and per-row lambdas.
@@ -531,6 +539,7 @@ impl ArrowSpace {
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
+            item_norms: None,
         }
     }
 
@@ -562,6 +571,7 @@ impl ArrowSpace {
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
+            item_norms: None,
         }
     }
 
@@ -595,46 +605,46 @@ impl ArrowSpace {
         }
     }
 
-    /// Before searching a lambda-tau value has to be computed for the query
-    ///  vector. Pass the query item and the `GraphLaplacian` to this method.
-    pub fn prepare_query_item(&self, item: &[f64], gl: &GraphLaplacian) -> f64 {
-        assert!(
-            item.iter().all(|x| x.is_finite()),
-            "all elements should be finite"
-        );
-        let item = if self.projection_matrix.is_some() {
-            self.project_query(item)
-        } else {
-            item.to_vec()
-        };
-
-        // Energy mode: map to nearest sub_centroid
-        if let (Some(sub_centroids), Some(sc_lambdas)) =
-            (&self.sub_centroids, &self.subcentroid_lambdas)
+    /// Compute query lambda for energy mode
+    /// 
+    /// Maps query to nearest subcentroid and returns its lambda.
+    /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
+    pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
+        // Energy mode: subcentroid mapping (fast)
+        if let (Some(subcentroids), Some(sc_lambdas)) = 
+            (&self.sub_centroids, &self.subcentroid_lambdas) 
         {
             let mut best_idx = 0;
             let mut best_dist = f64::INFINITY;
-
-            for sc_idx in 0..sub_centroids.shape().0 {
-                let dist: f64 = item
+            
+            // Find nearest subcentroid
+            for sc_idx in 0..subcentroids.shape().0 {
+                let dist: f64 = query
                     .iter()
-                    .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                    .zip(subcentroids.get_row(sc_idx).iterator(0))
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f64>()
                     .sqrt();
-
+                
                 if dist < best_dist {
                     best_dist = dist;
                     best_idx = sc_idx;
                 }
             }
-
-            return sc_lambdas[best_idx];
+            
+            let lambda = sc_lambdas[best_idx];
+            
+            debug!(
+                "Query mapped to subcentroid {}/{} with λ={:.6} (dist={:.4})",
+                best_idx, subcentroids.shape().0, lambda, best_dist
+            );
+            
+            return lambda;
         }
-
+    
         // Standard mode
-        let tau = TauMode::select_tau(&item, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda_csr(&item, &gl.matrix, tau);
+        let tau = TauMode::select_tau(&query, self.taumode);
+        let raw_lambda = TauMode::compute_synthetic_lambda_csr(&query, &gl.matrix, tau);
 
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \

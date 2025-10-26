@@ -277,6 +277,22 @@ pub trait EnergyMaps {
         p: &EnergyParams,
     ) -> DenseMatrix<f64>;
 
+    /// Compute adaptive w_lambda from normalized lambda range
+    /// 
+    /// Uses existing `range_lambdas` field (already normalized to [0,1]).
+    /// 
+    /// # Weight Mapping
+    /// 
+    /// | Range    | Quality      | Weight |
+    /// |----------|--------------|--------|
+    /// | 0.0-0.05 | Degenerate   | 0.5    |
+    /// | 0.2-0.5  | Moderate     | 1.0    |
+    /// | 0.5-1.0  | Good         | 1.5+   |
+    fn adaptive_w_lambda(&self) -> f64;
+
+    /// Compute balanced (w_lambda, w_dirichlet) pair
+    fn adaptive_energy_weights(&self) -> (f64, f64); 
+
     /// Perform energy-only nearest-neighbor search (no cosine).
     ///
     /// Ranks items by weighted sum of:
@@ -595,38 +611,150 @@ impl EnergyMaps for ArrowSpace {
     }
 
     /// Look-up query item against lambdas computed at build time
+    /// Pure lambda-only search - ultra fast linear scan
+    /// 
+    /// Query lambda is computed once via subcentroid mapping,
+    /// then search is O(N) comparison of pre-normalized lambdas.
     fn search_energy(
         &self,
         query: &[f64],
         gl_energy: &GraphLaplacian,
         k: usize,
     ) -> Vec<(usize, f64)> {
-        let query_lambda = self.prepare_query_item(&query, gl_energy);
-
+        let query_lambda = self.prepare_query_item(query, gl_energy);
+        
+        // Pre-compute query norm (once)
+        let query_norm = query.iter().map(|x| x * x).sum::<f64>().sqrt();
+        
         let mut scored: Vec<(usize, f64)> = self
             .lambdas
             .iter()
             .enumerate()
-            .map(|(i, lmbd)| {
-                let lambda_dist = (query_lambda - lmbd).abs();
-
-                // Tie-breaking: if lambda_dist ~0, use cosine distance
-                let score = if lambda_dist < 1e-12 {
+            .map(|(i, &lambda)| {
+                // Lambda distance (primary ranking)
+                let lambda_dist = (query_lambda - lambda).abs();
+                
+                // Tie-breaking: cosine similarity (only when lambdas match)
+                let tie_breaker = if lambda_dist < 1e-9 {
                     let item = self.get_item(i);
-                    let cos_sim = item.cosine_similarity(&query);
-                    1.0 - cos_sim // Convert similarity to distance
+                    
+                    // Dot product (must compute)
+                    let dot: f64 = query
+                        .iter()
+                        .zip(item.item.iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    
+                    // Item norm (pre-computed!)
+                    let item_norm = self
+                        .item_norms
+                        .as_ref()
+                        .map(|norms| norms[i])
+                        .unwrap_or_else(|| {
+                            item.item.iter().map(|x| x * x).sum::<f64>().sqrt()
+                        });
+                    
+                    let cosine = dot / (query_norm * item_norm + 1e-9);
+                    (1.0 - cosine) * 1e-12  // Distance (smaller = better)
                 } else {
-                    lambda_dist
+                    0.0  // Different lambdas: no tie-breaking
                 };
-
-                (i, score)
+                
+                (i, lambda_dist + tie_breaker)
             })
             .collect();
-
+        
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         scored.truncate(k);
         scored
     }
+
+
+    /// Compute adaptive w_lambda from normalized lambda range
+    #[inline]
+    fn adaptive_w_lambda(&self) -> f64 {
+        if self.range_lambdas < 1e-9 {
+            return 0.5;  // Degenerate case
+        }
+        
+        // Linear mapping: range [0,1] → weight [0.5, 2.0]
+        0.5 + 1.5 * self.range_lambdas
+    }
+    
+    /// Compute balanced (w_lambda, w_dirichlet) pair
+    #[inline]
+    fn adaptive_energy_weights(&self) -> (f64, f64) {
+        let w_lambda = self.adaptive_w_lambda();
+        let w_dirichlet = 2.5 - w_lambda;  // Complementary
+        (w_lambda, w_dirichlet)
+    }
+    
+    // /// Energy-only search with automatic adaptive weighting
+    // /// 
+    // /// Weights are computed automatically from lambda statistics:
+    // /// - w_lambda: Based on range_lambdas (discriminative power)
+    // /// - w_dirichlet: Complementary to balance contribution
+    // /// 
+    // /// No manual parameter tuning required!
+    // pub fn search_energy(
+    //     &self,
+    //     query: &[f64],
+    //     gl_energy: &GraphLaplacian,
+    //     k: usize,
+    // ) -> Vec<(usize, f64)> {
+    //     // Auto-compute weights from lambda statistics
+    //     let (w_lambda, w_dirichlet) = self.adaptive_energy_weights();
+        
+    //     debug!(
+    //         "Energy search: w_λ={:.3}, w_D={:.3} (range={:.4})",
+    //         w_lambda, w_dirichlet, self.range_lambdas
+    //     );
+        
+    //     // Warn if lambdas are degenerate
+    //     if self.range_lambdas < 0.05 {
+    //         warn!(
+    //             "Lambda range is small ({:.4}), results may be feature-dominated",
+    //             self.range_lambdas
+    //         );
+    //     }
+        
+    //     let query_lambda = self.prepare_query_item(query, gl_energy);
+        
+    //     // Precompute query norm for feature distance normalization
+    //     let query_norm = query.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-9);
+        
+    //     let mut scored: Vec<(usize, f64)> = self
+    //         .lambdas
+    //         .iter()
+    //         .enumerate()
+    //         .map(|(i, &lambda)| {
+    //             let item = self.get_item(i);
+                
+    //             // Lambda distance (normalized via range_lambdas)
+    //             let lambda_dist = (query_lambda - lambda).abs();
+                
+    //             // Feature distance (L2, normalized by query norm)
+    //             let feat_dist: f64 = query
+    //                 .iter()
+    //                 .zip(item.item.iter())
+    //                 .map(|(a, b)| (a - b).powi(2))
+    //                 .sum::<f64>()
+    //                 .sqrt() / query_norm;
+                
+    //             // Combined energy distance with adaptive weights
+    //             let score = w_lambda * lambda_dist + w_dirichlet * feat_dist;
+                
+    //             (i, score)
+    //         })
+    //         .collect();
+        
+    //     // Sort by score (ascending = best matches first)
+    //     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+    //     scored.truncate(k);
+        
+    //     scored
+    // }
+
 }
 
 // ------- helpers with logging -------
@@ -941,6 +1069,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
     /// 6. **Taumode Lambda Computation**: Computes per-item Rayleigh quotients (lambdas) over the
     ///    energy graph using the selected synthesis mode (Mean/Median/Max), enabling energy-aware
     ///    ranking during search.
+    /// 7. ...
+    /// 8. ...
     ///
     /// 2x/3x slower than `build(...)`
     fn build_energy(
@@ -1033,14 +1163,14 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             subcentroid_space.lambdas.iter().sum::<f64>() / subcentroid_space.nitems as f64
         );
 
-        // Step 8: Build centroid_map and assign lambdas to all items
+        // Step 8: Assign lambdas + compute norms (single parallel loop)
         info!(
-            "Mapping {} items to {:?} sub_centroids...",
+            "Mapping {} items to {:?} sub_centroids and computing norms...",
             aspace.nitems,
             sub_centroids.shape()
         );
 
-        let (centroid_map, item_lambdas): (Vec<usize>, Vec<f64>) = (0..aspace.nitems)
+        let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
             .into_par_iter()
             .map(|i| {
                 let item = aspace.get_item(i);
@@ -1064,14 +1194,33 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     }
                 }
 
-                // Assign sub_centroid's lambda to this item
-                (best_idx, subcentroid_space.lambdas[best_idx])
-            })
-            .unzip();
+                // Compute item L2 norm for cosine tie-breaking
+                let norm: f64 = item.item.iter().map(|x| x * x).sum::<f64>().sqrt();
 
-        // Store centroid map and lambdas in aspace
+                // Return (centroid_idx, lambda, norm)
+                (best_idx, subcentroid_space.lambdas[best_idx], norm)
+            })
+            .collect();
+
+        // Unzip results into separate vectors
+        let (centroid_map, item_lambdas, item_norms): (Vec<_>, Vec<_>, Vec<_>) = {
+            let mut cmap = Vec::with_capacity(results.len());
+            let mut lambdas = Vec::with_capacity(results.len());
+            let mut norms = Vec::with_capacity(results.len());
+            
+            for (cidx, lambda, norm) in results {
+                cmap.push(cidx);
+                lambdas.push(lambda);
+                norms.push(norm);
+            }
+            
+            (cmap, lambdas, norms)
+        };
+
+        // Store in aspace
         aspace.centroid_map = Some(centroid_map);
         aspace.lambdas = item_lambdas;
+        aspace.item_norms = Some(item_norms);
 
         info!(
             "Item λ assigned: min={:.6}, max={:.6}, mean={:.6}",
@@ -1080,7 +1229,15 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             aspace.lambdas.iter().sum::<f64>() / aspace.nitems as f64
         );
 
+        info!(
+            "Item norms computed: min={:.6}, max={:.6}, mean={:.6}",
+            aspace.item_norms.as_ref().unwrap().iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+            aspace.item_norms.as_ref().unwrap().iter().fold(0.0_f64, |a, &b| a.max(b)),
+            aspace.item_norms.as_ref().unwrap().iter().sum::<f64>() / aspace.nitems as f64
+        );
+
         (aspace, gl_energy)
+
     }
 
     fn build_energy_laplacian(

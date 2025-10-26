@@ -405,6 +405,7 @@ fn test_projection_preserves_relative_distances() {
     init();
     // Test Johnson-Lindenstrauss projection preserves relative distances
     let (data, _) = create_test_data(99, 18);
+    let query: Vec<f64> = data[10].clone().to_vec();
 
     println!("Testing JL projection with 200D data");
 
@@ -430,9 +431,9 @@ fn test_projection_preserves_relative_distances() {
     );
 
     // Create three queries with known relationships
-    let query1_orig = vec![0.5; 100];
-    let query2_orig = vec![0.51; 100]; // Very close to q1
-    let query3_orig = vec![5.0; 100]; // Far from q1
+    let query1_orig: Vec<f64> = query.clone();
+    let query2_orig: Vec<f64> = query.clone().iter().map(|x| x + 0.01).collect(); // Very close to q1
+    let query3_orig: Vec<f64> = query.clone().iter().map(|x| x * 10.0).collect(); // Far from q1
 
     // Project all three queries
     let query1_proj = aspace.project_query(&query1_orig);

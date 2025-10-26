@@ -18,14 +18,13 @@ fn test_energy_build_basic() {
     info!("Test: build_energy basic pipeline");
 
     let rows = test_data::make_gaussian_hd(100, 0.2);
-    let p = EnergyParams::default();
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows, p);
+    let (aspace, gl_energy) = builder.build_energy(rows,EnergyParams::new(&builder));
 
     assert!(aspace.nitems > 0);
     assert!(aspace.nfeatures == 100);
@@ -100,14 +99,13 @@ fn test_energy_laplacian_properties() {
     info!("Test: energy Laplacian properties (connectivity, symmetry)");
 
     let rows = test_data::make_moons_hd(60, 0.2, 0.1, 99, 42);
-    let p = EnergyParams::default();
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (_, gl_energy) = builder.build_energy(rows, p);
+    let (_, gl_energy) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     let sparsity = GraphLaplacian::sparsity(&gl_energy.matrix);
     assert!(sparsity < 0.95, "Laplacian should not be too sparse");
@@ -129,14 +127,13 @@ fn test_energy_build_with_projection() {
     info!("Test: build_energy with JL projection");
 
     let rows = test_data::make_gaussian_hd(70, 0.4);
-    let p = EnergyParams::default();
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(222)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, gl_energy) = builder.build_energy(rows, p);
+    let (aspace, gl_energy) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     assert!(aspace.projection_matrix.is_some());
     assert!(aspace.reduced_dim.is_some());
@@ -156,7 +153,6 @@ fn test_energy_build_taumode_consistency() {
     info!("Test: build_energy taumode consistency");
 
     let rows = test_data::make_moons_hd(50, 0.2, 0.08, 99, 42);
-    let p = EnergyParams::default();
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_synthesis(TauMode::Mean)
@@ -164,7 +160,7 @@ fn test_energy_build_taumode_consistency() {
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, _) = builder.build_energy(rows, p);
+    let (aspace, _) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     assert_eq!(aspace.taumode, TauMode::Mean);
     assert!(aspace.lambdas.len() == aspace.nitems);
@@ -222,14 +218,13 @@ fn test_energy_build_lambda_statistics() {
     info!("Test: build_energy lambda statistics");
 
     let rows = test_data::make_moons_hd(100, 0.2, 0.1, 99, 42);
-    let p = EnergyParams::default();
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let (aspace, _) = builder.build_energy(rows, p);
+    let (aspace, _) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     let lambdas = aspace.lambdas();
     let min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
