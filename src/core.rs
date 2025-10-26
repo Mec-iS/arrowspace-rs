@@ -543,37 +543,45 @@ impl ArrowSpace {
         }
     }
 
-    /// Create ArrowSpace from a DenseMatrix without building a graph
-    /// Used for temporary spaces where only data storage and lambda computation are needed
-    pub(crate) fn from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
-        let (nitems, nfeatures) = matrix.shape();
+// core.rs
+pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
+    let (n_rows, n_cols) = matrix.shape();
+    // For subcentroids, rows = C (items), cols = F (features)
+    let nitems = n_rows;
+    let nfeatures = n_cols;
 
-        Self {
-            data: matrix,
-            nitems,
-            nfeatures,
-            signals: sprs::CsMat::zero((0, 0)), // will be computed later
-            lambdas: vec![0.0; nitems],         // will be computed later
-            // lambdas normalisation
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
-            taumode: TAUDEFAULT,
-            // Clustering defaults
-            n_clusters: 0,
-            cluster_assignments: Vec::new(),
-            cluster_sizes: Vec::new(),
-            cluster_radius: 0.0,
-            // projection
-            projection_matrix: None,
-            reduced_dim: None,
-            // energymaps
-            centroid_map: None,
-            sub_centroids: None,
-            subcentroid_lambdas: None,
-            item_norms: None,
-        }
+    info!(
+        "Creating subcentroid ArrowSpace from DenseMatrix({}, {})",
+        n_rows, n_cols
+    );
+    info!(
+        "→ Interpreted as: {} subcentroids × {} features (row-major)",
+        nitems, nfeatures
+    );
+
+    Self {
+        data: matrix,
+        nitems,
+        nfeatures,
+        signals: sprs::CsMat::zero((0, 0)),
+        lambdas: vec![0.0; nitems],
+        min_lambdas: f64::NAN,
+        max_lambdas: f64::NAN,
+        range_lambdas: f64::NAN,
+        taumode: TAUDEFAULT,
+        n_clusters: 0,
+        cluster_assignments: Vec::new(),
+        cluster_sizes: Vec::new(),
+        cluster_radius: 0.0,
+        projection_matrix: None,
+        reduced_dim: None,
+        centroid_map: None,
+        sub_centroids: None,
+        subcentroid_lambdas: None,
+        item_norms: None,
     }
+}
+
 
     /// Project query vector to reduced space if projection was used during indexing
     ///
