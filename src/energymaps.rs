@@ -4,7 +4,7 @@
 //! - Uses ArrowSpace.projection_matrix for consistent feature-space operations
 //! - Falls back to spectral signals (F×F) when available, else bounded L2
 
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -72,18 +72,30 @@ impl Default for EnergyParams {
 }
 
 impl EnergyParams {
-    /// Creates EnergyParams optimized for the given ArrowSpaceBuilder configuration.
-    ///
-    /// Adapts parameters based on:
-    /// - lambda_k: Graph connectivity parameter from builder
-    /// - Expected dataset size (inferred from clustering/reduction settings)
-    /// - Dimension reduction ratio (if enabled)
-    ///
+    /// Create adaptive EnergyParams from ArrowSpaceBuilder configuration.
+    /// 
+    /// If the builder has `expected_nitems` set, uses dataset-size-aware adaptive tokens (2√N).
+    /// Otherwise falls back to dimensionality-based compression heuristics.
+    /// 
     /// # Arguments
-    /// * `builder` - Reference to ArrowSpaceBuilder to extract configuration
-    ///
-    /// # Returns
-    /// EnergyParams with adaptive settings for optimal sub_centroid resolution
+    /// * `builder` - Reference to ArrowSpaceBuilder with configuration
+    /// 
+    /// # Examples
+    /// 
+    /// ```ignore
+    /// // Dataset-aware (recommended for large datasets)
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_expected_items(313841)
+    ///     .with_lambda_graph(1.31, 25, 15, 2.0, Some(0.535));
+    /// let params = EnergyParams::new(&builder);
+    /// // → optical_tokens = 1119 (from 2√313841)
+    /// 
+    /// // Dimensionality-based (legacy behavior)
+    /// let builder = ArrowSpaceBuilder::new()
+    ///     .with_lambda_graph(1.31, 25, 15, 2.0, Some(0.535));
+    /// let params = EnergyParams::new(&builder);
+    /// // → optical_tokens based on dim_reduction_ratio
+    /// ```
     pub fn new(builder: &ArrowSpaceBuilder) -> Self {
         info!("Creating adaptive EnergyParams from ArrowSpaceBuilder");
 
@@ -100,13 +112,28 @@ impl EnergyParams {
         let candidate_m = (neighbor_k * 3).max(30).min(128);
 
         // Adaptive optical compression
-        // Rule: If dim reduction is aggressive, use more tokens to preserve structure
-        let optical_tokens = if builder.use_dims_reduction {
-            // More tokens when dimensions are reduced to compensate for information loss
+        // Priority 1: Use dataset size if available (2√N rule)
+        // Priority 2: Use dimensionality heuristic (legacy)
+        let optical_tokens = if builder.n_items_original != 0 {
+            // Dataset-size-aware adaptive tokens (preferred)
+            let tokens = Self::compute_adaptive_tokens(builder.n_items_original);
+            info!(
+                "Using dataset-aware optical_tokens={} for {} items (2√N rule)",
+                tokens, builder.n_items_original
+            );
+            Some(tokens)
+        } else if builder.use_dims_reduction {
+            // Dimensionality-based heuristic (fallback)
             let tokens = (80.0 / dim_reduction_ratio).ceil() as usize;
-            Some(tokens.max(40).min(200))
+            let tokens = tokens.max(40).min(200);
+            warn!(
+                "Using dim-reduction heuristic: optical_tokens={} (consider setting expected_nitems for better scaling)",
+                tokens
+            );
+            Some(tokens)
         } else {
-            // Moderate compression when no dim reduction
+            // Moderate compression when no context available
+            warn!("No dataset size or dim reduction info; using default optical_tokens=60");
             Some(60)
         };
 
@@ -131,6 +158,26 @@ impl EnergyParams {
 
             candidate_m,
         }
+    }
+    
+    /// Compute adaptive optical token budget based on dataset size.
+    /// 
+    /// Uses the rule of thumb: 2√N tokens, clamped to [100, 2000].
+    /// This provides good resolution while keeping compression effective.
+    /// 
+    /// # Examples
+    /// 
+    /// ```ignore
+    /// let tokens = compute_adaptive_tokens(1000);    // ~63 tokens
+    /// let tokens = compute_adaptive_tokens(10000);   // ~200 tokens
+    /// let tokens = compute_adaptive_tokens(100000);  // ~632 tokens
+    /// let tokens = compute_adaptive_tokens(313841);  // ~1119 tokens
+    /// let tokens = compute_adaptive_tokens(1000000); // ~2000 tokens (clamped)
+    /// ```
+    pub fn compute_adaptive_tokens(nitems: usize) -> usize {
+        let sqrt_n = (nitems as f64).sqrt();
+        let tokens = (sqrt_n * 2.0).round() as usize;
+        tokens.max(100).min(2000)
     }
 
     /// Creates EnergyParams with minimal compression for maximum resolution.
@@ -240,8 +287,6 @@ pub trait EnergyMaps {
     /// * `query` - Query vector in original feature space
     /// * `gl_energy` - Energy-based Laplacian for query lambda computation
     /// * `k` - Number of results to return
-    /// * `w_lambda` - Weight for lambda proximity term
-    /// * `w_dirichlet` - Weight for Rayleigh-Dirichlet term
     ///
     /// # Returns
     /// Vector of (index, score) sorted descending by score
@@ -910,6 +955,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         if self.prebuilt_spectral == true {
             panic!("Spectral mode not compatible with build_energy, please do not enable for energy search");
         }
+        self.n_items_original = rows.len();
 
         // Step 1: Build base ArrowSpace with clustering
         let ClusteredOutput {
