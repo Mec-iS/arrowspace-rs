@@ -610,6 +610,7 @@ impl ArrowSpace {
     /// Maps query to nearest subcentroid and returns its lambda.
     /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
     pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
+        assert!(query.iter().all(|x| x.is_finite()), "query item has non-finite values");
         // Energy mode: subcentroid mapping (fast)
         if let (Some(subcentroids), Some(sc_lambdas)) =
             (&self.sub_centroids, &self.subcentroid_lambdas)
