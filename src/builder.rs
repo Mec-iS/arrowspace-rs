@@ -1,13 +1,13 @@
 use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use serde::{Deserialize, Serialize};
 
 use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
+use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::GraphLaplacian;
 use crate::sampling::SamplerType;
-use crate::eigenmaps::{EigenMaps, ClusteredOutput};
 use crate::taumode::TauMode;
 
 #[derive(Clone, Debug)]
@@ -274,10 +274,10 @@ impl ArrowSpaceBuilder {
             if let Some((ref name, ref path)) = self.persistence {
                 use crate::storage::parquet::save_dense_matrix_with_builder;
                 use crate::storage::StorageError;
-                
+
                 // Create temporary ArrowSpace for saving raw data
                 let temp_aspace = ArrowSpace::new(rows.clone(), self.synthesis);
-                
+
                 let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
                     &temp_aspace.data,
                     path.clone(),
@@ -286,7 +286,9 @@ impl ArrowSpaceBuilder {
                 );
                 match saved {
                     Ok(_) => debug!("raw-input saved"),
-                    Err(StorageError::Parquet(err)) => panic!("saving failed for raw-input {}", err),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for raw-input {}", err)
+                    }
                     _ => panic!("Error with {:?}", saved),
                 };
             }
@@ -318,7 +320,9 @@ impl ArrowSpaceBuilder {
                 );
                 match saved {
                     Ok(_) => debug!("clustered_dm saved"),
-                    Err(StorageError::Parquet(err)) => panic!("saving failed for clustered_dm {}", err),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for clustered_dm {}", err)
+                    }
                     _ => panic!("Error with {:?}", saved),
                 };
             }
@@ -367,7 +371,9 @@ impl ArrowSpaceBuilder {
                 );
                 match saved {
                     Ok(_) => debug!("gl.matrix saved"),
-                    Err(StorageError::Parquet(err)) => panic!("saving failed for gl.matrix {}", err),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for gl.matrix {}", err)
+                    }
                     _ => panic!("Error with {:?}", saved),
                 };
             }
@@ -425,7 +431,9 @@ impl ArrowSpaceBuilder {
                 );
                 match saved {
                     Ok(_) => debug!("{}-lambdas saved", name),
-                    Err(StorageError::Parquet(err)) => panic!("saving failed for {}-lambdas {}", name, err),
+                    Err(StorageError::Parquet(err)) => {
+                        panic!("saving failed for {}-lambdas {}", name, err)
+                    }
                     _ => panic!("Error with {:?}", saved),
                 };
             }
@@ -450,10 +458,9 @@ impl ArrowSpaceBuilder {
         );
         debug!("ArrowSpaceBuilder configuration: {}", self);
         info!("ArrowSpace build completed successfully");
-        
+
         (aspace, gl)
     }
-
 }
 
 impl fmt::Display for ArrowSpaceBuilder {

@@ -7,7 +7,7 @@
 //! 4. Lambda-aware similarity search in clustered space
 //! 5. Hybrid search combining semantic and spectral scoring
 
-use log::debug;
+use log::{debug, warn};
 
 use crate::{
     builder::ArrowSpaceBuilder,
@@ -335,34 +335,36 @@ fn test_range_search_with_query_lambda() {
 #[test]
 fn test_lambda_values_reasonable_range() {
     init();
-    // Test that query lambdas are in reasonable range
     let (data, queries) = create_test_data(99, 18);
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
-        .with_normalisation(true)
-        .with_spectral(true)
+        //.with_spectral(true)
         .with_sparsity_check(false)
         .with_seed(42)
         .build(data);
 
-    // Test all queries
     for (i, query) in queries.iter().enumerate() {
         let lambda = aspace.prepare_query_item(query, &gl);
 
-        assert!(lambda >= 0.0, "Lambda should be non-negative: query {}", i);
-        assert!(lambda.is_finite(), "Lambda should be finite: query {}", i);
+        assert!(lambda >= 0.0, "Lambda negative: query {}", i);
+        assert!(lambda.is_finite(), "Lambda not finite: query {}", i);
+
+        // CRITICAL: Add upper bound check
         assert!(
-            lambda < 100.0,
-            "Lambda unusually large for query {}: {:.4}",
+            lambda <= 1.0,
+            "Lambda out of bounds: query {}, λ={:.2e} (expected [0, 1])",
             i,
             lambda
         );
 
+        // Warn if lambda > 1 but < 10 (indicates normalization issue)
+        if lambda > 1.0 {
+            warn!("Query {} lambda={:.6} exceeds [0,1] range", i, lambda);
+        }
+
         debug!("Query {} lambda: {:.6}", i, lambda);
     }
-
-    debug!("✓ All query lambdas in reasonable range");
 }
 
 #[test]
@@ -408,7 +410,6 @@ fn test_projection_preserves_relative_distances() {
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(1.0, 6, 2, 2.0, None)
-        .with_normalisation(true)
         .with_dims_reduction(true, Some(0.3)) // 30% of original dimension
         .with_sparsity_check(false)
         .with_seed(42)

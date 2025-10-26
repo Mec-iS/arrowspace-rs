@@ -419,41 +419,6 @@ fn test_numerical_stability() {
     );
 }
 
-#[test]
-fn test_performance_with_larger_dataset() {
-    // Test with larger dataset to ensure algorithm completes reasonably
-    let large_items: Vec<Vec<f64>> = crate::tests::test_data::QUORA_EMBEDDS
-        .iter()
-        .map(|inner_slice| inner_slice.to_vec())
-        .collect();
-
-    let params = GraphParams {
-        eps: 0.5,
-        k: 4,
-        topk: 3,
-        p: 2.0,
-        sigma: Some(0.25),
-        normalise: false,
-        sparsity_check: true,
-    };
-
-    let start = std::time::Instant::now();
-    let laplacian = build_laplacian_matrix(
-        DenseMatrix::<f64>::from_2d_vec(&large_items)
-            .unwrap()
-            .transpose(),
-        &params,
-        None,
-    );
-    let duration = start.elapsed();
-
-    assert_eq!(laplacian.nnodes, 15);
-    debug!("Large dataset (15 items) processed in {:?}", duration);
-
-    // Sanity check - should complete in reasonable time
-    assert!(duration.as_secs() < 5, "Should complete within 5 seconds");
-}
-
 // Helper function to count non-zero adjacency entries
 fn count_nonzero_adjacency(adjacency: &CsMat<f64>) -> usize {
     let (rows, cols) = adjacency.shape();

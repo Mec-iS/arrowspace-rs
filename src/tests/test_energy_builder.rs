@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use crate::builder::ArrowSpaceBuilder;
-use crate::energymaps::{EnergyParams, EnergyMapsBuilder};
+use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
 use log::info;
@@ -33,7 +33,10 @@ fn test_energy_build_basic() {
     assert!(gl_energy.nnz() > 0);
     assert!(aspace.lambdas.iter().any(|&l| l != 0.0));
 
-    info!("✓ Energy build succeeded with {} items, {} GL nodes", aspace.nitems, gl_energy.nnodes);
+    info!(
+        "✓ Energy build succeeded with {} items, {} GL nodes",
+        aspace.nitems, gl_energy.nnodes
+    );
 }
 
 #[test]
@@ -57,7 +60,10 @@ fn test_energy_build_with_optical_compression() {
     assert!(gl_energy.nnodes <= 30 * 2);
     assert!(aspace.lambdas.iter().any(|&l| l > 0.0));
 
-    info!("✓ Optical compression: {} GL nodes (target ≤ {})", gl_energy.nnodes, 30);
+    info!(
+        "✓ Optical compression: {} GL nodes (target ≤ {})",
+        gl_energy.nnodes, 30
+    );
 }
 
 #[test]
@@ -82,7 +88,10 @@ fn test_energy_build_diffusion_splits() {
     assert!(gl_energy.nnodes >= aspace.n_clusters);
     assert!(aspace.lambdas().iter().all(|&l| l.is_finite()));
 
-    info!("✓ Diffusion + splitting: {} clusters → {} GL nodes", aspace.n_clusters, gl_energy.nnodes);
+    info!(
+        "✓ Diffusion + splitting: {} clusters → {} GL nodes",
+        aspace.n_clusters, gl_energy.nnodes
+    );
 }
 
 #[test]
@@ -107,7 +116,11 @@ fn test_energy_laplacian_properties() {
     let is_sym = gl_energy.is_symmetric(1e-6);
     assert!(is_sym, "Energy Laplacian should be symmetric");
 
-    info!("✓ Laplacian: {:.2}% sparse, symmetric={}", sparsity * 100.0, is_sym);
+    info!(
+        "✓ Laplacian: {:.2}% sparse, symmetric={}",
+        sparsity * 100.0,
+        is_sym
+    );
 }
 
 #[test]
@@ -130,7 +143,11 @@ fn test_energy_build_with_projection() {
     assert!(aspace.reduced_dim.unwrap() < 128);
     assert!(aspace.lambdas().iter().any(|&l| l > 0.0));
 
-    info!("✓ Projection: 128 → {} dims, {} GL nodes", aspace.reduced_dim.unwrap(), gl_energy.nnodes);
+    info!(
+        "✓ Projection: 128 → {} dims, {} GL nodes",
+        aspace.reduced_dim.unwrap(),
+        gl_energy.nnodes
+    );
 }
 
 #[test]
@@ -154,7 +171,11 @@ fn test_energy_build_taumode_consistency() {
     assert!(aspace.lambdas.iter().all(|&l| l >= 0.0 && l.is_finite()));
 
     let lambda_mean = aspace.lambdas.iter().sum::<f64>() / aspace.lambdas.len() as f64;
-    info!("✓ Taumode Mean: {} lambdas, mean={:.6}", aspace.lambdas.len(), lambda_mean);
+    info!(
+        "✓ Taumode Mean: {} lambdas, mean={:.6}",
+        aspace.lambdas.len(),
+        lambda_mean
+    );
 }
 
 #[test]
@@ -189,7 +210,10 @@ fn test_energy_build_custom_params() {
     assert!(!gl_energy.graph_params.normalise);
     assert!(aspace.lambdas.iter().any(|&l| l > 0.0));
 
-    info!("✓ Custom params: k={}, normalize={}", gl_energy.graph_params.k, gl_energy.graph_params.normalise);
+    info!(
+        "✓ Custom params: k={}, normalize={}",
+        gl_energy.graph_params.k, gl_energy.graph_params.normalise
+    );
 }
 
 #[test]
@@ -216,5 +240,8 @@ fn test_energy_build_lambda_statistics() {
     assert!(max > min);
     assert!(mean > 0.0 && mean.is_finite());
 
-    info!("✓ Lambda stats: min={:.6}, max={:.6}, mean={:.6}", min, max, mean);
+    info!(
+        "✓ Lambda stats: min={:.6}, max={:.6}, mean={:.6}",
+        min, max, mean
+    );
 }

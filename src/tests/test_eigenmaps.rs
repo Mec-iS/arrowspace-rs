@@ -28,41 +28,34 @@ use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
 
-use crate::tests::test_data::make_gaussian_hd;
 use crate::tests::init;
+use crate::tests::test_data::make_gaussian_hd;
 
 /// Helper: Compare two ArrowSpace lambda vectors element-wise with tolerance.
 fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: bool) {
     init();
-    assert_eq!(
-        a.len(),
-        b.len(),
-        "{}: lambda vector length mismatch",
-        label
-    );
+    assert_eq!(a.len(), b.len(), "{}: lambda vector length mismatch", label);
     for (i, (&la, &lb)) in a.iter().zip(b.iter()).enumerate() {
         if !spectral {
-            assert!(la >= 0.0 && lb >= 0.0, "lambda_a is {} and lambda_b {}", la, lb);
+            assert!(
+                la >= 0.0 && lb >= 0.0,
+                "lambda_a is {} and lambda_b {}",
+                la,
+                lb
+            );
         }
-        if relative_ne!(
-            la,
-            lb,
-            epsilon = tol,
-            max_relative = tol) {
-                println!("lambdas are not equal: {} {}", la, lb);
-                panic!("{}[{}]: lambda mismatch", label, i)
-            } else {};
+        if relative_ne!(la, lb, epsilon = tol, max_relative = tol) {
+            println!("lambdas are not equal: {} {}", la, lb);
+            panic!("{}[{}]: lambda mismatch", label, i)
+        } else {
+        };
     }
 }
 
 /// Helper: Compare clustering metadata between two ArrowSpace instances.
 fn assert_clustering_equal(a: &ArrowSpace, b: &ArrowSpace, label: &str) {
     init();
-    assert_eq!(
-        a.n_clusters, b.n_clusters,
-        "{}: n_clusters mismatch",
-        label
-    );
+    assert_eq!(a.n_clusters, b.n_clusters, "{}: n_clusters mismatch", label);
     assert_eq!(
         a.cluster_assignments, b.cluster_assignments,
         "{}: cluster_assignments mismatch",
@@ -73,12 +66,10 @@ fn assert_clustering_equal(a: &ArrowSpace, b: &ArrowSpace, label: &str) {
         "{}: cluster_sizes mismatch",
         label
     );
-    if relative_ne!(
-        a.cluster_radius,
-        b.cluster_radius,
-        epsilon = 1e-9) {
-            panic!("{}: cluster_radius mismatch", label)
-        } else {};
+    if relative_ne!(a.cluster_radius, b.cluster_radius, epsilon = 1e-9) {
+        panic!("{}: cluster_radius mismatch", label)
+    } else {
+    };
 }
 
 /// Helper: Compare GraphLaplacian properties (shape, nnodes, nnz, sparsity).
@@ -90,28 +81,54 @@ fn assert_laplacian_equal(a: &GraphLaplacian, b: &GraphLaplacian, label: &str) {
     if relative_ne!(
         GraphLaplacian::sparsity(&a.matrix),
         GraphLaplacian::sparsity(&b.matrix),
-        epsilon = 1e-9) {
-            panic!("{}: sparsity mismatch", label)
-        } else {};
+        epsilon = 1e-9
+    ) {
+        panic!("{}: sparsity mismatch", label)
+    } else {
+    };
 }
 
 /// Helper: Compare search results (indices and scores within tolerance).
-fn assert_search_results_equal(
-    a: &[(usize, f64)],
-    b: &[(usize, f64)],
-    tol: f64,
-    label: &str,
-) {
+fn assert_search_results_equal(a: &[(usize, f64)], b: &[(usize, f64)], tol: f64, label: &str) {
     assert_eq!(a.len(), b.len(), "{}: result count mismatch", label);
     for (i, ((idx_a, score_a), (idx_b, score_b))) in a.iter().zip(b.iter()).enumerate() {
         assert_eq!(idx_a, idx_b, "{}[{}]: index mismatch", label, i);
-        if relative_ne!(
-            score_a,
-            score_b,
-            epsilon = tol) {
-                panic!("{}[{}]: score mismatch", label, i)
-            } else {};
+        if relative_ne!(score_a, score_b, epsilon = tol) {
+            panic!("{}[{}]: score mismatch", label, i)
+        } else {
+        };
     }
+}
+
+#[test]
+#[should_panic]
+fn test_eigenmaps_non_sensical_undecidable_query() {
+    crate::init(); // Initialize logger
+    info!("Test: EigenMaps trait vs build() - basic dataset");
+
+    let rows = make_gaussian_hd(99, 0.6);
+    // this vector is not in the context of the dataset
+    // it is not being generated consistently like the others
+    let query = vec![0.5; 100];
+
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_synthesis(TauMode::Median)
+        .with_seed(12345) // Same seed
+        .with_inline_sampling(None)
+        .with_dims_reduction(false, None);
+
+    let ClusteredOutput {
+        mut aspace,
+        centroids,
+        n_items,
+        ..
+    } = ArrowSpace::start_clustering(&mut builder, rows.clone());
+
+    let gl = aspace.eigenmaps(&builder, &centroids, n_items);
+    aspace.compute_taumode(&gl);
+
+    let _ = aspace.prepare_query_item(&query, &gl);
 }
 
 #[test]
@@ -120,7 +137,8 @@ fn test_eigenmaps_vs_build_basic() {
     info!("Test: EigenMaps trait vs build() - basic dataset");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![0.5; 100];
+    let query_idx = 10;
+    let query = &rows[query_idx];
     let k = 5;
     let tau = 0.7;
 
@@ -164,15 +182,13 @@ fn test_eigenmaps_vs_build_basic() {
         aspace.lambdas(),
         1e-6,
         "basic lambdas",
-        false
+        false,
     );
 
     // Verify search results
+    let query_lambda = aspace_control.prepare_query_item(&query, &gl_control);
     let results_control = aspace_control.search_lambda_aware(
-        &crate::core::ArrowItem::new(
-            query.clone(),
-            aspace_control.prepare_query_item(&query, &gl_control),
-        ),
+        &crate::core::ArrowItem::new(query.clone(), query_lambda),
         k,
         tau,
     );
@@ -190,7 +206,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
     info!("Test: EigenMaps trait vs build() - with spectral Laplacian");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![0.1; 100];
+    let query = &rows[10];
     let k = 4;
     let tau = 0.6;
 
@@ -244,7 +260,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
         aspace.lambdas(),
         1e-6,
         "spectral lambdas",
-        true
+        true,
     );
 
     // Search
@@ -270,7 +286,8 @@ fn test_eigenmaps_vs_build_different_taumode() {
     info!("Test: EigenMaps trait vs build() - Mean taumode");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![-0.2; 100];
+    let query_idx = 10;
+    let query = &rows[query_idx];
     let k = 6;
     let tau = 0.75;
 
@@ -308,7 +325,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
         aspace.lambdas(),
         1e-6,
         "mean_taumode lambdas",
-        false
+        false,
     );
 
     // Search
