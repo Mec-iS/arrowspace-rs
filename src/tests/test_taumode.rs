@@ -583,7 +583,7 @@ fn test_taumode_energy_consistency_with_projection() {
         .with_dims_reduction(true, Some(0.3)) // reduce to 30% of features
         .with_synthesis(TauMode::Median);
 
-    let p = EnergyParams::default();
+    let p = EnergyParams::new(&builder);
 
     let (aspace, gl) = builder.build_energy(rows.clone(), p);
 

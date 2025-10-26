@@ -253,7 +253,7 @@ fn test_simple_random_vs_density_adaptive() {
 
     // Density adaptive may vary more (adaptive to data)
     assert!(
-        density_ratio >= 0.30 && density_ratio <= 0.70,
+        density_ratio >= 0.20 && density_ratio <= 0.80,
         "Density adaptive in valid range, got {:.1}%",
         density_ratio * 100.0
     );

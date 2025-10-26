@@ -216,7 +216,7 @@ impl TauMode {
         info!("╚═════════════════════════════════════════════════════════════╝");
 
         // Threshold for adaptive algorithm selection
-        const PARALLEL_THRESHOLD: usize = 3000;
+        const PARALLEL_THRESHOLD: usize = 1000;
 
         // Counters for algorithm selection statistics
         use std::sync::atomic::{AtomicUsize, Ordering};
