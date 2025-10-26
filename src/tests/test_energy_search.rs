@@ -496,8 +496,8 @@ fn test_energy_vs_standard_precision_at_k() {
     crate::init();
     info!("Test: energy vs standard precision@k with ground truth");
 
-    let rows = test_data::make_moons_hd(100, 0.3, 0.08, 99, 42);
-    let query_idx = 10;
+    let rows = test_data::make_energy_test_dataset(300, 100, 42);
+    let query_idx = 34;
     let query = rows[query_idx].clone();
     let k = 10;
 
@@ -520,7 +520,8 @@ fn test_energy_vs_standard_precision_at_k() {
     // Standard search
     let builder_std = ArrowSpaceBuilder::new()
         .with_seed(111)
-        .with_lambda_graph(0.2, 2, 1, 2.0, None)
+        .with_normalisation(true)
+        .with_lambda_graph(1.0, 2, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
@@ -536,6 +537,8 @@ fn test_energy_vs_standard_precision_at_k() {
     let p = EnergyParams::default();
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_seed(111)
+        .with_normalisation(true)
+        .with_lambda_graph(1.0, 2, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) = builder_energy.build_energy(rows.clone(), p);

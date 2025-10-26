@@ -6253,6 +6253,7 @@ pub const PROTEINS_EMBEDS: &[&[f64]] = &[
 
 /// generate a make moon-like dataset
 /// NOTE: use with `.with_normalisation(true)`
+/// use to cover two cluster edge cases
 pub fn make_moons_hd(
     n: usize,
     noise_xy: f64,

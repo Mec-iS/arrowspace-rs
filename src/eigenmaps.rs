@@ -406,7 +406,7 @@ impl EigenMaps for ArrowSpace {
 
     //     aspace_with_signals
     // }
-
+    
     fn search(
         &mut self,
         item: &[f64],

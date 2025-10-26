@@ -224,14 +224,14 @@ fn test_simple_random_vs_density_adaptive() {
     // Simple random with 50% rate
     let (aspace_simple, _) = ArrowSpaceBuilder::new()
         .with_inline_sampling(Some(SamplerType::Simple(0.5)))
-        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(42)
         .build(rows.clone());
 
     // Density adaptive with 50% base rate
     let (aspace_adapt, gl_adapt) = ArrowSpaceBuilder::new()
         .with_inline_sampling(Some(SamplerType::DensityAdaptive(0.5)))
-        .with_lambda_graph(1e-3, 3, 3, 2.0, None)
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(42)
         .build(rows.clone());
 

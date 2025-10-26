@@ -635,10 +635,19 @@ impl ArrowSpace {
         let raw_lambda = TauMode::compute_synthetic_lambda_csr(&item, &gl.matrix, tau);
         
         // Normalize if stats are available
+        let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
+            Also, the query item may be out of context for the dataset (undecidable), \
+            despite all safeguards its lambda is 0.0";
         if self.range_lambdas.is_finite() {
-            self.normalise_query_lambda(raw_lambda)
+            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12){
+                panic!("{}", msg)
+            }
+            return self.normalise_query_lambda(raw_lambda)
         } else {
-            raw_lambda
+            if relative_eq!(raw_lambda, 0.0, epsilon = 1e-12){
+                panic!("{}", msg)
+            }
+            return raw_lambda
         }
     }
 
@@ -1050,7 +1059,11 @@ impl ArrowSpace {
         );
         
         // Apply same transform as batch normalization
-        (raw_lambda - self.min_lambdas) / self.range_lambdas
+        let normalized = (raw_lambda - self.min_lambdas) / self.range_lambdas;
+        
+        // Clamp to [0, 1] to handle edge cases where query lambda is outside
+        // the training range (e.g., out-of-distribution queries)
+        normalized.clamp(0.0, 1.0)
     }
 
     /// Range search by Euclidean distance within `radius`.

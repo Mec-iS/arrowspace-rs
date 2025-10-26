@@ -216,7 +216,7 @@ impl TauMode {
         info!("╚═════════════════════════════════════════════════════════════╝");
 
         // Threshold for adaptive algorithm selection
-        const PARALLEL_THRESHOLD: usize = 1000;
+        const PARALLEL_THRESHOLD: usize = 3000;
 
         // Counters for algorithm selection statistics
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -600,6 +600,8 @@ impl TauMode {
             trace!("  WARNING: Near-zero denominator ({:.2e})", denominator);
             0.0
         };
+        // Defensive: clamp before bounded formula
+        let e_raw = e_raw.max(0.0).min(1e6);
 
         trace!(
             "  E_raw: {:.8} (num={:.8}, denom={:.8})",
@@ -640,6 +642,8 @@ impl TauMode {
 
         let g_raw = g_sq_sum.clamp(0.0, 1.0);
         let e_bounded = e_raw / (e_raw + tau);
+        // Final safety clamp
+        let e_bounded = e_bounded.clamp(0.0, 1.0);
 
         trace!("  G_raw: {:.8} (clamped from {:.8})", g_raw, g_sq_sum);
         trace!("  E_bounded: {:.8}", e_bounded);

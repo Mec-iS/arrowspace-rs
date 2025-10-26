@@ -115,12 +115,44 @@ fn assert_search_results_equal(
 }
 
 #[test]
+#[should_panic]
+fn test_eigenmaps_non_sensical_undecidable_query() {
+    crate::init(); // Initialize logger
+    info!("Test: EigenMaps trait vs build() - basic dataset");
+
+    let rows = make_gaussian_hd(99, 0.6);
+    // this vector is not in the context of the dataset
+    // it is not being generated consistently like the others
+    let query = vec![0.5; 100];
+
+    let mut builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_synthesis(TauMode::Median)
+        .with_seed(12345) // Same seed
+        .with_inline_sampling(None)
+        .with_dims_reduction(false, None);
+
+    let ClusteredOutput {
+        mut aspace,
+        centroids,
+        n_items,
+        ..
+    } = ArrowSpace::start_clustering(&mut builder, rows.clone());
+
+    let gl = aspace.eigenmaps(&builder, &centroids, n_items);
+    aspace.compute_taumode(&gl);
+
+    let _ = aspace.prepare_query_item(&query, &gl);
+}
+
+#[test]
 fn test_eigenmaps_vs_build_basic() {
     crate::init(); // Initialize logger
     info!("Test: EigenMaps trait vs build() - basic dataset");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![0.5; 100];
+    let query_idx = 10;
+    let query = &rows[query_idx];
     let k = 5;
     let tau = 0.7;
 
@@ -168,10 +200,11 @@ fn test_eigenmaps_vs_build_basic() {
     );
 
     // Verify search results
+    let query_lambda = aspace_control.prepare_query_item(&query, &gl_control);
     let results_control = aspace_control.search_lambda_aware(
         &crate::core::ArrowItem::new(
             query.clone(),
-            aspace_control.prepare_query_item(&query, &gl_control),
+            query_lambda,
         ),
         k,
         tau,
@@ -190,7 +223,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
     info!("Test: EigenMaps trait vs build() - with spectral Laplacian");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![0.1; 100];
+    let query = &rows[10];
     let k = 4;
     let tau = 0.6;
 
@@ -270,7 +303,8 @@ fn test_eigenmaps_vs_build_different_taumode() {
     info!("Test: EigenMaps trait vs build() - Mean taumode");
 
     let rows = make_gaussian_hd(99, 0.6);
-    let query = vec![-0.2; 100];
+    let query_idx = 10;
+    let query = &rows[query_idx];
     let k = 6;
     let tau = 0.75;
 

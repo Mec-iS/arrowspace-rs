@@ -783,6 +783,9 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             self.use_dims_reduction == true, 
             "When using build_energy, dim reduction is needed"
         );
+        if self.prebuilt_spectral == true {
+            panic!("Spectral mode not compatible with build_energy, please do not enable for energy search");
+        }
         
         // Step 1: Build base ArrowSpace with clustering
         let ClusteredOutput {
