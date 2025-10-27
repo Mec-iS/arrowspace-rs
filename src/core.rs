@@ -656,7 +656,7 @@ pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
 
         // Standard mode
         let tau = TauMode::select_tau(&query, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda_csr(&query, &gl.matrix, tau);
+        let raw_lambda = TauMode::compute_synthetic_lambda(&query, &gl.matrix, tau);
 
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \

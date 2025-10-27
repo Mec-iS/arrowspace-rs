@@ -649,7 +649,7 @@ impl EnergyMaps for ArrowSpace {
                         .unwrap_or_else(|| item.item.iter().map(|x| x * x).sum::<f64>().sqrt());
 
                     let cosine = dot / (query_norm * item_norm + 1e-9);
-                    (1.0 - cosine) * 1e-12 // Distance (smaller = better)
+                    (1.0 - cosine) * 1e-9 // Distance (smaller = better)
                 } else {
                     0.0 // Different lambdas: no tie-breaking
                 };
@@ -1107,63 +1107,75 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         let mut sub_centroids =
             ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
 
-    // Step 5: Optional optical compression on sub_centroids
-    if let Some(tokens) = energy_params.optical_tokens {
-        sub_centroids = ArrowSpace::optical_compress_centroids(
-            &sub_centroids,
-            tokens,
-            energy_params.trim_quantile,
-        );
-    }
+        // Step 5: Optional optical compression on sub_centroids
+        if let Some(tokens) = energy_params.optical_tokens {
+            sub_centroids = ArrowSpace::optical_compress_centroids(
+                &sub_centroids,
+                tokens,
+                energy_params.trim_quantile,
+            );
+        }
 
-    // Step 5.5: APPLY JL DIMENSION REDUCTION (matches build() pipeline)
-    let (sub_centroids_reduced, reduced_dim) = if self.use_dims_reduction {
-        let (n_subcentroids, current_features) = sub_centroids.shape();
-        if current_features > 64 {
-            use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
-            
-            let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
-            let target_dim = jl_dim.min(current_features / 2);
-            
-            if target_dim < current_features {
-                info!(
-                    "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
-                    current_features, target_dim, self.rp_eps
-                );
+        // Step 5.5: APPLY JL DIMENSION REDUCTION (matches build() pipeline)
+        let (sub_centroids_reduced, reduced_dim) = if self.use_dims_reduction {
+            let (n_subcentroids, current_features) = sub_centroids.shape();
+            if current_features > 64 {
+                use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
                 
-                let implicit_proj = ImplicitProjection::new(current_features, target_dim);
-                let projected = project_matrix(&sub_centroids, &implicit_proj);
+                let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
+                let target_dim = jl_dim.min(current_features / 2);
                 
-                info!(
-                    "Sub_centroids projection complete: {:.1}x compression",
-                    current_features as f64 / target_dim as f64
-                );
-                
-                (projected, target_dim)
+                if target_dim < current_features {
+                    info!(
+                        "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
+                        current_features, target_dim, self.rp_eps
+                    );
+                    
+                    let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                    let projected = project_matrix(&sub_centroids, &implicit_proj);
+                    
+                    info!(
+                        "Sub_centroids projection complete: {:.1}x compression",
+                        current_features as f64 / target_dim as f64
+                    );
+                    
+                    (projected, target_dim)
+                } else {
+                    debug!(
+                        "JL target dimension {} >= current {}, skipping projection",
+                        target_dim, current_features
+                    );
+                    (sub_centroids, current_features)
+                }
             } else {
-                debug!(
-                    "JL target dimension {} >= current {}, skipping projection",
-                    target_dim, current_features
-                );
+                debug!("Sub_centroids dimension {} too small for JL projection", current_features);
                 (sub_centroids, current_features)
             }
         } else {
-            debug!("Sub_centroids dimension {} too small for JL projection", current_features);
-            (sub_centroids, current_features)
-        }
-    } else {
-        panic!("build_energy requires dimensionality reduction")
-    };
+            panic!("build_energy requires dimensionality reduction")
+        };
 
-    info!(
-        "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
-        centroids.shape(),
-        sub_centroids_reduced.shape(),
-        reduced_dim
-    );
+        info!(
+            "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
+            centroids.shape(),
+            sub_centroids_reduced.shape(),
+            reduced_dim
+        );
 
         // Step 6: Build energy Laplacian on sub_centroids
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids_reduced, &energy_params);
+
+        // extra validation
+        let actual_rows = sub_centroids_reduced.shape().0;
+        let actual_cols = sub_centroids_reduced.shape().1;
+        let graph_cols = gl_energy.shape().1;
+
+        assert_eq!(graph_cols, actual_rows,
+            "Graph cols ({}) must match sub_centroids rows ({})", 
+            graph_cols, actual_rows);
+        assert_eq!(actual_cols, reduced_dim,
+            "Reduced dimensions ({}) should match target ({})",
+            actual_cols, reduced_dim);
 
         // Step 7: Compute lambdas on sub_centroids ONLY
         // Store sub_centroids for query mapping
@@ -1211,18 +1223,25 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             sub_centroids_shape
         );
 
+        // Step 8: Fix dimension mismatch
         let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
             .into_par_iter()
             .map(|i| {
                 let item = aspace.get_item(i);
+                
+                // PROJECT ITEM TO MATCH sub_centroids_reduced dimensions
+                let projected_item = if aspace.projection_matrix.is_some() {
+                    aspace.project_query(&item.item)
+                } else {
+                    item.item.clone()
+                };
 
-                // Find nearest sub_centroid using L2 distance
+                // Find nearest sub_centroid using L2 distance on PROJECTED space
                 let mut best_idx = 0;
                 let mut best_dist = f64::INFINITY;
 
                 for sc_idx in 0..sub_centroids_reduced.shape().0 {
-                    let dist: f64 = item
-                        .item
+                    let dist: f64 = projected_item
                         .iter()
                         .zip(sub_centroids_reduced.get_row(sc_idx).iterator(0))
                         .map(|(a, b)| (a - b).powi(2))
@@ -1235,10 +1254,9 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     }
                 }
 
-                // Compute item L2 norm for cosine tie-breaking
+                // Compute norm on ORIGINAL item for cosine
                 let norm: f64 = item.item.iter().map(|x| x * x).sum::<f64>().sqrt();
 
-                // Return (centroid_idx, lambda, norm)
                 (best_idx, subcentroid_space.lambdas[best_idx], norm)
             })
             .collect();
