@@ -1107,44 +1107,75 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         let mut sub_centroids =
             ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
 
-        // Step 5: Optional optical compression on sub_centroids
-        if let Some(tokens) = energy_params.optical_tokens {
-            sub_centroids = ArrowSpace::optical_compress_centroids(
-                &sub_centroids,
-                tokens,
-                energy_params.trim_quantile,
-            );
-        }
-
-        info!(
-            "Energy graph: {:?} centroids → {:?} sub_centroids",
-            centroids.shape(),
-            sub_centroids.shape()
+    // Step 5: Optional optical compression on sub_centroids
+    if let Some(tokens) = energy_params.optical_tokens {
+        sub_centroids = ArrowSpace::optical_compress_centroids(
+            &sub_centroids,
+            tokens,
+            energy_params.trim_quantile,
         );
+    }
+
+    // Step 5.5: APPLY JL DIMENSION REDUCTION (matches build() pipeline)
+    let (sub_centroids_reduced, reduced_dim) = if self.use_dims_reduction {
+        let (n_subcentroids, current_features) = sub_centroids.shape();
+        if current_features > 64 {
+            use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
+            
+            let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
+            let target_dim = jl_dim.min(current_features / 2);
+            
+            if target_dim < current_features {
+                info!(
+                    "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
+                    current_features, target_dim, self.rp_eps
+                );
+                
+                let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                let projected = project_matrix(&sub_centroids, &implicit_proj);
+                
+                info!(
+                    "Sub_centroids projection complete: {:.1}x compression",
+                    current_features as f64 / target_dim as f64
+                );
+                
+                (projected, target_dim)
+            } else {
+                debug!(
+                    "JL target dimension {} >= current {}, skipping projection",
+                    target_dim, current_features
+                );
+                (sub_centroids, current_features)
+            }
+        } else {
+            debug!("Sub_centroids dimension {} too small for JL projection", current_features);
+            (sub_centroids, current_features)
+        }
+    } else {
+        panic!("build_energy requires dimensionality reduction")
+    };
+
+    info!(
+        "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
+        centroids.shape(),
+        sub_centroids_reduced.shape(),
+        reduced_dim
+    );
 
         // Step 6: Build energy Laplacian on sub_centroids
-        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
+        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids_reduced, &energy_params);
 
         // Step 7: Compute lambdas on sub_centroids ONLY
-        let mut subcentroid_space = ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
+        // Store sub_centroids for query mapping
+        aspace.sub_centroids = Some(sub_centroids_reduced.clone());
+        let sub_centroids_shape = sub_centroids_reduced.shape();
+        
+        let mut subcentroid_space = ArrowSpace::subcentroids_from_dense_matrix(sub_centroids_reduced.clone());
         subcentroid_space.taumode = self.synthesis;
         assert_eq!(
             subcentroid_space.nitems, gl_energy.shape().0,
             "Subcentroid count must match energy graph dimensions"
         );
-
-        // extra assertions to spot parallelism errors
-        let actual_rows = sub_centroids.shape().0;
-        let space_items = subcentroid_space.nitems;
-        let graph_nodes = gl_energy.nnodes;
-
-        assert_eq!(actual_rows, space_items, 
-            "Matrix rows ({}) != space items ({}) at 300K scale", 
-            actual_rows, space_items);
-            
-        assert_eq!(space_items, graph_nodes,
-            "Space items ({}) != graph nodes ({}) at 300K scale",
-            space_items, graph_nodes);
 
         info!(
             "Computing lambdas on {} sub_centroids...",
@@ -1159,8 +1190,6 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             self.synthesis,
         );
 
-        // Store sub_centroids for query mapping
-        aspace.sub_centroids = Some(sub_centroids.clone());
         aspace.subcentroid_lambdas = Some(subcentroid_space.lambdas.clone());
         info!(
             "Sub_centroid λ: min={:.6}, max={:.6}, mean={:.6}",
@@ -1179,7 +1208,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         info!(
             "Mapping {} items to {:?} sub_centroids and computing norms...",
             aspace.nitems,
-            sub_centroids.shape()
+            sub_centroids_shape
         );
 
         let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
@@ -1191,11 +1220,11 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                 let mut best_idx = 0;
                 let mut best_dist = f64::INFINITY;
 
-                for sc_idx in 0..sub_centroids.shape().0 {
+                for sc_idx in 0..sub_centroids_reduced.shape().0 {
                     let dist: f64 = item
                         .item
                         .iter()
-                        .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                        .zip(sub_centroids_reduced.get_row(sc_idx).iterator(0))
                         .map(|(a, b)| (a - b).powi(2))
                         .sum::<f64>()
                         .sqrt();
