@@ -267,11 +267,11 @@ impl TauMode {
             return 0.0;
         }
 
-        // Compute Rayleigh quotient E_raw
-        let e_raw = Self::compute_rayleigh_quotient_from_matrix(graph, item_vector);
-
-        // Compute dispersion G_raw
-        let g_raw = Self::compute_item_dispersion(item_vector, graph);
+        // Parallel computation of E_raw and G_raw
+        let (e_raw, g_raw) = rayon::join(
+            || Self::compute_rayleigh_quotient_from_matrix(graph, item_vector),
+            || Self::compute_item_dispersion(item_vector, graph),
+        );
 
         // Bounded transformation
         let e_bounded = e_raw / (e_raw + tau);
