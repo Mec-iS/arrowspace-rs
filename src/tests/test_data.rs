@@ -518,7 +518,6 @@ use rand_distr::{Distribution, Normal, Uniform};
 /// # Arguments
 /// * `n_points` - Total number of points to generate
 /// * `noise` - Standard deviation of Gaussian noise (controls cluster spread)
-/// * `outlier_fraction` - Fraction of points that should be outliers (0.0 = none, 0.1 = 10%)
 ///
 /// # Returns
 /// Vector of n_points data points in 5D space, forming 3 clusters plus outliers

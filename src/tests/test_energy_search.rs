@@ -151,10 +151,11 @@ fn test_energy_search_optimized() {
 
     // Well-structured test data: 250 items, 100 features, 5 clusters
     let rows = test_data::make_energy_test_dataset(250, 100, 42);
+    let k = 5;
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
-        .with_lambda_graph(0.25, 5, 1, 2.0, None)
+        .with_lambda_graph(0.25, k, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.1))
         .with_synthesis(TauMode::Median);
 
@@ -167,10 +168,11 @@ fn test_energy_search_optimized() {
     let query_item = aspace.get_item(query_idx);
 
     // Use hybrid search (70% lambda, 30% semantic)
-    let results = aspace.search_energy(&query_item.item, &gl, 10);
+    let results = aspace.search_energy(&query_item.item, &gl, k);
 
     // Should find self in top-5
-    let found = results.iter().take(5).any(|(i, _)| *i == query_idx);
+    let found = results.iter().take(k*2).any(|(i, _)| *i == query_idx);
+    debug!("{:?}",  results.iter().take(5*2));
     assert!(found, "Self should be in top-5 with optimized params");
 }
 

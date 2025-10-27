@@ -433,23 +433,23 @@ impl GraphLaplacian {
     pub fn multiply_vector(&self, x: &[f64]) -> Vec<f64> {
         assert_eq!(
             x.len(),
-            self.nnodes,
+            self.matrix.shape().0,
             "Vector length {} must match number of nodes {}",
             x.len(),
-            self.nnodes
+            self.matrix.shape().0
         );
 
         trace!(
             "Computing matrix-vector multiplication: {}×{} * {}",
-            self.nnodes,
-            self.nnodes,
+            self.matrix.shape().0,
+            self.matrix.shape().1,
             x.len()
         );
 
         trace!("multiplying x {:?} {:?}", x, self.matrix);
 
         // Initialize result vector
-        let mut result = vec![0.0; self.nnodes];
+        let mut result = vec![0.0; self.matrix.shape().0];
 
         // Use sprs outer_iterator for efficient sparse matrix traversal
         for (row_idx, row) in self.matrix.outer_iterator().enumerate() {

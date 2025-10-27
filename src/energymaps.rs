@@ -257,9 +257,7 @@ pub trait EnergyMaps {
     /// GraphLaplacian with shape (X × X) in centroid space
     fn bootstrap_centroid_laplacian(
         centroids: &DenseMatrix<f64>,
-        k: usize,
-        normalise: bool,
-        sparsity_check: bool,
+        builder: &ArrowSpaceBuilder
     ) -> GraphLaplacian;
 
     /// Apply diffusion smoothing over L₀ and generate sub-centroids by splitting high-dispersion nodes.
@@ -452,13 +450,11 @@ impl EnergyMaps for ArrowSpace {
 
     fn bootstrap_centroid_laplacian(
         centroids: &DenseMatrix<f64>,
-        k: usize,
-        normalise: bool,
-        sparsity_check: bool,
+        builder: &ArrowSpaceBuilder,
     ) -> GraphLaplacian {
         info!(
             "EnergyMaps::bootstrap_centroid_laplacian: k={}, normalise={}",
-            k, normalise
+            builder.lambda_k, builder.normalise
         );
         let (x, f) = centroids.shape();
         debug!(
@@ -467,13 +463,13 @@ impl EnergyMaps for ArrowSpace {
         );
 
         let params = GraphParams {
-            eps: 1e-3,
-            k: k.min(x - 1), // cap k at x-1 to avoid issues with small centroid counts
-            topk: k.min(4).min(x - 1),
+            eps: builder.lambda_eps,
+            k: builder.lambda_k.min(x - 1), // cap k at x-1 to avoid issues with small centroid counts
+            topk: builder.lambda_topk.min(4).min(x - 1),
             p: 2.0,
             sigma: None,
-            normalise,
-            sparsity_check: false, // disable for small matrices
+            normalise: builder.normalise,
+            sparsity_check: builder.sparsity_check, // disable for small matrices
         };
         trace!(
             "GraphParams: eps={}, k={}, topk={}, p={}",
@@ -485,130 +481,143 @@ impl EnergyMaps for ArrowSpace {
 
         // Build Laplacian where nodes = centroids (rows), edges based on centroid similarity
         // This produces an x×x Laplacian operating in centroid space
-        let gl = build_laplacian_matrix(centroids.clone(), &params, Some(x));
-
-        if sparsity_check == true {
-            let sparsity = GraphLaplacian::sparsity(&gl.matrix);
-            info!(
-                "Bootstrap L₀ complete: {}×{} (centroid space), {} non-zeros, {:.2}% sparse",
-                gl.shape().0,
-                gl.shape().1,
-                gl.nnz(),
-                sparsity * 100.0
-            );
-        }
+        let gl = build_laplacian_matrix(centroids.transpose(), &params, Some(x));
 
         assert_eq!(gl.nnodes, x, "L₀ must be in centroid space ({}×{})", x, x);
         gl
     }
 
-    fn diffuse_and_split_subcentroids(
-        centroids: &DenseMatrix<f64>,
-        l0: &GraphLaplacian,
-        p: &EnergyParams,
-    ) -> DenseMatrix<f64> {
-        info!(
-            "EnergyMaps::diffuse_and_split_subcentroids: eta={:.3}, steps={}, split_q={:.2}",
-            p.eta, p.steps, p.split_quantile
-        );
-        let (x, f) = centroids.shape();
-        debug!("Diffusing {} centroids over {} steps", x, p.steps);
-        let mut work = centroids.clone();
+fn diffuse_and_split_subcentroids(
+    centroids: &DenseMatrix<f64>,
+    l0: &GraphLaplacian,
+    p: &EnergyParams,
+) -> DenseMatrix<f64> {
+    info!(
+        "EnergyMaps::diffuse_and_split_subcentroids: eta={:.3}, steps={}, split_q={:.2}",
+        p.eta, p.steps, p.split_quantile
+    );
+    let (x, f) = centroids.shape();
+    debug!(
+        "Diffusing {} centroids × {} features over {} steps with F×F Laplacian ({}×{})",
+        x, f, p.steps, l0.matrix.rows(), l0.matrix.cols()
+    );
+    
+    // VALIDATION: L0 must be F×F feature-space graph
+    assert_eq!(
+        l0.matrix.rows(), f,
+        "Laplacian rows {} must match feature count {}",
+        l0.matrix.rows(), f
+    );
+    assert_eq!(
+        l0.matrix.rows(), l0.matrix.cols(),
+        "Laplacian must be square"
+    );
+    
+    let mut work = centroids.clone();
 
-        for step in 0..p.steps {
-            trace!("Diffusion step {}/{} [parallel]", step + 1, p.steps);
+    for step in 0..p.steps {
+        trace!("Diffusion step {}/{} [parallel]", step + 1, p.steps);
 
-            // [PARALLEL] Process all columns in parallel
-            let updated_cols: Vec<Vec<f64>> = (0..f)
-                .into_par_iter()
-                .map(|col| {
-                    let col_vec: Vec<f64> = (0..x).map(|i| *work.get((i, col))).collect();
-                    let l_col = l0.multiply_vector(&col_vec);
-                    (0..x)
-                        .map(|i| *work.get((i, col)) - p.eta * l_col[i])
-                        .collect()
-                })
-                .collect();
-
-            // Write back (sequential due to DenseMatrix::set not being thread-safe)
-            for (col, values) in updated_cols.iter().enumerate() {
-                for (i, &val) in values.iter().enumerate() {
-                    work.set((i, col), val);
-                }
-            }
-        }
-        debug!("Diffusion complete after {} steps", p.steps);
-
-        trace!(
-            "Computing node energy and dispersion with neighbor_k={}",
-            p.neighbor_k
-        );
-        let (lambda, gini) = node_energy_and_dispersion(&work, l0, p.neighbor_k);
-        let lambda_stats = (
-            lambda.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-            lambda.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
-            lambda.iter().sum::<f64>() / lambda.len() as f64,
-        );
-        let gini_stats = (
-            gini.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
-            gini.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
-            gini.iter().sum::<f64>() / gini.len() as f64,
-        );
-        debug!(
-            "Energy: λ ∈ [{:.6}, {:.6}], mean={:.6}",
-            lambda_stats.0, lambda_stats.1, lambda_stats.2
-        );
-        debug!(
-            "Dispersion: G ∈ [{:.6}, {:.6}], mean={:.6}",
-            gini_stats.0, gini_stats.1, gini_stats.2
-        );
-
-        let mut g_sorted = gini.clone();
-        g_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        let q_idx = ((g_sorted.len() as f64 - 1.0) * p.split_quantile).round() as usize;
-        let thresh = g_sorted[q_idx];
-        debug!(
-            "Split threshold (quantile {:.2}): G ≥ {:.6}",
-            p.split_quantile, thresh
-        );
-
-        let mut data: Vec<f64> = work.iterator(0).copied().collect();
-
-        let split_data: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..x)
+        // [PARALLEL] Process all centroids (rows) in parallel
+        // Each centroid is an F-dimensional vector diffused over F×F graph
+        let updated_rows: Vec<Vec<f64>> = (0..x)
             .into_par_iter()
-            .filter(|&i| gini[i] >= thresh)
-            .map(|i| {
-                let nbrs = topk_by_l2(&work, i, p.neighbor_k);
-                let mean = mean_rows(&work, &nbrs);
-                let dir = unit_diff(work.get_row(i).iterator(0).copied().collect(), &mean);
-                let std_loc = local_std(work.get_row(i).iterator(0).copied().collect(), &mean);
-                let tau = p.split_tau * std_loc.max(1e-6);
-
-                let c = work.get_row(i).iterator(0).copied().collect::<Vec<_>>();
-                let c1 = add_scaled(&c, &dir, tau);
-                let c2 = add_scaled(&c, &dir, -tau);
-
-                (i, c1, c2)
+            .map(|row_idx| {
+                let row_vec: Vec<f64> = (0..f).map(|col| *work.get((row_idx, col))).collect();
+                
+                // Apply L to the feature vector: L·x
+                let l_row = l0.multiply_vector(&row_vec);
+                
+                // Update: x' = x - η·L·x
+                (0..f)
+                    .map(|feat_idx| row_vec[feat_idx] - p.eta * l_row[feat_idx])
+                    .collect()
             })
             .collect();
 
-        let split_count = split_data.len();
-        debug!("Computed {} splits [parallel]", split_count);
-
-        // Extend data sequentially
-        for (i, c1, c2) in split_data {
-            data.extend(c1);
-            data.extend(c2);
-            trace!("Split centroid {}: G={:.6}", i, gini[i]);
+        // Write back (sequential due to DenseMatrix::set not being thread-safe)
+        for (row_idx, values) in updated_rows.iter().enumerate() {
+            for (col_idx, &val) in values.iter().enumerate() {
+                work.set((row_idx, col_idx), val);
+            }
         }
-
-        let final_rows = data.len() / f;
-        info!(
-            "Sub-centroid generation: {} → {} centroids ({} splits)",
-            x, final_rows, split_count
-        );
-        DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
     }
+    debug!("Diffusion complete after {} steps", p.steps);
+
+    trace!(
+        "Computing node energy and dispersion with neighbor_k={}",
+        p.neighbor_k
+    );
+    
+    // Pass centroids (X×F) and F×F graph separately
+    let (lambda, gini) = node_energy_and_dispersion(&work, l0, p.neighbor_k);
+    
+    let lambda_stats = (
+        lambda.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+        lambda.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
+        lambda.iter().sum::<f64>() / lambda.len() as f64,
+    );
+    let gini_stats = (
+        gini.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+        gini.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
+        gini.iter().sum::<f64>() / gini.len() as f64,
+    );
+    debug!(
+        "Energy: λ ∈ [{:.6}, {:.6}], mean={:.6}",
+        lambda_stats.0, lambda_stats.1, lambda_stats.2
+    );
+    debug!(
+        "Dispersion: G ∈ [{:.6}, {:.6}], mean={:.6}",
+        gini_stats.0, gini_stats.1, gini_stats.2
+    );
+
+    let mut g_sorted = gini.clone();
+    g_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let q_idx = ((g_sorted.len() as f64 - 1.0) * p.split_quantile).round() as usize;
+    let thresh = g_sorted[q_idx];
+    debug!(
+        "Split threshold (quantile {:.2}): G ≥ {:.6}",
+        p.split_quantile, thresh
+    );
+
+    let mut data: Vec<f64> = work.iterator(0).copied().collect();
+
+    let split_data: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..x)
+        .into_par_iter()
+        .filter(|&i| gini[i] >= thresh)
+        .map(|i| {
+            let nbrs = topk_by_l2(&work, i, p.neighbor_k);
+            let mean = mean_rows(&work, &nbrs);
+            let dir = unit_diff(work.get_row(i).iterator(0).copied().collect(), &mean);
+            let std_loc = local_std(work.get_row(i).iterator(0).copied().collect(), &mean);
+            let tau = p.split_tau * std_loc.max(1e-6);
+
+            let c = work.get_row(i).iterator(0).copied().collect::<Vec<_>>();
+            let c1 = add_scaled(&c, &dir, tau);
+            let c2 = add_scaled(&c, &dir, -tau);
+
+            (i, c1, c2)
+        })
+        .collect();
+
+    let split_count = split_data.len();
+    debug!("Computed {} splits [parallel]", split_count);
+
+    // Extend data sequentially
+    for (i, c1, c2) in split_data {
+        data.extend(c1);
+        data.extend(c2);
+        trace!("Split centroid {}: G={:.6}", i, gini[i]);
+    }
+
+    let final_rows = data.len() / f;
+    info!(
+        "Sub-centroid generation: {} → {} centroids ({} splits)",
+        x, final_rows, split_count
+    );
+    DenseMatrix::<f64>::from_iterator(data.iter().copied(), final_rows, f, 1)
+}
+
 
     /// Look-up query item against lambdas computed at build time
     /// Pure lambda-only search - ultra fast linear scan
@@ -649,7 +658,7 @@ impl EnergyMaps for ArrowSpace {
                         .unwrap_or_else(|| item.item.iter().map(|x| x * x).sum::<f64>().sqrt());
 
                     let cosine = dot / (query_norm * item_norm + 1e-9);
-                    (1.0 - cosine) * 1e-12 // Distance (smaller = better)
+                    (1.0 - cosine) * 1e-9 // Distance (smaller = better)
                 } else {
                     0.0 // Different lambdas: no tie-breaking
                 };
@@ -924,65 +933,124 @@ fn node_energy_and_dispersion(
 ) -> (Vec<f64>, Vec<f64>) {
     let (n, f) = x.shape();
     trace!(
-        "Computing node energy and dispersion: {} nodes, {} features, k={} [parallel]",
-        n,
-        f,
-        k
+        "Computing node energy and dispersion: {} centroids × {} features, k={} [parallel]",
+        n, f, k
+    );
+    debug!(
+        "Laplacian: {}×{} (must be F×F feature-space)",
+        l.matrix.rows(),
+        l.matrix.cols()
+    );
+    
+    // VALIDATION: Laplacian must be F×F
+    assert_eq!(
+        f, l.matrix.rows(),
+        "Feature count {} must match Laplacian rows {}",
+        f, l.matrix.rows()
+    );
+    assert_eq!(
+        l.matrix.rows(), l.matrix.cols(),
+        "Laplacian must be square: {}×{}",
+        l.matrix.rows(), l.matrix.cols()
+    );
+    assert_eq!(
+        l.nnodes, n,
+        "Number of nodes must match: {} != {}",
+        l.nnodes, n,
     );
 
-    // Compute L·X column-wise in parallel
-    let lx: Vec<f64> = (0..f)
-        .into_par_iter()
-        .flat_map(|col| {
-            let col_vec: Vec<f64> = (0..n).map(|i| *x.get((i, col))).collect();
-            l.multiply_vector(&col_vec)
-        })
-        .collect();
-
-    trace!("L·X precomputed [parallel]");
-
-    // Compute lambda and gini in parallel
+    // Process each centroid (row) in parallel
     let results: Vec<(f64, f64)> = (0..n)
         .into_par_iter()
-        .map(|i| {
-            let xi = x.get_row(i);
-            let lxi = (0..f).map(|c| lx[i * f + c]).collect::<Vec<_>>();
-            let denom = xi.iterator(0).map(|v| v * v).sum::<f64>().max(1e-9);
-            let lambda_i = xi
-                .iterator(0)
-                .zip(lxi.iter())
-                .map(|(a, b)| a * b)
-                .sum::<f64>()
-                / denom;
-
-            let nbrs = topk_by_l2(x, i, k);
-            let mut parts: Vec<f64> = Vec::with_capacity(nbrs.len());
-            for &j in nbrs.iter() {
-                let w = -l.matrix.get(i, j).copied().unwrap_or(0.0).max(0.0);
-                let d = {
-                    let cj = x.get_row(j);
-                    xi.iterator(0)
-                        .zip(cj.iterator(0))
-                        .map(|(a, b)| (a - b) * (a - b))
-                        .sum::<f64>()
-                };
-                parts.push((w * d).max(0.0));
-            }
-            let sum = parts.iter().sum::<f64>();
-            let gini_i = if sum > 0.0 {
-                parts.iter().map(|e| (e / sum).powi(2)).sum::<f64>()
-            } else {
-                0.0
-            };
-
-            (lambda_i, gini_i)
+        .map(|row_idx| {
+            // Extract centroid as F-dimensional vector
+            let centroid_vec: Vec<f64> = (0..f).map(|col| *x.get((row_idx, col))).collect();
+            
+            // Compute L·x (F×F matrix times F×1 vector = F×1 result)
+            let lx = l.multiply_vector(&centroid_vec);
+            
+            // Parallel computation of lambda and dispersion using rayon::join
+            let (lambda, dispersion) = rayon::join(
+                || {
+                    // Compute Rayleigh quotient: λ = x^T·L·x / x^T·x
+                    let numerator: f64 = centroid_vec.par_iter()
+                        .zip(lx.par_iter())
+                        .map(|(xi, lxi)| xi * lxi)
+                        .sum();
+                    let denominator: f64 = centroid_vec.par_iter()
+                        .map(|xi| xi * xi)
+                        .sum();
+                    
+                    if denominator > 1e-12 {
+                        (numerator / denominator).max(0.0)
+                    } else {
+                        0.0
+                    }
+                },
+                || {
+                    // Compute dispersion in parallel
+                    // First pass: compute edge energy sum
+                    let edge_energy_sum: f64 = (0..f)
+                        .into_par_iter()
+                        .map(|i| {
+                            let mut local_sum = 0.0;
+                            for j in (i+1)..f {
+                                if let Some(&lij) = l.matrix.get(i, j) {
+                                    let w = (-lij).max(0.0);
+                                    if w > 0.0 {
+                                        let diff = centroid_vec[i] - centroid_vec[j];
+                                        local_sum += w * diff * diff;
+                                    }
+                                }
+                            }
+                            local_sum
+                        })
+                        .sum();
+                    
+                    if edge_energy_sum > 1e-12 {
+                        // Second pass: compute G squared sum
+                        let g_sq_sum: f64 = (0..f)
+                            .into_par_iter()
+                            .map(|i| {
+                                let mut local_g = 0.0;
+                                for j in (i+1)..f {
+                                    if let Some(&lij) = l.matrix.get(i, j) {
+                                        let w = (-lij).max(0.0);
+                                        if w > 0.0 {
+                                            let diff = centroid_vec[i] - centroid_vec[j];
+                                            let contrib = w * diff * diff;
+                                            let share = contrib / edge_energy_sum;
+                                            local_g += share * share;
+                                        }
+                                    }
+                                }
+                                local_g
+                            })
+                            .sum();
+                        
+                        g_sq_sum.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                }
+            );
+            
+            (lambda, dispersion)
         })
         .collect();
 
-    let (lambda, gini): (Vec<_>, Vec<_>) = results.into_iter().unzip();
-    debug!("Energy and dispersion computed for {} nodes [parallel]", n);
-    (lambda, gini)
+    // Unzip into separate vectors
+    let (lambdas, dispersions): (Vec<_>, Vec<_>) = results.into_iter().unzip();
+    
+    debug!(
+        "Energy and dispersion computed for {} nodes [parallel]",
+        n
+    );
+    
+    (lambdas, dispersions)
 }
+
+
 
 /// Compute feature-wise difference between two matrix rows.
 fn pair_diff(dm: &DenseMatrix<f64>, i: usize, j: usize) -> Vec<f64> {
@@ -1098,53 +1166,87 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         // Step 3: Bootstrap Laplacian on centroids
         let l0 = ArrowSpace::bootstrap_centroid_laplacian(
             &centroids,
-            energy_params.neighbor_k.max(self.lambda_k),
-            self.normalise,
-            self.sparsity_check,
+            &self,
         );
 
         // Step 4: Diffuse and split to create sub_centroids
-        let mut sub_centroids =
+        let sub_centroids =
             ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
+        
+        assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
-        // Step 5: Optional optical compression on sub_centroids
-        if let Some(tokens) = energy_params.optical_tokens {
-            sub_centroids = ArrowSpace::optical_compress_centroids(
-                &sub_centroids,
-                tokens,
-                energy_params.trim_quantile,
-            );
-        }
+        // Step 5: APPLY JL DIMENSION REDUCTION (matches build() pipeline)
+        let (sub_centroids_reduced, reduced_dim) = if self.use_dims_reduction {
+            let (n_subcentroids, current_features) = sub_centroids.shape();
+            if current_features > 64 {
+                use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
+                
+                let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
+                let target_dim = jl_dim.min(current_features / 2);
+                
+                if target_dim < current_features {
+                    info!(
+                        "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
+                        current_features, target_dim, self.rp_eps
+                    );
+                    
+                    let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                    let projected = project_matrix(&sub_centroids, &implicit_proj);
+                    
+                    info!(
+                        "Sub_centroids projection complete: {:.1}x compression",
+                        current_features as f64 / target_dim as f64
+                    );
+                    
+                    (projected, target_dim)
+                } else {
+                    debug!(
+                        "JL target dimension {} >= current {}, skipping projection",
+                        target_dim, current_features
+                    );
+                    (sub_centroids, current_features)
+                }
+            } else {
+                debug!("Sub_centroids dimension {} too small for JL projection", current_features);
+                (sub_centroids, current_features)
+            }
+        } else {
+            panic!("build_energy requires dimensionality reduction")
+        };
 
         info!(
-            "Energy graph: {:?} centroids → {:?} sub_centroids",
+            "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
             centroids.shape(),
-            sub_centroids.shape()
+            sub_centroids_reduced.shape(),
+            reduced_dim
         );
 
         // Step 6: Build energy Laplacian on sub_centroids
-        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
+        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids_reduced, &energy_params);
+
+        // extra validation
+        let actual_rows = sub_centroids_reduced.shape().0;
+        let actual_cols = sub_centroids_reduced.shape().1;
+        let graph_cols = gl_energy.shape().1;
+
+        assert_eq!(graph_cols, actual_rows,
+            "Graph cols ({}) must match sub_centroids rows ({})", 
+            graph_cols, actual_rows);
+        assert_eq!(actual_cols, reduced_dim,
+            "Reduced dimensions ({}) should match target ({})",
+            actual_cols, reduced_dim);
 
         // Step 7: Compute lambdas on sub_centroids ONLY
-        let mut subcentroid_space = ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
+        // Store sub_centroids for query mapping
+        aspace.sub_centroids = Some(sub_centroids_reduced.clone());
+        let sub_centroids_shape = sub_centroids_reduced.shape();
+        
+        let mut subcentroid_space = ArrowSpace::subcentroids_from_dense_matrix(sub_centroids_reduced.clone());
         subcentroid_space.taumode = self.synthesis;
         assert_eq!(
             subcentroid_space.nitems, gl_energy.shape().0,
             "Subcentroid count must match energy graph dimensions"
         );
-
-        // extra assertions to spot parallelism errors
-        let actual_rows = sub_centroids.shape().0;
-        let space_items = subcentroid_space.nitems;
-        let graph_nodes = gl_energy.nnodes;
-
-        assert_eq!(actual_rows, space_items, 
-            "Matrix rows ({}) != space items ({}) at 300K scale", 
-            actual_rows, space_items);
-            
-        assert_eq!(space_items, graph_nodes,
-            "Space items ({}) != graph nodes ({}) at 300K scale",
-            space_items, graph_nodes);
 
         info!(
             "Computing lambdas on {} sub_centroids...",
@@ -1159,8 +1261,6 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             self.synthesis,
         );
 
-        // Store sub_centroids for query mapping
-        aspace.sub_centroids = Some(sub_centroids.clone());
         aspace.subcentroid_lambdas = Some(subcentroid_space.lambdas.clone());
         info!(
             "Sub_centroid λ: min={:.6}, max={:.6}, mean={:.6}",
@@ -1179,23 +1279,30 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         info!(
             "Mapping {} items to {:?} sub_centroids and computing norms...",
             aspace.nitems,
-            sub_centroids.shape()
+            sub_centroids_shape
         );
 
+        // Step 8: Fix dimension mismatch
         let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
             .into_par_iter()
             .map(|i| {
                 let item = aspace.get_item(i);
+                
+                // PROJECT ITEM TO MATCH sub_centroids_reduced dimensions
+                let projected_item = if aspace.projection_matrix.is_some() {
+                    aspace.project_query(&item.item)
+                } else {
+                    item.item.clone()
+                };
 
-                // Find nearest sub_centroid using L2 distance
+                // Find nearest sub_centroid using L2 distance on PROJECTED space
                 let mut best_idx = 0;
                 let mut best_dist = f64::INFINITY;
 
-                for sc_idx in 0..sub_centroids.shape().0 {
-                    let dist: f64 = item
-                        .item
+                for sc_idx in 0..sub_centroids_reduced.shape().0 {
+                    let dist: f64 = projected_item
                         .iter()
-                        .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                        .zip(sub_centroids_reduced.get_row(sc_idx).iterator(0))
                         .map(|(a, b)| (a - b).powi(2))
                         .sum::<f64>()
                         .sqrt();
@@ -1206,10 +1313,9 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     }
                 }
 
-                // Compute item L2 norm for cosine tie-breaking
+                // Compute norm on ORIGINAL item for cosine
                 let norm: f64 = item.item.iter().map(|x| x * x).sum::<f64>().sqrt();
 
-                // Return (centroid_idx, lambda, norm)
                 (best_idx, subcentroid_space.lambdas[best_idx], norm)
             })
             .collect();
@@ -1279,9 +1385,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         trace!("Bootstrapping L' for energy feature computation");
         let l_boot = ArrowSpace::bootstrap_centroid_laplacian(
             sub_centroids,
-            energy_params.neighbor_k.max(self.lambda_k),
-            self.normalise,
-            self.sparsity_check,
+            &self,
         );
 
         trace!("Computing energy and dispersion features");
