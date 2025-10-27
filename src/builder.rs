@@ -98,6 +98,25 @@ impl ArrowSpaceBuilder {
         Self::default()
     }
 
+    /// copy all the static parameters to generate a similar builder from the original
+    pub fn copy_params(&self) -> Self {
+        let mut result = Self::default();
+        result.prebuilt_spectral = self.prebuilt_spectral;
+        result.synthesis = self.synthesis;
+        result.lambda_eps = self.lambda_eps;
+        result.lambda_k = self.lambda_k;
+        result.lambda_topk = self.lambda_topk;
+        result.lambda_p = self.lambda_p;
+        result.lambda_sigma = self.lambda_sigma;
+        result.normalise = self.normalise;
+        result.sparsity_check = self.sparsity_check;
+        result.sampling = self.sampling.clone();
+        result.use_dims_reduction = self.use_dims_reduction;
+        result.rp_eps =  self.rp_eps;
+        result.persistence = self.persistence.clone();
+        result
+    }
+
     // -------------------- Lambda-graph configuration --------------------
 
     /// Use this to pass λτ-graph parameters. If not called, use defaults
