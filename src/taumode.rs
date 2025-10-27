@@ -52,13 +52,13 @@ impl TauMode {
                     return TAU_FLOOR;
                 }
                 v.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                
+
                 if let TauMode::Percentile(p) = mode {
                     let pp = p.clamp(0.0, 1.0);
                     let idx = ((v.len() - 1) as f64 * pp).round() as usize;
                     return v[idx].max(TAU_FLOOR);
                 }
-                
+
                 let mid = if v.len() % 2 == 1 {
                     v[v.len() / 2]
                 } else {
@@ -137,7 +137,7 @@ impl TauMode {
         // Determine graph source, cannot use signals in the subcentroid space or when signals are off
         let using_signals = aspace.signals.shape() != (0, 0)
             && aspace.signals.rows() == gl.matrix.shape().0
-            && aspace.centroid_map.is_none(); 
+            && aspace.centroid_map.is_none();
         let graph = if using_signals {
             &aspace.signals
         } else {
@@ -176,7 +176,7 @@ impl TauMode {
                 let tau = Self::select_tau(&item.item, taumode);
 
                 // Adaptive selection: sequential for small, parallel for large
-                let lambda = Self::compute_synthetic_lambda(&item.item, graph, tau);
+                let lambda = Self::compute_synthetic_lambda(&item.item, &aspace, graph, tau);
 
                 // Log progress for large datasets
                 if n_items > 10000 && item_idx % (n_items / 10) == 0 {
@@ -255,6 +255,7 @@ impl TauMode {
     /// Synthetic lambda S = τ·E/(E+τ) + (1-τ)·G
     pub fn compute_synthetic_lambda(
         item_vector: &[f64],
+        aspace: &ArrowSpace,
         graph: &CsMat<f64>,
         tau: f64,
     ) -> f64 {
@@ -267,10 +268,16 @@ impl TauMode {
             return 0.0;
         }
 
+        let projected_item = if aspace.projection_matrix.is_some() {
+            aspace.project_query(&item_vector)
+        } else {
+            item_vector.to_owned()
+        };
+
         // Parallel computation of E_raw and G_raw
         let (e_raw, g_raw) = rayon::join(
-            || Self::compute_rayleigh_quotient_from_matrix(graph, item_vector),
-            || Self::compute_item_dispersion(item_vector, graph),
+            || Self::compute_rayleigh_quotient_from_matrix(graph, projected_item.as_slice()),
+            || Self::compute_item_dispersion(projected_item.as_slice(), graph),
         );
 
         // Bounded transformation
@@ -282,7 +289,10 @@ impl TauMode {
 
         trace!(
             "Synthetic λ: E_raw={:.6}, G_raw={:.6}, τ={:.6}, S={:.6}",
-            e_raw, g_raw, tau, synthetic_lambda
+            e_raw,
+            g_raw,
+            tau,
+            synthetic_lambda
         );
 
         synthetic_lambda
@@ -294,25 +304,27 @@ impl TauMode {
     /// - graph is F×F Laplacian (features × features)
     /// - item_vector is F-dimensional
     /// - i,j indices reference FEATURES, not items
-    pub fn compute_rayleigh_quotient_from_matrix(
-        matrix: &CsMat<f64>,
-        vector: &[f64],
-    ) -> f64 {
-        let n = matrix.shape().0;
+    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
+        assert_eq!(matrix.rows(), matrix.cols(), "Matrix must be square");
 
-        // Compute x^T M x (numerator)
-        let mut numerator = 0.0;
-        for i in 0..n {
-            let xi = vector[i];
-            for j in 0..n {
-                if let Some(&mij) = matrix.get(i, j) {
-                    numerator += xi * mij * vector[j];
+        // Parallel sparse computation
+        let numerator: f64 = matrix
+            .outer_iterator()
+            .enumerate()
+            .par_bridge() // Parallelize across rows
+            .map(|(i, row)| {
+                let xi = vector[i];
+                let mut row_sum = 0.0;
+
+                for (j, &mij) in row.iter() {
+                    row_sum += xi * mij * vector[j];
                 }
-            }
-        }
 
-        // Compute x^T x (denominator)
-        let denominator: f64 = vector.iter().map(|&x| x * x).sum();
+                row_sum
+            })
+            .sum();
+
+        let denominator: f64 = vector.par_iter().map(|&x| x * x).sum();
 
         if denominator > 1e-12 {
             (numerator / denominator).max(0.0)
@@ -369,11 +381,7 @@ impl TauMode {
     }
 
     /// Legacy compatibility: non-parallel version
-    pub fn compute_taumode_lambdas(
-        aspace: &mut ArrowSpace,
-        gl: &GraphLaplacian,
-        taumode: TauMode,
-    ) {
+    pub fn compute_taumode_lambdas(aspace: &mut ArrowSpace, gl: &GraphLaplacian, taumode: TauMode) {
         Self::compute_taumode_lambdas_parallel(aspace, gl, taumode);
     }
 }

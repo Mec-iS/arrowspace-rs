@@ -171,8 +171,8 @@ fn test_energy_search_optimized() {
     let results = aspace.search_energy(&query_item.item, &gl, k);
 
     // Should find self in top-5
-    let found = results.iter().take(k*2).any(|(i, _)| *i == query_idx);
-    debug!("{:?}",  results.iter().take(5*2));
+    let found = results.iter().take(k * 2).any(|(i, _)| *i == query_idx);
+    debug!("{:?}", results.iter().take(5 * 2));
     assert!(found, "Self should be in top-5 with optimized params");
 }
 

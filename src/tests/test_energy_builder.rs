@@ -5,8 +5,8 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
-use smartcore::linalg::basic::arrays::Array;
 use log::info;
+use smartcore::linalg::basic::arrays::Array;
 
 #[cfg(test)]
 mod test_data {
@@ -280,7 +280,7 @@ fn test_build_energy_dimensionality_reduction() {
         aspace.projection_matrix.is_some(),
         "Projection matrix should exist when dims_reduction is enabled"
     );
-    
+
     let reduced_dim = aspace.reduced_dim.expect("Reduced dimension should be set");
     assert!(
         reduced_dim < n_features,
@@ -288,98 +288,118 @@ fn test_build_energy_dimensionality_reduction() {
         reduced_dim,
         n_features
     );
-    
+
     println!("✓ Dimension reduction: {} → {}", 100, reduced_dim);
 
     // Test 2: Verify sub_centroids have reduced dimensions
-    let sub_centroids = aspace.sub_centroids.as_ref()
+    let sub_centroids = aspace
+        .sub_centroids
+        .as_ref()
         .expect("Sub_centroids should be stored");
     let (n_subcentroids, sub_features) = sub_centroids.shape();
-    
+
     assert_eq!(
         sub_features, reduced_dim,
         "Sub_centroids features {} should match reduced_dim {}",
         sub_features, reduced_dim
     );
-    
-    println!("✓ Sub_centroids shape: {} × {}", n_subcentroids, sub_features);
+
+    println!(
+        "✓ Sub_centroids shape: {} × {}",
+        n_subcentroids, sub_features
+    );
 
     // Test 3: Verify graph dimensions match reduced sub_centroids
     let (graph_rows, graph_cols) = gl_energy.shape();
-    
+
     assert_eq!(
         graph_rows, n_subcentroids,
         "Graph rows {} should match sub_centroids count {}",
         graph_rows, n_subcentroids
     );
-    
+
     assert_eq!(
         graph_cols, n_subcentroids,
         "Graph should be square: {}×{}",
         graph_rows, graph_cols
     );
-    
+
     println!("✓ Graph shape: {}×{}", graph_rows, graph_cols);
 
     // Test 4: Verify lambdas computed for all items
     assert_eq!(
-        aspace.lambdas.len(), n_items,
+        aspace.lambdas.len(),
+        n_items,
         "Lambda count {} should match item count {}",
-        aspace.lambdas.len(), n_items
+        aspace.lambdas.len(),
+        n_items
     );
-    
+
     assert!(
         aspace.lambdas.iter().all(|&l| l.is_finite() && l >= 0.0),
         "All lambdas should be finite and non-negative"
     );
-    
+
     println!("✓ Lambdas computed: {} values", aspace.lambdas.len());
 
     // Test 5: Verify centroid mapping exists and is valid
-    let centroid_map = aspace.centroid_map.as_ref()
+    let centroid_map = aspace
+        .centroid_map
+        .as_ref()
         .expect("Centroid map should exist");
-    
+
     assert_eq!(
-        centroid_map.len(), n_items,
+        centroid_map.len(),
+        n_items,
         "Centroid map size {} should match item count {}",
-        centroid_map.len(), n_items
+        centroid_map.len(),
+        n_items
     );
-    
+
     assert!(
         centroid_map.iter().all(|&idx| idx < n_subcentroids),
         "All centroid indices should be < {}",
         n_subcentroids
     );
-    
-    println!("✓ Centroid mapping valid: {} items mapped", centroid_map.len());
+
+    println!(
+        "✓ Centroid mapping valid: {} items mapped",
+        centroid_map.len()
+    );
 
     // Test 6: Verify item norms computed
-    let item_norms = aspace.item_norms.as_ref()
+    let item_norms = aspace
+        .item_norms
+        .as_ref()
         .expect("Item norms should be computed");
-    
+
     assert_eq!(
-        item_norms.len(), n_items,
+        item_norms.len(),
+        n_items,
         "Norms count {} should match item count {}",
-        item_norms.len(), n_items
+        item_norms.len(),
+        n_items
     );
-    
+
     assert!(
         item_norms.iter().all(|&n| n > 0.0 && n.is_finite()),
         "All norms should be positive and finite"
     );
-    
+
     println!("✓ Item norms computed: {} values", item_norms.len());
 
     // Test 7: Test projection consistency
     let test_item = &rows[0];
     let projected = aspace.project_query(test_item);
-    
+
     assert_eq!(
-        projected.len(), reduced_dim,
+        projected.len(),
+        reduced_dim,
         "Projected query dimension {} should match reduced_dim {}",
-        projected.len(), reduced_dim
+        projected.len(),
+        reduced_dim
     );
-    
+
     println!("✓ Query projection: {} → {}", 100, projected.len());
 
     // Test 8: No bounds errors during lambda computation
@@ -393,13 +413,13 @@ fn test_build_energy_dimensionality_reduction() {
 #[should_panic(expected = "When using build_energy, dim reduction is needed")]
 fn test_build_energy_requires_dims_reduction() {
     let rows: Vec<Vec<f64>> = vec![vec![1.0; 128]; 100];
-    
+
     let mut builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.001, 6, 3, 2.0, None)
         .with_dims_reduction(false, None); // Disabled
-    
+
     let energy_params = EnergyParams::default();
-    
+
     // Should panic
     builder.build_energy(rows, energy_params);
 }

@@ -543,45 +543,44 @@ impl ArrowSpace {
         }
     }
 
-// core.rs
-pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
-    let (n_rows, n_cols) = matrix.shape();
-    // For subcentroids, rows = C (items), cols = F (features)
-    let nitems = n_rows;
-    let nfeatures = n_cols;
+    // core.rs
+    pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
+        let (n_rows, n_cols) = matrix.shape();
+        // For subcentroids, rows = C (items), cols = F (features)
+        let nitems = n_rows;
+        let nfeatures = n_cols;
 
-    info!(
-        "Creating subcentroid ArrowSpace from DenseMatrix({}, {})",
-        n_rows, n_cols
-    );
-    info!(
-        "→ Interpreted as: {} subcentroids × {} features (row-major)",
-        nitems, nfeatures
-    );
+        info!(
+            "Creating subcentroid ArrowSpace from DenseMatrix({}, {})",
+            n_rows, n_cols
+        );
+        info!(
+            "→ Interpreted as: {} subcentroids × {} features (row-major)",
+            nitems, nfeatures
+        );
 
-    Self {
-        data: matrix,
-        nitems,
-        nfeatures,
-        signals: sprs::CsMat::zero((0, 0)),
-        lambdas: vec![0.0; nitems],
-        min_lambdas: f64::NAN,
-        max_lambdas: f64::NAN,
-        range_lambdas: f64::NAN,
-        taumode: TAUDEFAULT,
-        n_clusters: 0,
-        cluster_assignments: Vec::new(),
-        cluster_sizes: Vec::new(),
-        cluster_radius: 0.0,
-        projection_matrix: None,
-        reduced_dim: None,
-        centroid_map: None,
-        sub_centroids: None,
-        subcentroid_lambdas: None,
-        item_norms: None,
+        Self {
+            data: matrix,
+            nitems,
+            nfeatures,
+            signals: sprs::CsMat::zero((0, 0)),
+            lambdas: vec![0.0; nitems],
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
+            taumode: TAUDEFAULT,
+            n_clusters: 0,
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            projection_matrix: None,
+            reduced_dim: None,
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
+            item_norms: None,
+        }
     }
-}
-
 
     /// Project query vector to reduced space if projection was used during indexing
     ///
@@ -618,7 +617,10 @@ pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
     /// Maps query to nearest subcentroid and returns its lambda.
     /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
     pub fn prepare_query_item(&self, query: &[f64], gl: &GraphLaplacian) -> f64 {
-        assert!(query.iter().all(|x| x.is_finite()), "query item has non-finite values");
+        assert!(
+            query.iter().all(|x| x.is_finite()),
+            "query item has non-finite values"
+        );
         // Energy mode: subcentroid mapping (fast)
         if let (Some(subcentroids), Some(sc_lambdas)) =
             (&self.sub_centroids, &self.subcentroid_lambdas)
@@ -656,7 +658,7 @@ pub(crate) fn subcentroids_from_dense_matrix(matrix: DenseMatrix<f64>) -> Self {
 
         // Standard mode
         let tau = TauMode::select_tau(&query, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda(&query, &gl.matrix, tau);
+        let raw_lambda = TauMode::compute_synthetic_lambda(&query, &self, &gl.matrix, tau);
 
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
