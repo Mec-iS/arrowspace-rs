@@ -12,16 +12,8 @@ use crate::{
 #[test]
 fn simple_build() {
     // build `with_lambda_graph`
-    let rows = vec![
-        vec![1.0, 0.0, 5.0],
-        vec![0.3, 1.0, 0.0],
-        vec![1.0, 0.0, 5.0],
-        vec![0.3, 1.0, 0.0],
-        vec![2.0, 0.0, 5.0],
-        vec![0.3, 2.0, 0.0],
-        vec![5.0, 1.0, 5.0],
-        vec![0.3, 1.0, 5.0],
-    ];
+    let rows = make_gaussian_hd(10, 0.5);
+    assert!(rows.len() == 8);
 
     let eps = 0.5;
     let k = 3usize;
@@ -31,15 +23,17 @@ fn simple_build() {
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(eps, k, topk, p, sigma_override)
+        .with_inline_sampling(None)
         .build(rows);
 
-    assert_eq!(aspace.data.shape(), (8, 3));
+    assert_eq!(aspace.data.shape(), (8, 100));
     assert_eq!(gl.nnodes, 8);
 }
 
 #[test]
 fn build_from_rows_with_lambda_graph() {
     let rows = make_gaussian_blob(300, 0.5);
+    assert!(rows.len() == 300);
 
     // Build a lambda-proximity Laplacian over items from the data matrix
     // Parameters mirror the old intent: small eps, k=2 cap, p=2.0 kernel, default sigma
@@ -58,6 +52,7 @@ fn build_with_lambda_graph_over_product_like_rows() {
     // Case 1: Gaussian HD, moderate noise
     {
         let rows = make_gaussian_hd(99, 0.3);
+        assert!(rows.len() == 99);
         let (aspace, _gl) = ArrowSpaceBuilder::new()
             .with_lambda_graph(1.0, 3, 3, 2.0, None)
             .with_inline_sampling(None)
