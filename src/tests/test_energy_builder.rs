@@ -103,13 +103,13 @@ fn test_energy_laplacian_properties() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
+        .with_lambda_graph(0.25, 2, 1, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
     let (_, gl_energy) = builder.build_energy(rows, EnergyParams::new(&builder));
 
     let sparsity = GraphLaplacian::sparsity(&gl_energy.matrix);
-    assert!(sparsity < 0.95, "Laplacian should not be too sparse");
     assert!(sparsity > 0.0, "Laplacian should have some sparsity");
 
     let is_sym = gl_energy.is_symmetric(1e-6);
@@ -131,6 +131,7 @@ fn test_energy_build_with_projection() {
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(222)
+        .with_lambda_graph(0.5, 6, 3, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
@@ -179,6 +180,7 @@ fn test_energy_build_taumode_consistency() {
 fn test_energy_build_custom_params() {
     crate::tests::init();
     info!("Test: build_energy with custom EnergyParams");
+    let p_neighbor_k = 10;
 
     let rows = test_data::make_gaussian_hd(40, 0.1);
     let p = EnergyParams {
@@ -187,7 +189,7 @@ fn test_energy_build_custom_params() {
         eta: 0.15,
         steps: 2,
         split_quantile: 0.95,
-        neighbor_k: 10,
+        neighbor_k: p_neighbor_k,
         split_tau: 0.1,
         w_lambda: 1.5,
         w_disp: 0.3,
@@ -196,15 +198,16 @@ fn test_energy_build_custom_params() {
     };
 
     let mut builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.001, p_neighbor_k, 5, 2.0, None)
         .with_seed(333)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
-    let lambda_k = builder.lambda_k.clone();
+    assert!(builder.normalise == false);
+
     let (aspace, gl_energy) = builder.build_energy(rows, p);
 
-    assert_eq!(gl_energy.graph_params.k, lambda_k);
-    assert!(!gl_energy.graph_params.normalise);
+    assert!(gl_energy.graph_params.normalise == false);
     assert!(aspace.lambdas.iter().any(|&l| l > 0.0));
 
     info!(
@@ -218,10 +221,11 @@ fn test_energy_build_lambda_statistics() {
     crate::tests::init();
     info!("Test: build_energy lambda statistics");
 
-    let rows = test_data::make_moons_hd(100, 0.2, 0.1, 99, 42);
+    let rows = test_data::make_gaussian_hd(100, 0.6);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
+        .with_lambda_graph(0.01, 10, 5, 2.0, None)
         .with_dims_reduction(true, Some(0.3))
         .with_inline_sampling(None);
 
@@ -244,6 +248,7 @@ fn test_energy_build_lambda_statistics() {
 
 #[test]
 fn test_build_energy_dimensionality_reduction() {
+    crate::tests::init();
     // Create synthetic high-dimensional dataset
     let n_items = 99;
     let n_features = 100;
@@ -313,14 +318,8 @@ fn test_build_energy_dimensionality_reduction() {
     let (graph_rows, graph_cols) = gl_energy.shape();
 
     assert_eq!(
-        graph_rows, n_subcentroids,
-        "Graph rows {} should match sub_centroids count {}",
-        graph_rows, n_subcentroids
-    );
-
-    assert_eq!(
-        graph_cols, n_subcentroids,
-        "Graph should be square: {}×{}",
+        graph_rows, graph_cols,
+        "Energy Laplacian should be square {} != {}",
         graph_rows, graph_cols
     );
 

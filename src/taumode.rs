@@ -8,7 +8,7 @@
 
 use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
-use log::{info, trace};
+use log::{debug, info, trace};
 use rayon::prelude::*;
 use sprs::CsMat;
 use std::fmt;
@@ -139,8 +139,10 @@ impl TauMode {
             && aspace.signals.rows() == gl.matrix.shape().0
             && aspace.centroid_map.is_none();
         let graph = if using_signals {
+            debug!("compute_taumode_lambdas_parallel: YES signals");
             &aspace.signals
         } else {
+            debug!("compute_taumode_lambdas_parallel: NO signals");
             &gl.matrix
         };
         let (graph_rows, graph_cols) = graph.shape();
@@ -304,23 +306,27 @@ impl TauMode {
     /// - graph is F×F Laplacian (features × features)
     /// - item_vector is F-dimensional
     /// - i,j indices reference FEATURES, not items
-    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
+    pub fn compute_rayleigh_quotient_from_matrix(
+        matrix: &CsMat<f64>,
+        vector: &[f64],
+    ) -> f64 {
+        let n = vector.len();
+        
+        assert_eq!(matrix.rows(), n, "Matrix rows {} must match vector length {}", matrix.rows(), n);
         assert_eq!(matrix.rows(), matrix.cols(), "Matrix must be square");
 
-        // Parallel sparse computation
+        // Compute x^T M x efficiently using sparse structure
         let numerator: f64 = matrix
-            .outer_iterator()
-            .enumerate()
-            .par_bridge() // Parallelize across rows
+            .outer_iterator()      // Iterate over rows (CSR format)
+            .enumerate()           // Get (row_idx, row_view) pairs
+            .par_bridge()          // Parallelize
             .map(|(i, row)| {
                 let xi = vector[i];
-                let mut row_sum = 0.0;
-
-                for (j, &mij) in row.iter() {
-                    row_sum += xi * mij * vector[j];
-                }
-
-                row_sum
+                
+                // row.iter() gives (col_idx, &value) for non-zero entries ONLY
+                row.iter()
+                    .map(|(j, &mij)| xi * mij * vector[j])
+                    .sum::<f64>()
             })
             .sum();
 

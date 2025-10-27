@@ -8,7 +8,6 @@ use log::{debug, info, trace, warn};
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use rayon::prelude::*;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
@@ -896,10 +895,6 @@ fn topk_by_l2(dm: &DenseMatrix<f64>, i: usize, k: usize) -> Vec<usize> {
     scored.into_iter().map(|(j, _)| j).collect()
 }
 
-/// Alias for topk_by_l2 (for candidate selection).
-fn topm_by_l2(dm: &DenseMatrix<f64>, i: usize, m: usize) -> Vec<usize> {
-    topk_by_l2(dm, i, m)
-}
 
 /// Compute robust scale estimate using Median Absolute Deviation (MAD).
 fn robust_scale(x: &Vec<f64>) -> f64 {
@@ -1056,16 +1051,6 @@ fn node_energy_and_dispersion(
     debug!("Energy and dispersion computed for {} nodes [parallel]", n);
 
     (lambdas, dispersions)
-}
-
-/// Compute feature-wise difference between two matrix rows.
-fn pair_diff(dm: &DenseMatrix<f64>, i: usize, j: usize) -> Vec<f64> {
-    let f = dm.shape().1;
-    let mut out = Vec::with_capacity(f);
-    for c in 0..f {
-        out.push(*dm.get((i, c)) - *dm.get((j, c)));
-    }
-    out
 }
 
 /// Builder trait for constructing energy-only ArrowSpace indices.
@@ -1230,20 +1215,10 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         // Step 6: Build energy Laplacian on sub_centroids
         let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids_reduced, &energy_params);
 
-        // extra validation
-        let actual_rows = sub_centroids_reduced.shape().0;
-        let actual_cols = sub_centroids_reduced.shape().1;
-        let graph_cols = gl_energy.shape().1;
-
         assert_eq!(
-            graph_cols, actual_rows,
-            "Graph cols ({}) must match sub_centroids rows ({})",
-            graph_cols, actual_rows
-        );
-        assert_eq!(
-            actual_cols, reduced_dim,
-            "Reduced dimensions ({}) should match target ({})",
-            actual_cols, reduced_dim
+            gl_energy.shape().1, sub_centroids_reduced.shape().1,
+            "Graph cols ({}) must match sub_centroids features ({})",
+            gl_energy.shape().1, sub_centroids_reduced.shape().1
         );
 
         // Step 7: Compute lambdas on sub_centroids ONLY
@@ -1251,12 +1226,18 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         aspace.sub_centroids = Some(sub_centroids_reduced.clone());
         let sub_centroids_shape = sub_centroids_reduced.shape();
 
+        // Create a sub-ArrowSpace to match gl_energy
         let mut subcentroid_space =
             ArrowSpace::subcentroids_from_dense_matrix(sub_centroids_reduced.clone());
-        subcentroid_space.taumode = self.synthesis;
+        subcentroid_space.taumode = aspace.taumode;
+        subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
+        subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
+        // safeguard to clear signals
+        subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
+
         assert_eq!(
-            subcentroid_space.nitems,
-            gl_energy.shape().0,
+            subcentroid_space.nfeatures,
+            gl_energy.shape().1,
             "Subcentroid count must match energy graph dimensions"
         );
 
@@ -1264,8 +1245,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             "Computing lambdas on {} sub_centroids...",
             subcentroid_space.nitems
         );
-        // safeguard to clear signals
-        subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
+
         // finally compute taumode on the subcentroids
         TauMode::compute_taumode_lambdas_parallel(
             &mut subcentroid_space,
@@ -1378,6 +1358,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         (aspace, gl_energy)
     }
 
+    /// Build the RFxRF (reduced-features) energy laplacian
     fn build_energy_laplacian(
         &self,
         sub_centroids: &DenseMatrix<f64>,
@@ -1393,134 +1374,38 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             x, f
         );
 
-        trace!("Bootstrapping L' for energy feature computation");
+        trace!("Bootstrapping F×F Laplacian for taumode computation");
         let l_boot = ArrowSpace::bootstrap_centroid_laplacian(sub_centroids, &self);
+        
+        debug!(
+            "Bootstrap Laplacian: {}×{} (F×F feature-space for taumode)",
+            l_boot.matrix.rows(),
+            l_boot.matrix.cols()
+        );
 
-        trace!("Computing energy and dispersion features");
+        trace!("Computing energy and dispersion features over F×F graph");
         let (lambda, gini) = node_energy_and_dispersion(
             sub_centroids,
             &l_boot,
             energy_params.neighbor_k.max(self.lambda_k),
         );
+        
         let s_l = robust_scale(&lambda).max(1e-9);
         let s_g = robust_scale(&gini).max(1e-9);
         debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
 
-        debug!(
-            "Building energy-distance kNN with candidate pruning (M={}) [parallel]",
-            energy_params.candidate_m
-        );
-
-        let adjacency = Arc::new(DashMap::with_capacity(x * self.lambda_k));
-
-        (0..x).into_par_iter().for_each(|i| {
-            let cand = topm_by_l2(
-                sub_centroids,
-                i,
-                energy_params.candidate_m.max(self.lambda_k),
-            );
-
-            let mut scored: Vec<(usize, f64)> = cand
-                .into_iter()
-                .filter(|&j| j != i)
-                .map(|j| {
-                    let d_lambda = (lambda[i] - lambda[j]).abs() / s_l;
-                    let d_gini = (gini[i] - gini[j]).abs() / s_g;
-                    let diff = pair_diff(sub_centroids, i, j);
-
-                    // Use projection-aware Dirichlet: bounded L2 in feature space
-                    // (no tiling since we're already in sub-centroid space)
-                    let r_pair = bounded_l2_energy(&diff);
-
-                    let dist = energy_params.w_lambda * d_lambda
-                        + energy_params.w_disp * d_gini
-                        + energy_params.w_dirichlet * r_pair;
-                    (j, dist)
-                })
-                .collect();
-
-            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-            scored.truncate(self.lambda_k);
-
-            for (j, d) in scored {
-                let w = (-d).exp();
-                adjacency.insert((i, j), w);
-            }
-        });
-
-        // [Rest of symmetrization and Laplacian building unchanged]
-
-        debug!(
-            "Symmetrizing adjacency: {} directed edges [parallel]",
-            adjacency.len()
-        );
-        let sym_adjacency = Arc::new(DashMap::with_capacity(adjacency.len() * 2));
-        let processed = Arc::new(DashMap::with_capacity(adjacency.len()));
-
-        adjacency.iter().par_bridge().for_each(|entry| {
-            let &(i, j) = entry.key();
-            let &w_ij = entry.value();
-            let (u, v) = if i < j { (i, j) } else { (j, i) };
-
-            if processed.insert((u, v), true).is_none() {
-                let w_ji = adjacency.get(&(j, i)).map(|e| *e.value()).unwrap_or(0.0);
-                let w_sym = w_ij.max(w_ji);
-                sym_adjacency.insert((i, j), w_sym);
-                sym_adjacency.insert((j, i), w_sym);
-            }
-        });
-
-        let mut tri = sprs::TriMat::<f64>::new((x, x));
-        let degrees: Vec<f64> = (0..x)
-            .into_par_iter()
-            .map(|i| {
-                sym_adjacency
-                    .iter()
-                    .filter(|e| {
-                        let &(u, v) = e.key();
-                        u == i && i != v
-                    })
-                    .map(|e| *e.value())
-                    .sum()
-            })
-            .collect();
-
-        for entry in sym_adjacency.iter() {
-            let &(i, j) = entry.key();
-            let &w = entry.value();
-            if i != j {
-                tri.add_triplet(i, j, -w);
-            }
-        }
-        for i in 0..x {
-            tri.add_triplet(i, i, degrees[i]);
-        }
-
-        let csr = tri.to_csr();
-        let gl = GraphLaplacian {
-            init_data: sub_centroids.clone(),
-            matrix: csr,
-            nnodes: x,
-            graph_params: GraphParams {
-                eps: self.lambda_eps,
-                k: self.lambda_k,
-                topk: self.lambda_topk,
-                p: 2.0,
-                sigma: None,
-                normalise: self.normalise,
-                sparsity_check: self.sparsity_check,
-            },
-        };
-
         info!(
-            "Energy Laplacian built: {}×{}, {} nnz, {:.2}% sparse",
-            gl.shape().0,
-            gl.shape().1,
-            gl.nnz(),
-            GraphLaplacian::sparsity(&gl.matrix) * 100.0
+            "Energy Laplacian (F×F): {}×{}, {} nnz, {:.2}% sparse",
+            l_boot.shape().0,
+            l_boot.shape().1,
+            l_boot.nnz(),
+            GraphLaplacian::sparsity(&l_boot.matrix) * 100.0
         );
-        (gl, lambda, gini)
+        
+        // Return F×F Laplacian for taumode, plus computed lambda/gini vectors
+        (l_boot, lambda, gini)
     }
+
 }
 
 /// ============================================================================
@@ -1542,15 +1427,4 @@ impl Default for ProjectedEnergyParams {
             eps_norm: 1e-9,
         }
     }
-}
-
-#[inline]
-fn l2_norm(v: &[f64]) -> f64 {
-    v.iter().map(|x| x * x).sum::<f64>().sqrt()
-}
-
-/// Bounded L2 energy for feature-space differences (no tiling).
-fn bounded_l2_energy(diff: &[f64]) -> f64 {
-    let num = l2_norm(diff);
-    (num / (1.0 + num)).min(1.0)
 }
