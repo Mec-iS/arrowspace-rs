@@ -1661,9 +1661,9 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "sprs"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bff8419009a08f6cb7519a602c5590241fbff1446bcc823c07af15386eb801b"
+checksum = "6dca58a33be2188d4edc71534f8bafa826e787cc28ca1c47f31be3423f0d6e55"
 dependencies = [
  "alga",
  "ndarray",
