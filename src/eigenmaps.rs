@@ -67,7 +67,7 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::clustering::{self, ClusteringHeuristic};
 use crate::core::{ArrowItem, ArrowSpace};
 use crate::graph::{GraphFactory, GraphLaplacian};
-use crate::reduction::{compute_jl_dimension, ImplicitProjection};
+use crate::reduction::{ImplicitProjection, compute_jl_dimension};
 use crate::sampling::{InlineSampler, SamplerType};
 use crate::taumode::TauMode;
 
@@ -183,19 +183,24 @@ impl EigenMaps for ArrowSpace {
         let mut aspace = ArrowSpace::new(rows.clone(), builder.synthesis);
 
         // Configure inline sampler matching builder policy
-        let sampler: Arc<Mutex<dyn InlineSampler>> = match builder.sampling.clone() {
-            Some(SamplerType::Simple(r)) => {
-                debug!("Using Simple sampler with ratio {:.2}", r);
-                Arc::new(Mutex::new(SamplerType::new_simple(r)))
+        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
+            match builder.sampling.clone() {
+                Some(SamplerType::Simple(r)) => {
+                    debug!("Using Simple sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
+                }
+                Some(SamplerType::DensityAdaptive(r)) => {
+                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
+                }
+                None => {
+                    debug!("No sampling configured, using full dataset");
+                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+                }
             }
-            Some(SamplerType::DensityAdaptive(r)) => {
-                debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-            }
-            None => {
-                debug!("No sampling configured, using full dataset");
-                Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-            }
+        } else {
+            // For small datasets, keep everything
+            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
         };
 
         // Auto-compute optimal clustering parameters via heuristic
@@ -238,7 +243,7 @@ impl EigenMaps for ArrowSpace {
             let jl_dim = compute_jl_dimension(n_clusters, builder.rp_eps);
             let target_dim = jl_dim.min(n_features / 2);
 
-            if target_dim < n_features {
+            if target_dim < n_features && target_dim > clustered_dm.shape().0 {
                 info!(
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
                     n_features, target_dim, builder.rp_eps
@@ -278,6 +283,7 @@ impl EigenMaps for ArrowSpace {
         }
     }
 
+    /// build items-graph laplacian
     fn eigenmaps(
         &mut self,
         builder: &ArrowSpaceBuilder,

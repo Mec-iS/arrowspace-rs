@@ -1,7 +1,7 @@
-use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use arrowspace::builder::ArrowSpaceBuilder;
 use arrowspace::core::{ArrowItem, ArrowSpace};
-use arrowspace::graph::{GraphFactory, GraphLaplacian};
+use arrowspace::graph::GraphLaplacian;
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::prelude::*;
 use smartcore::dataset::iris;
 use smartcore::linalg::basic::arrays::Array;
@@ -54,10 +54,7 @@ fn setup_single() -> (Vec<Vec<f64>>, Vec<f64>, usize, ArrowSpace) {
     (items, query, 3, aspace)
 }
 
-fn setup_batch(
-    batch_size: usize,
-    seed: u64,
-) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, usize, ArrowSpace) {
+fn setup_batch(batch_size: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, usize, ArrowSpace) {
     let dataset = iris::load_dataset();
     let items: Vec<Vec<f64>> = dataset
         .as_matrix()
@@ -106,7 +103,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             .collect();
         let ids_arr: Vec<usize> = arr_scores.iter().map(|x| x.0).collect();
 
-        assert_eq!(ids_base, ids_arr, "alpha=1,beta=0 must match baseline cosine");
+        assert_eq!(
+            ids_base, ids_arr,
+            "alpha=1,beta=0 must match baseline cosine"
+        );
     }
 
     let mut group = c.benchmark_group("lookup_topk_k=3");

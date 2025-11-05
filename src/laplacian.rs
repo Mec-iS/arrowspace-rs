@@ -70,7 +70,7 @@ use sprs::{CsMat, TriMat};
 /// # Similarity Measure
 ///
 /// Uses **rectified cosine distance**: `distance = 1 - max(0, cosine_similarity)`
-/// * Cosine similarity ∈ [-1, 1] → Distance ∈ [0, 2]  
+/// * Cosine similarity ∈ [-1, 1] → Distance ∈ [0, 2]
 /// * Only non-negative similarities (distance ≤ 1) contribute to positive weights
 /// * Items with negative cosine similarity are effectively disconnected
 ///
@@ -414,4 +414,33 @@ pub(crate) fn _build_sparse_laplacian(
     info!("Sparse Laplacian construction time: {:?}", start.elapsed());
 
     trimat
+}
+
+fn mean(data: &[f64]) -> Option<f32> {
+    let sum = data.iter().sum::<f64>() as f32;
+    let count = data.len();
+
+    match count {
+        positive if positive > 0 => Some(sum / count as f32),
+        _ => None,
+    }
+}
+
+pub fn std_deviation(data: &[f64]) -> Option<f32> {
+    match (mean(data), data.len()) {
+        (Some(data_mean), count) if count > 0 => {
+            let variance = data
+                .iter()
+                .map(|value| {
+                    let diff = data_mean - (*value as f32);
+
+                    diff * diff
+                })
+                .sum::<f32>()
+                / count as f32;
+
+            Some(variance.sqrt())
+        }
+        _ => None,
+    }
 }

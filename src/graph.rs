@@ -207,7 +207,7 @@ impl GraphFactory {
     /// This creates a graph where nodes are features and edges represent feature similarities
     /// # Arguments
     ///
-    /// * `aspace` - The data from the ArrowSpace data  
+    /// * `aspace` - The data from the ArrowSpace data
     /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
     pub fn build_spectral_laplacian(aspace: &mut ArrowSpace, graph_laplacian: &GraphLaplacian) {
         info!("Building F×F spectral feature matrix");
@@ -321,8 +321,7 @@ impl GraphLaplacian {
     pub fn degrees(&self) -> Vec<f64> {
         trace!(
             "Extracting diagonal degrees from {}×{} matrix",
-            self.nnodes,
-            self.nnodes
+            self.nnodes, self.nnodes
         );
         let mut degrees: Vec<f64> = Vec::with_capacity(self.nnodes);
         for i in 0..self.nnodes {
@@ -618,8 +617,14 @@ impl GraphLaplacian {
             graph_params: self.graph_params.clone(),
         };
 
-        debug!("Computed statistics: {} nodes, {} non-zeros, {:.2}% sparse, degree range [{:.6}, {:.6}]", 
-               stats.nnodes, stats.nnz, stats.sparsity * 100.0, stats.min_degree, stats.max_degree);
+        debug!(
+            "Computed statistics: {} nodes, {} non-zeros, {:.2}% sparse, degree range [{:.6}, {:.6}]",
+            stats.nnodes,
+            stats.nnz,
+            stats.sparsity * 100.0,
+            stats.min_degree,
+            stats.max_degree
+        );
 
         stats
     }

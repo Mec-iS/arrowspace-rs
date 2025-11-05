@@ -49,6 +49,7 @@ pub struct ArrowSpaceBuilder {
 
     // dimensionality reduction with random projection (dafault false)
     pub(crate) use_dims_reduction: bool,
+    pub(crate) extra_dims_reduction: bool,
     pub(crate) rp_eps: f64,
 
     // persistence directory
@@ -83,6 +84,7 @@ impl Default for ArrowSpaceBuilder {
             deterministic_clustering: false,
             // dim reduction
             use_dims_reduction: false,
+            extra_dims_reduction: false,
             rp_eps: 0.3,
             // persistence directory
             persistence: None,
@@ -112,7 +114,7 @@ impl ArrowSpaceBuilder {
         result.sparsity_check = self.sparsity_check;
         result.sampling = self.sampling.clone();
         result.use_dims_reduction = self.use_dims_reduction;
-        result.rp_eps =  self.rp_eps;
+        result.rp_eps = self.rp_eps;
         result.persistence = self.persistence.clone();
         result
     }
@@ -175,7 +177,9 @@ impl ArrowSpaceBuilder {
     /// use only on limited dataset for analysis, exploration and data QA
     pub fn with_spectral(mut self, compute_spectral: bool) -> Self {
         info!("Setting compute spectral: {}", compute_spectral);
-        warn!("with_spectral is an experimental feature, results may be unprecise. Keep the default to false");
+        warn!(
+            "with_spectral is an experimental feature, results may be unprecise. Keep the default to false"
+        );
         self.prebuilt_spectral = compute_spectral;
         self
     }
@@ -197,9 +201,20 @@ impl ArrowSpaceBuilder {
         self
     }
 
+    /// Enable dimensionality reduction in clustering
     pub fn with_dims_reduction(mut self, enable: bool, eps: Option<f64>) -> Self {
         self.use_dims_reduction = enable;
         self.rp_eps = eps.unwrap_or(0.5); // default JL tolerance
+        self
+    }
+
+    /// Enable extra-dimensionality reduction after clustering (optional)
+    pub fn with_extra_dims_reduction(mut self, enable: bool) -> Self {
+        assert!(
+            self.use_dims_reduction == true,
+            "extra dims reduction needs base reduction"
+        );
+        self.extra_dims_reduction = enable;
         self
     }
 
@@ -292,8 +307,8 @@ impl ArrowSpaceBuilder {
         #[cfg(feature = "storage")]
         {
             if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::parquet::save_dense_matrix_with_builder;
                 use crate::storage::StorageError;
+                use crate::storage::parquet::save_dense_matrix_with_builder;
 
                 // Create temporary ArrowSpace for saving raw data
                 let temp_aspace = ArrowSpace::new(rows.clone(), self.synthesis);
@@ -329,8 +344,8 @@ impl ArrowSpaceBuilder {
         #[cfg(feature = "storage")]
         {
             if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::parquet::save_dense_matrix_with_builder;
                 use crate::storage::StorageError;
+                use crate::storage::parquet::save_dense_matrix_with_builder;
 
                 let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
                     &centroids,
@@ -352,8 +367,8 @@ impl ArrowSpaceBuilder {
         #[cfg(feature = "storage")]
         {
             if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::parquet::save_dense_matrix_with_builder;
                 use crate::storage::StorageError;
+                use crate::storage::parquet::save_dense_matrix_with_builder;
 
                 let saved: Result<(), StorageError> = save_dense_matrix_with_builder(
                     &centroids,
@@ -380,8 +395,8 @@ impl ArrowSpaceBuilder {
         #[cfg(feature = "storage")]
         {
             if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::parquet::save_sparse_matrix_with_builder;
                 use crate::storage::StorageError;
+                use crate::storage::parquet::save_sparse_matrix_with_builder;
 
                 let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
                     &gl.matrix,
@@ -407,8 +422,8 @@ impl ArrowSpaceBuilder {
             #[cfg(feature = "storage")]
             {
                 if let Some((ref name, ref path)) = self.persistence {
-                    use crate::storage::parquet::save_sparse_matrix_with_builder;
                     use crate::storage::StorageError;
+                    use crate::storage::parquet::save_sparse_matrix_with_builder;
 
                     let saved: Result<(), StorageError> = save_sparse_matrix_with_builder(
                         &aspace.signals,
@@ -435,13 +450,15 @@ impl ArrowSpaceBuilder {
             self.synthesis
         );
         aspace.compute_taumode(&gl);
+        // create the sorted index
+        aspace.build_lambdas_sorted();
 
         // Save lambdas if persistence is enabled
         #[cfg(feature = "storage")]
         {
             if let Some((ref name, ref path)) = self.persistence {
-                use crate::storage::parquet::save_lambda_with_builder;
                 use crate::storage::StorageError;
+                use crate::storage::parquet::save_lambda_with_builder;
 
                 let saved: Result<(), StorageError> = save_lambda_with_builder(
                     &aspace.lambdas,

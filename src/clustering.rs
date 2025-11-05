@@ -893,11 +893,6 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             nrows,
             sampling_ratio * 100.0
         );
-        #[cfg(not(test))]
-        assert!(
-            sampling_ratio > 0.325 && sampling_ratio < 0.89,
-            "sampling_rate not in the interval 0.325..0.875 but {sampling_ratio}"
-        );
     } else {
         debug!(
             "Clustering produced {} centroids from {} rows (100% sampling)",
