@@ -387,6 +387,7 @@ pub struct ArrowSpace {
     // Projection data: dims reduction data (needed to prepare the query vector)
     pub projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
     pub reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
+    pub extra_reduced_dim: bool,    // optional extra dimensionality reduction for energymaps
 
     // energymaps specific
     pub centroid_map: Option<Vec<usize>>, // Maps item_idx -> centroid_idx
@@ -426,6 +427,7 @@ impl Default for ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -466,6 +468,7 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -538,6 +541,7 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -579,6 +583,7 @@ impl ArrowSpace {
             cluster_radius: 0.0,
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
@@ -635,6 +640,11 @@ impl ArrowSpace {
 
             // Find nearest subcentroid
             for sc_idx in 0..subcentroids.shape().0 {
+                let query = if self.extra_reduced_dim {
+                    &self.project_query(query)
+                } else {
+                    query
+                };
                 let dist: f64 = query
                     .iter()
                     .zip(subcentroids.get_row(sc_idx).iterator(0))

@@ -137,10 +137,23 @@ fn test_energy_search_self_retrieval() {
         }
     }
     assert!(
+        results.iter().any(|&(idx, _dist)| idx == query_idx),
+        "Query index not found in results"
+    );
+    assert!(
         count_zeros >= 1.0,
         "Self lambda search found {} similar items with average lambda diff of {}",
         count_zeros,
         total_distance / count_zeros
+    );
+    info!(
+        "Self lambda search found {} similar items with average lambda diff of {}",
+        count_zeros,
+        total_distance / count_zeros
+    );
+    debug!(
+        "From this query lambda {} ---> this results {:?}",
+        query_lambda, results
     );
     info!("✓ Self-retrieval: similar_results={}", count_zeros);
 }
