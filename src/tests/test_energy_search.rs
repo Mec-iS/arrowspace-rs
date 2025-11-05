@@ -4,7 +4,7 @@ use crate::energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams};
 use crate::taumode::TauMode;
 use std::collections::HashSet;
 
-use approx::relative_eq;
+use approx::{assert_relative_ne, relative_eq};
 use log::{debug, info, trace, warn};
 
 #[cfg(test)]
@@ -114,9 +114,10 @@ fn test_energy_search_self_retrieval() {
         results.clone().into_iter().any(|(i, _)| i == query_idx)
     );
 
-    // TODO: add this assert when precision improves
-    // assert!(results.clone().into_iter().any(|(i, _)| i == query_idx),
-    //     "Self-retrieval: indexed item should be top result (lambda distance = 0)");
+    assert!(
+        results.clone().into_iter().any(|(i, _)| i == query_idx),
+        "Self-retrieval: indexed item should be top result (lambda distance = 0)"
+    );
 
     // Verify the lambda distance for self is minimal
     let query_lambda =
@@ -648,7 +649,12 @@ fn test_energy_vs_standard_recall_at_k() {
         query.clone(),
         aspace_std.prepare_query_item(&query, &gl_std),
     );
+    assert_relative_ne!(q_item_std.lambda, 0.0);
+
     let results_std = aspace_std.search_lambda_aware(&q_item_std, k, 0.7);
+    assert!(results_std.iter().any(|&(idx, _dist)| idx == 0));
+
+    debug!("Results for aspace_std: {:?}", results_std);
 
     // Energy search with different weight configurations
     let mut builder_energy = ArrowSpaceBuilder::new()
@@ -659,31 +665,22 @@ fn test_energy_vs_standard_recall_at_k() {
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
-    let results_energy_balanced = aspace_energy.search_energy(&query, &gl_energy, k);
-    let results_energy_lambda = aspace_energy.search_energy(&query, &gl_energy, k);
+    let results_energy = aspace_energy.search_energy(&query, &gl_energy, k);
+    assert!(results_energy.iter().any(|&(idx, _dist)| idx == 0));
 
     // Compute recall relative to standard results
     let std_indices: HashSet<usize> = results_std.iter().map(|(i, _)| *i).collect();
 
-    let recall_balanced = results_energy_balanced
+    let recall_balanced = results_energy
         .iter()
         .filter(|(i, _)| std_indices.contains(i))
         .count() as f64
         / k as f64;
 
-    let recall_lambda = results_energy_lambda
-        .iter()
-        .filter(|(i, _)| std_indices.contains(i))
-        .count() as f64
-        / k as f64;
-
+    assert!(recall_balanced > 0.9);
     info!(
         "Recall vs standard (balanced): {:.2}%",
         recall_balanced * 100.0
-    );
-    info!(
-        "Recall vs standard (λ-heavy):  {:.2}%",
-        recall_lambda * 100.0
     );
 
     // Energy methods should diverge from cosine baseline (low recall expected)
