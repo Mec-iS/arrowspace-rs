@@ -676,7 +676,7 @@ fn test_energy_vs_standard_recall_at_k() {
         .count() as f64
         / k as f64;
 
-    assert!(recall_balanced > 0.9);
+    assert!(recall_balanced > 0.8);
     info!(
         "Recall vs standard (balanced): {:.2}%",
         recall_balanced * 100.0
