@@ -208,7 +208,7 @@ impl ArrowSpaceBuilder {
         self
     }
 
-    /// Enable extra-dimensionality reduction after clustering (optional)
+    /// Enable extra-dimensionality reduction after clustering (energymaps only, optional)
     pub fn with_extra_dims_reduction(mut self, enable: bool) -> Self {
         assert!(
             self.use_dims_reduction == true,
