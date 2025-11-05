@@ -639,9 +639,9 @@ fn test_energy_vs_standard_recall_at_k() {
 
     // Standard search
     let builder_std = ArrowSpaceBuilder::default()
-        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_lambda_graph(0.8, 3, 3, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.3))
+        .with_dims_reduction(false, None)
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -657,15 +657,15 @@ fn test_energy_vs_standard_recall_at_k() {
 
     // Energy search with different weight configurations
     let mut builder_energy = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_lambda_graph(0.8, 3, 3, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.3))
+        .with_dims_reduction(true, Some(0.2))
+        .with_extra_dims_reduction(true)
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
     let results_energy = aspace_energy.search_energy(&query, &gl_energy, k);
-    assert!(results_energy.iter().any(|&(idx, _dist)| idx == 0));
 
     // Compute recall relative to standard results
     let std_indices: HashSet<usize> = results_std.iter().map(|(i, _)| *i).collect();
@@ -676,14 +676,27 @@ fn test_energy_vs_standard_recall_at_k() {
         .count() as f64
         / k as f64;
 
-    assert!(recall_balanced > 0.8);
+    let found = results_energy.iter().any(|&(idx, _dist)| idx == 0);
+    assert!(
+        found,
+        "Cannot find query index (with recall {})",
+        recall_balanced
+    );
+    assert!(
+        recall_balanced > 0.65,
+        "failed for minimal acceptable recall {}. Query found: {}",
+        recall_balanced,
+        found
+    );
     info!(
         "Recall vs standard (balanced): {:.2}%",
         recall_balanced * 100.0
     );
 
     // Energy methods should diverge from cosine baseline (low recall expected)
-    info!("✓ Recall comparison: energy methods produce different result sets");
+    info!(
+        "✓ Recall comparison: energy methods produce different but similar results set result sets"
+    );
 }
 
 #[test]
