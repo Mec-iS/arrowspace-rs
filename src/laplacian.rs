@@ -70,7 +70,7 @@ use sprs::{CsMat, TriMat};
 /// # Similarity Measure
 ///
 /// Uses **rectified cosine distance**: `distance = 1 - max(0, cosine_similarity)`
-/// * Cosine similarity ∈ [-1, 1] → Distance ∈ [0, 2]  
+/// * Cosine similarity ∈ [-1, 1] → Distance ∈ [0, 2]
 /// * Only non-negative similarities (distance ≤ 1) contribute to positive weights
 /// * Items with negative cosine similarity are effectively disconnected
 ///
@@ -108,7 +108,7 @@ use sprs::{CsMat, TriMat};
 /// };
 ///
 /// let laplacian = build_laplacian_matrix(
-///     DenseMatrix::from_2d_vec(&items).unwrap().transpose(), &params, None);
+///     DenseMatrix::from_2d_vec(&items).unwrap().transpose(), &params, None, false);
 /// assert_eq!(laplacian.nnodes, 4);
 /// assert_eq!(laplacian.matrix.shape(), (3, 3));
 /// println!("{:?}", laplacian);
@@ -124,6 +124,7 @@ pub fn build_laplacian_matrix(
     params: &GraphParams,         // requested params from the graph
     // n_items of the original dataset (in case to need the computation of L(FxN))
     n_items: Option<usize>,
+    energy: bool,
 ) -> GraphLaplacian {
     let (d, n) = transposed.shape();
     assert!(
@@ -166,6 +167,7 @@ pub fn build_laplacian_matrix(
             None => n,
         },
         graph_params: params.clone(),
+        energy: energy,
     };
 
     info!(
@@ -414,4 +416,33 @@ pub(crate) fn _build_sparse_laplacian(
     info!("Sparse Laplacian construction time: {:?}", start.elapsed());
 
     trimat
+}
+
+fn mean(data: &[f64]) -> Option<f32> {
+    let sum = data.iter().sum::<f64>() as f32;
+    let count = data.len();
+
+    match count {
+        positive if positive > 0 => Some(sum / count as f32),
+        _ => None,
+    }
+}
+
+pub fn std_deviation(data: &[f64]) -> Option<f32> {
+    match (mean(data), data.len()) {
+        (Some(data_mean), count) if count > 0 => {
+            let variance = data
+                .iter()
+                .map(|value| {
+                    let diff = data_mean - (*value as f32);
+
+                    diff * diff
+                })
+                .sum::<f32>()
+                / count as f32;
+
+            Some(variance.sqrt())
+        }
+        _ => None,
+    }
 }

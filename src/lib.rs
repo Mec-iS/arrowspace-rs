@@ -17,8 +17,10 @@ pub mod eigenmaps;
 pub mod energymaps;
 pub mod graph;
 pub mod laplacian;
+pub mod motives;
 pub mod reduction;
 pub mod sampling;
+pub mod sorted_index;
 pub mod sparsification;
 pub mod taumode;
 

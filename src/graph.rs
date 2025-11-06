@@ -132,6 +132,7 @@ pub struct GraphLaplacian {
     // number of the nodes of the *original raw data*
     pub nnodes: usize,
     pub graph_params: GraphParams,
+    pub energy: bool, // false if it is an eigenmap, true if it is an energymap
 }
 
 /// Graph factory: all construction ultimately uses the λτ-graph built from data.
@@ -180,6 +181,7 @@ impl GraphFactory {
                 sparsity_check,
             },
             Some(n_items),
+            false,
         );
 
         if sparsity_check {
@@ -207,7 +209,7 @@ impl GraphFactory {
     /// This creates a graph where nodes are features and edges represent feature similarities
     /// # Arguments
     ///
-    /// * `aspace` - The data from the ArrowSpace data  
+    /// * `aspace` - The data from the ArrowSpace data
     /// * `graph_laplacian` - A graph laplacian generated with the `ArrowSpace`
     pub fn build_spectral_laplacian(aspace: &mut ArrowSpace, graph_laplacian: &GraphLaplacian) {
         info!("Building F×F spectral feature matrix");
@@ -224,6 +226,7 @@ impl GraphFactory {
             sparse_to_dense(&graph_laplacian.matrix).transpose(),
             &graph_laplacian.graph_params,
             Some(aspace.nitems),
+            false,
         )
         .matrix;
 
@@ -281,20 +284,6 @@ fn sparse_to_dense(sparse: &CsMat<f64>) -> DenseMatrix<f64> {
 }
 
 impl GraphLaplacian {
-    /// Create a new GraphLaplacian from an items matrix (M = NxF)
-    /// This is used to create a graph from the transposed matrix
-    /// Use `GraphFacotry::build_lambda_graph` for the full computation
-    pub fn prepare_from_items(matrix: DenseMatrix<f64>, graph_params: GraphParams) -> Self {
-        let nnodes = matrix.shape().0;
-        debug!(
-            "Preparing GraphLaplacian from items matrix: {} nodes",
-            nnodes
-        );
-        trace!("Transposing matrix for GraphLaplacian");
-
-        build_laplacian_matrix(matrix.transpose(), &graph_params, Some(matrix.shape().0))
-    }
-
     /// Get the matrix dimensions as (rows, cols)
     pub fn shape(&self) -> (usize, usize) {
         self.matrix.shape()
@@ -321,8 +310,7 @@ impl GraphLaplacian {
     pub fn degrees(&self) -> Vec<f64> {
         trace!(
             "Extracting diagonal degrees from {}×{} matrix",
-            self.nnodes,
-            self.nnodes
+            self.nnodes, self.nnodes
         );
         let mut degrees: Vec<f64> = Vec::with_capacity(self.nnodes);
         for i in 0..self.nnodes {
@@ -391,10 +379,10 @@ impl GraphLaplacian {
     pub fn rayleigh_quotient(&self, vector: &[f64]) -> f64 {
         assert_eq!(
             vector.len(),
-            self.nnodes,
+            self.init_data.shape().0,
             "Vector length {} must match number of nodes {}",
             vector.len(),
-            self.nnodes
+            self.init_data.shape().0
         );
 
         trace!(
@@ -467,6 +455,30 @@ impl GraphLaplacian {
             result_norm
         );
         result
+    }
+
+    /// Returns an iterator over (neighbor_index, weight) for node `i` by negating Laplacian off-diagonals.
+    ///
+    /// Since L = D - W, we have W_ij = -L_ij for i ≠ j.
+    ///
+    /// This materializes neighbors into a Vec to avoid sprs lifetime issues;
+    /// typical degree is small (k=8-32 in kNN graphs), so overhead is minimal.
+    /// Returns an iterator over neighbors of node `i`.
+    pub fn neighbors_of(&self, i: usize) -> Vec<(usize, f64)> {
+        match self.matrix.outer_view(i) {
+            Some(row_vec) => row_vec
+                .iter()
+                .filter_map(|(j, &val)| {
+                    if i != j {
+                        let w = -val;
+                        if w > 0.0 { Some((j, w)) } else { None }
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        }
     }
 
     /// Check if the matrix is symmetric within tolerance
@@ -609,7 +621,7 @@ impl GraphLaplacian {
         let sparsity = Self::sparsity(&self.matrix);
 
         let stats = LaplacianStats {
-            nnodes: self.nnodes,
+            shape: self.matrix.shape(),
             nnz,
             sparsity,
             min_degree,
@@ -618,8 +630,14 @@ impl GraphLaplacian {
             graph_params: self.graph_params.clone(),
         };
 
-        debug!("Computed statistics: {} nodes, {} non-zeros, {:.2}% sparse, degree range [{:.6}, {:.6}]", 
-               stats.nnodes, stats.nnz, stats.sparsity * 100.0, stats.min_degree, stats.max_degree);
+        debug!(
+            "Computed statistics: shape {:?}, {} non-zeros, {:.2}% sparse, degree range [{:.6}, {:.6}]",
+            stats.shape,
+            stats.nnz,
+            stats.sparsity * 100.0,
+            stats.min_degree,
+            stats.max_degree
+        );
 
         stats
     }
@@ -681,7 +699,7 @@ impl LaplacianValidation {
 /// Structure to hold Laplacian statistics
 #[derive(Debug, Clone)]
 pub struct LaplacianStats {
-    pub nnodes: usize,
+    pub shape: (usize, usize),
     pub nnz: usize,
     pub sparsity: f64,
     pub min_degree: f64,
@@ -693,7 +711,12 @@ pub struct LaplacianStats {
 /// Pretty printing implementation
 impl fmt::Display for GraphLaplacian {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "GraphLaplacian ({}×{}):", self.nnodes, self.nnodes)?;
+        writeln!(
+            f,
+            "Computed GraphLaplacian ({}×{}):",
+            self.init_data.shape().1,
+            self.init_data.shape().0
+        )?;
         writeln!(f, "Parameters: {:?}", self.graph_params)?;
 
         if self.nnodes <= 10 {
@@ -701,7 +724,6 @@ impl fmt::Display for GraphLaplacian {
             writeln!(f, "Non-zero entries: {}", self.matrix.nnz())?;
         } else {
             let stats = self.statistics();
-            writeln!(f, "Matrix too large to display ({} nodes)", self.nnodes)?;
             writeln!(
                 f,
                 "Non-zero entries: {} ({:.2}% dense)",
@@ -722,7 +744,7 @@ impl fmt::Display for GraphLaplacian {
 impl fmt::Display for LaplacianStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Laplacian Statistics:")?;
-        writeln!(f, "  Nodes: {}", self.nnodes)?;
+        writeln!(f, "  Shape: {:?}", self.shape)?;
         writeln!(
             f,
             "  Non-zero entries: {} ({:.2}% dense)",

@@ -2,7 +2,6 @@
 //! Changes from previous version:
 //! - Replaces normalize_len/rayleigh_dirichlet tiling with ProjectedEnergy trait
 //! - Uses ArrowSpace.projection_matrix for consistent feature-space operations
-//! - Falls back to spectral signals (F×F) when available, else bounded L2
 
 use log::{debug, info, trace, warn};
 use std::cmp::Ordering;
@@ -472,15 +471,12 @@ impl EnergyMaps for ArrowSpace {
         };
         trace!(
             "GraphParams: eps={}, k={}, topk={}, p={}",
-            params.eps,
-            params.k,
-            params.topk,
-            params.p
+            params.eps, params.k, params.topk, params.p
         );
 
         // Build Laplacian where nodes = centroids (rows), edges based on centroid similarity
         // This produces an x×x Laplacian operating in centroid space
-        let gl = build_laplacian_matrix(centroids.transpose(), &params, Some(x));
+        let gl = build_laplacian_matrix(centroids.transpose(), &params, Some(x), true);
 
         assert_eq!(gl.nnodes, x, "L₀ must be in centroid space ({}×{})", x, x);
         gl
@@ -895,7 +891,6 @@ fn topk_by_l2(dm: &DenseMatrix<f64>, i: usize, k: usize) -> Vec<usize> {
     scored.into_iter().map(|(j, _)| j).collect()
 }
 
-
 /// Compute robust scale estimate using Median Absolute Deviation (MAD).
 fn robust_scale(x: &Vec<f64>) -> f64 {
     if x.is_empty() {
@@ -911,9 +906,7 @@ fn robust_scale(x: &Vec<f64>) -> f64 {
     let scale = (1.4826 * mad).max(1e-9);
     trace!(
         "robust_scale: median={:.6}, MAD={:.6}, scale={:.6}",
-        median,
-        mad,
-        scale
+        median, mad, scale
     );
     scale
 }
@@ -935,9 +928,7 @@ fn node_energy_and_dispersion(
     let (n, f) = x.shape();
     trace!(
         "Computing node energy and dispersion: {} centroids × {} features, k={} [parallel]",
-        n,
-        f,
-        k
+        n, f, k
     );
     debug!(
         "Laplacian: {}×{} (must be F×F feature-space)",
@@ -1122,8 +1113,6 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
     ///    ranking during search.
     /// 7. ...
     /// 8. ...
-    ///
-    /// 2x/3x slower than `build(...)`
     fn build_energy(
         &mut self,
         rows: Vec<Vec<f64>>,
@@ -1134,19 +1123,39 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             "When using build_energy, dim reduction is needed"
         );
         if self.prebuilt_spectral == true {
-            panic!("Spectral mode not compatible with build_energy, please do not enable for energy search");
+            panic!(
+                "Spectral mode not compatible with build_energy, please do not enable for energy search"
+            );
         }
         self.n_items_original = rows.len();
 
-        // Step 1: Build base ArrowSpace with clustering
+        // ============================================================
+        // Stage 1: Clustering with sampling and optional projection
+        // ============================================================n
         let ClusteredOutput {
             mut aspace,
             mut centroids,
             ..
         } = ArrowSpace::start_clustering(self, rows);
 
+        // check that projection has been applied or not
+        if aspace.projection_matrix.is_some() && aspace.nfeatures > 64 {
+            assert_ne!(
+                centroids.shape().1,
+                aspace.nfeatures,
+                "aspace is now projected"
+            );
+        } else {
+            assert_eq!(
+                centroids.shape().1,
+                aspace.nfeatures,
+                "aspace has not been projected"
+            );
+        }
+
         // Step 2: Optional optical compression on centroids
         if let Some(tokens) = energy_params.optical_tokens {
+            // mutate centroids with compression
             centroids = ArrowSpace::optical_compress_centroids(
                 &centroids,
                 tokens,
@@ -1155,80 +1164,80 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         }
 
         // Step 3: Bootstrap Laplacian on centroids
-        let l0 = ArrowSpace::bootstrap_centroid_laplacian(&centroids, &self);
+        let l0: GraphLaplacian = ArrowSpace::bootstrap_centroid_laplacian(&centroids, &self);
+
+        assert_eq!(centroids.shape().0, l0.nnodes, "l0 is still non-projected");
 
         // Step 4: Diffuse and split to create sub_centroids
-        let sub_centroids =
+        let sub_centroids: DenseMatrix<f64> =
             ArrowSpace::diffuse_and_split_subcentroids(&centroids, &l0, &energy_params);
 
         assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
-        // Step 5: APPLY JL DIMENSION REDUCTION (matches build() pipeline)
-        let (sub_centroids_reduced, reduced_dim) = if self.use_dims_reduction {
-            let (n_subcentroids, current_features) = sub_centroids.shape();
-            if current_features > 64 {
-                use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
+        // Step 5: apply EXTRA JL dimensionality reduction (optional `with_extra_dims_reduction`)
+        let (n_subcentroids, current_features) = sub_centroids.shape();
+        let (sub_centroids, reduced_dim) = if self.use_dims_reduction
+            && self.extra_dims_reduction
+            && current_features > 64
+        {
+            info!("Apply EXTRA JL dimensionality reduction");
+            use crate::reduction::{ImplicitProjection, compute_jl_dimension, project_matrix};
 
-                let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
-                let target_dim = jl_dim.min(current_features / 2);
+            let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
+            let target_dim = jl_dim.min(current_features / 2);
 
-                if target_dim < current_features {
-                    info!(
-                        "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
-                        current_features, target_dim, self.rp_eps
-                    );
+            if target_dim < current_features {
+                info!(
+                    "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
+                    current_features, target_dim, self.rp_eps
+                );
 
-                    let implicit_proj = ImplicitProjection::new(current_features, target_dim);
-                    let projected = project_matrix(&sub_centroids, &implicit_proj);
+                let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                let projected = project_matrix(&sub_centroids, &implicit_proj);
 
-                    info!(
-                        "Sub_centroids projection complete: {:.1}x compression",
-                        current_features as f64 / target_dim as f64
-                    );
+                info!(
+                    "Sub_centroids projection complete: {:.1}x compression",
+                    current_features as f64 / target_dim as f64
+                );
 
-                    (projected, target_dim)
-                } else {
-                    debug!(
-                        "JL target dimension {} >= current {}, skipping projection",
-                        target_dim, current_features
-                    );
-                    (sub_centroids, current_features)
-                }
+                (projected, target_dim)
             } else {
                 debug!(
-                    "Sub_centroids dimension {} too small for JL projection",
-                    current_features
+                    "JL target dimension {} >= current {}, skipping projection",
+                    target_dim, current_features
                 );
                 (sub_centroids, current_features)
             }
         } else {
-            panic!("build_energy requires dimensionality reduction")
+            (sub_centroids, current_features)
         };
 
         info!(
             "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
             centroids.shape(),
-            sub_centroids_reduced.shape(),
+            sub_centroids.shape(),
             reduced_dim
         );
 
-        // Step 6: Build energy Laplacian on sub_centroids
-        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids_reduced, &energy_params);
+        // Step 6: Build Laplacian on sub_centroids using energy dispersion
+        let (gl_energy, _, _) = self.build_energy_laplacian(&sub_centroids, &energy_params);
 
         assert_eq!(
-            gl_energy.shape().1, sub_centroids_reduced.shape().1,
+            gl_energy.shape().1,
+            sub_centroids.shape().1,
             "Graph cols ({}) must match sub_centroids features ({})",
-            gl_energy.shape().1, sub_centroids_reduced.shape().1
+            gl_energy.shape().1,
+            sub_centroids.shape().1
         );
 
         // Step 7: Compute lambdas on sub_centroids ONLY
         // Store sub_centroids for query mapping
-        aspace.sub_centroids = Some(sub_centroids_reduced.clone());
-        let sub_centroids_shape = sub_centroids_reduced.shape();
+        aspace.sub_centroids = Some(sub_centroids.clone());
+        let sub_centroids_shape = sub_centroids.shape();
 
         // Create a sub-ArrowSpace to match gl_energy
         let mut subcentroid_space =
-            ArrowSpace::subcentroids_from_dense_matrix(sub_centroids_reduced.clone());
+            ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
         subcentroid_space.taumode = aspace.taumode;
         subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
         subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
@@ -1273,45 +1282,110 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             aspace.nitems, sub_centroids_shape
         );
 
-        // Step 8: Fix dimension mismatch
+        // Step 8: Compute taumode
+        // epsilon for considering lambdas "tied"
+        let epsilon: f64 = 1e-11;
+
+        // Parallel assignment using taumode distance
         let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
             .into_par_iter()
             .map(|i| {
                 let item = aspace.get_item(i);
 
-                // PROJECT ITEM TO MATCH sub_centroids_reduced dimensions
-                let projected_item = if aspace.projection_matrix.is_some() {
+                // project only if unprojected
+                let projected_item = if aspace.projection_matrix.is_some()
+                    && item.item.len() == aspace.projection_matrix.as_ref().unwrap().original_dim
+                {
                     aspace.project_query(&item.item)
+                } else if aspace.projection_matrix.is_none()
+                    || item.item.len() == aspace.projection_matrix.as_ref().unwrap().reduced_dim
+                {
+                    item.item.to_owned()
                 } else {
-                    item.item.clone()
+                    panic!(
+                        "Check the projection pipeline, item seems neither projected nor unprojected. \n\
+                           input item len: {:?} \
+                           projection matrix is set: {} \
+                           projection matrix original dims: {} \
+                           projection matrix reduced dims: {}",
+                        item.item.len(),
+                        aspace.projection_matrix.as_ref().is_some(),
+                        aspace.projection_matrix.as_ref().unwrap().original_dim,
+                        aspace.projection_matrix.as_ref().unwrap().reduced_dim
+                    )
                 };
 
-                // Find nearest sub_centroid using L2 distance on PROJECTED space
-                let mut best_idx = 0;
+                // 1) Compute item's synthetic lambda via taumode
+                let item_lambda = aspace.prepare_query_item(&projected_item, &gl_energy);
+
+                // 2) Find nearest subcentroid by linear synthetic distance in lambda-space
+                //    distance := |lambda_item - lambda_subcentroid|
+                let mut best_idx = 0usize;
                 let mut best_dist = f64::INFINITY;
 
-                for sc_idx in 0..sub_centroids_reduced.shape().0 {
-                    let dist: f64 = projected_item
-                        .iter()
-                        .zip(sub_centroids_reduced.get_row(sc_idx).iterator(0))
-                        .map(|(a, b)| (a - b).powi(2))
-                        .sum::<f64>()
-                        .sqrt();
-
-                    if dist < best_dist {
-                        best_dist = dist;
+                for sc_idx in 0..sub_centroids.shape().0 {
+                    let sc_lambda = subcentroid_space.lambdas[sc_idx];
+                    let lambda_dist = (item_lambda - sc_lambda).abs();
+                    if lambda_dist < best_dist {
+                        best_dist = lambda_dist;
                         best_idx = sc_idx;
                     }
                 }
 
-                // Compute norm on ORIGINAL item for cosine
+                // 3) Tie-break with cosine on projected space if multiple subcentroids tie within epsilon
+                //    Collect all candidates at the same minimal lambda distance within epsilon
+                let mut candidates: Vec<usize> = Vec::new();
+                for sc_idx in 0..sub_centroids.shape().0 {
+                    let sc_lambda = subcentroid_space.lambdas[sc_idx];
+                    let lambda_dist = (item_lambda - sc_lambda).abs();
+                    if (lambda_dist - best_dist).abs() < epsilon {
+                        candidates.push(sc_idx);
+                    }
+                }
+
+                if candidates.len() > 1 {
+                    let item_norm_proj: f64 =
+                        projected_item.iter().map(|x| x * x).sum::<f64>().sqrt();
+                    // fallback to zero-safe cosine
+                    let mut best_cos = f64::NEG_INFINITY;
+                    let mut best_sc = best_idx;
+
+                    for sc_idx in candidates {
+                        // read centroid row into a temporary slice or iterator
+                        let mut dot = 0.0f64;
+                        let mut cent_norm_sq = 0.0f64;
+                        for (a, b) in projected_item
+                            .iter()
+                            .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                        {
+                            dot += a * b;
+                            cent_norm_sq += b * b;
+                        }
+                        let cent_norm = cent_norm_sq.sqrt();
+                        let cosine = if item_norm_proj > 0.0 && cent_norm > 0.0 {
+                            dot / (item_norm_proj * cent_norm)
+                        } else {
+                            0.0
+                        };
+
+                        if cosine > best_cos {
+                            best_cos = cosine;
+                            best_sc = sc_idx;
+                        }
+                    }
+
+                    best_idx = best_sc;
+                }
+
+                // 4) Compute norm on ORIGINAL item for cosine metadata consumers
                 let norm: f64 = item.item.iter().map(|x| x * x).sum::<f64>().sqrt();
 
+                // Return the chosen centroid index, store that centroid's lambda, and the item norm
                 (best_idx, subcentroid_space.lambdas[best_idx], norm)
             })
             .collect();
 
-        // Unzip results into separate vectors
+        // Unzip results into separate vectors (unchanged)
         let (centroid_map, item_lambdas, item_norms): (Vec<_>, Vec<_>, Vec<_>) = {
             let mut cmap = Vec::with_capacity(results.len());
             let mut lambdas = Vec::with_capacity(results.len());
@@ -1331,6 +1405,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
         aspace.lambdas = item_lambdas;
         aspace.item_norms = Some(item_norms);
 
+        aspace.build_lambdas_sorted();
+
         info!(
             "Item λ assigned: min={:.6}, max={:.6}, mean={:.6}",
             aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
@@ -1338,7 +1414,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             aspace.lambdas.iter().sum::<f64>() / aspace.nitems as f64
         );
 
-        info!(
+        debug!(
             "Item norms computed: min={:.6}, max={:.6}, mean={:.6}",
             aspace
                 .item_norms
@@ -1376,7 +1452,12 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         trace!("Bootstrapping F×F Laplacian for taumode computation");
         let l_boot = ArrowSpace::bootstrap_centroid_laplacian(sub_centroids, &self);
-        
+
+        assert_eq!(
+            l_boot.matrix.rows(),
+            l_boot.matrix.cols(),
+            "graph laplacian should be square"
+        );
         debug!(
             "Bootstrap Laplacian: {}×{} (F×F feature-space for taumode)",
             l_boot.matrix.rows(),
@@ -1389,7 +1470,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             &l_boot,
             energy_params.neighbor_k.max(self.lambda_k),
         );
-        
+
         let s_l = robust_scale(&lambda).max(1e-9);
         let s_g = robust_scale(&gini).max(1e-9);
         debug!("Robust scales: λ={:.6}, G={:.6}", s_l, s_g);
@@ -1401,11 +1482,10 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             l_boot.nnz(),
             GraphLaplacian::sparsity(&l_boot.matrix) * 100.0
         );
-        
-        // Return F×F Laplacian for taumode, plus computed lambda/gini vectors
+
+        // Return RF×RF Laplacian for taumode, plus computed lambda/gini vectors
         (l_boot, lambda, gini)
     }
-
 }
 
 /// ============================================================================

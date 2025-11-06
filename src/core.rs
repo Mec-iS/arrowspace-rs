@@ -52,6 +52,7 @@ use sprs::CsMat;
 
 use crate::graph::GraphLaplacian;
 use crate::reduction::ImplicitProjection;
+use crate::sorted_index::SortedLambdas;
 use crate::taumode::TauMode;
 
 // Add logging
@@ -166,9 +167,7 @@ impl ArrowItem {
 
         trace!(
             "Lambda similarity: semantic={:.6}, lambda={:.6}, combined={:.6}",
-            cosine_sim,
-            lambda_sim,
-            result
+            cosine_sim, lambda_sim, result
         );
 
         result
@@ -366,10 +365,11 @@ impl Ord for ScoredItem {
 pub struct ArrowSpace {
     pub nfeatures: usize, // F: original dimensions
     pub nitems: usize,
-    pub data: DenseMatrix<f64>, // NxF raw data
-    pub signals: CsMat<f64>,    // Laplacian(Transpose(NxF))
-    pub lambdas: Vec<f64>,      // N lambdas (every lambda is a lambda for an item-row)
-    pub taumode: TauMode,       // tau_mode as in select_tau_mode
+    pub data: DenseMatrix<f64>,        // NxF raw data
+    pub signals: CsMat<f64>,           // Laplacian(Transpose(NxF))
+    pub lambdas: Vec<f64>,             // N lambdas (every lambda is a lambda for an item-row)
+    pub lambdas_sorted: SortedLambdas, // sorted by lambda ascending
+    pub taumode: TauMode,              // tau_mode as in select_tau_mode
 
     // lambdas normalisation
     min_lambdas: f64,
@@ -387,6 +387,7 @@ pub struct ArrowSpace {
     // Projection data: dims reduction data (needed to prepare the query vector)
     pub projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
     pub reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
+    pub extra_reduced_dim: bool,    // optional extra dimensionality reduction for energymaps
 
     // energymaps specific
     pub centroid_map: Option<Vec<usize>>, // Maps item_idx -> centroid_idx
@@ -411,6 +412,7 @@ impl Default for ArrowSpace {
             data: DenseMatrix::new(0, 0, Vec::new(), true).unwrap(),
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: Vec::new(),
+            lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
             min_lambdas: f64::NAN,
             max_lambdas: f64::NAN,
@@ -425,6 +427,7 @@ impl Default for ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -437,7 +440,7 @@ impl Default for ArrowSpace {
 impl ArrowSpace {
     /// Returns an empty space.
     /// Only to be used in tests. `ArrowSpaceBuilder`
-    pub fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
+    pub(crate) fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(
             items.len() > 1,
@@ -451,6 +454,7 @@ impl ArrowSpace {
             data: DenseMatrix::from_2d_vec(&items).unwrap(),
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
+            lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
             min_lambdas: f64::NAN,
             max_lambdas: f64::NAN,
@@ -464,6 +468,7 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -522,6 +527,7 @@ impl ArrowSpace {
             data: data_matrix,
             signals: sprs::CsMat::zero((0, 0)), // will be computed later
             lambdas: vec![0.0; n_items],        // will be computed later
+            lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
             min_lambdas: f64::NAN,
             max_lambdas: f64::NAN,
@@ -535,6 +541,7 @@ impl ArrowSpace {
             // projection
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             // energymaps
             centroid_map: None,
             sub_centroids: None,
@@ -565,6 +572,7 @@ impl ArrowSpace {
             nfeatures,
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: vec![0.0; nitems],
+            lambdas_sorted: SortedLambdas::new(),
             min_lambdas: f64::NAN,
             max_lambdas: f64::NAN,
             range_lambdas: f64::NAN,
@@ -575,6 +583,7 @@ impl ArrowSpace {
             cluster_radius: 0.0,
             projection_matrix: None,
             reduced_dim: None,
+            extra_reduced_dim: false,
             centroid_map: None,
             sub_centroids: None,
             subcentroid_lambdas: None,
@@ -612,7 +621,7 @@ impl ArrowSpace {
         }
     }
 
-    /// Compute query lambda for energy mode
+    /// Compute query lambda for mode
     ///
     /// Maps query to nearest subcentroid and returns its lambda.
     /// Pre-computed subcentroids and lambdas are already stored in ArrowSpace.
@@ -621,6 +630,7 @@ impl ArrowSpace {
             query.iter().all(|x| x.is_finite()),
             "query item has non-finite values"
         );
+
         // Energy mode: subcentroid mapping (fast)
         if let (Some(subcentroids), Some(sc_lambdas)) =
             (&self.sub_centroids, &self.subcentroid_lambdas)
@@ -630,6 +640,11 @@ impl ArrowSpace {
 
             // Find nearest subcentroid
             for sc_idx in 0..subcentroids.shape().0 {
+                let query = if self.extra_reduced_dim {
+                    &self.project_query(query)
+                } else {
+                    query
+                };
                 let dist: f64 = query
                     .iter()
                     .zip(subcentroids.get_row(sc_idx).iterator(0))
@@ -656,7 +671,7 @@ impl ArrowSpace {
             return lambda;
         }
 
-        // Standard mode
+        // Eigen mode
         let tau = TauMode::select_tau(&query, self.taumode);
         let raw_lambda = TauMode::compute_synthetic_lambda(&query, &self, &gl.matrix, tau);
 
@@ -675,6 +690,11 @@ impl ArrowSpace {
             }
             return raw_lambda;
         }
+    }
+
+    /// Build the sorted index
+    pub fn build_lambdas_sorted(&mut self) {
+        self.lambdas_sorted.build_from(&self.lambdas);
     }
 
     /// Returns a shared reference to all lambdas.
@@ -736,7 +756,7 @@ impl ArrowSpace {
     ///
     /// This method:
     /// 1. Extracts item `a` and item `b` as complete ArrowItem vectors
-    /// 2. Performs element-wise addition: item_a += item_b  
+    /// 2. Performs element-wise addition: item_a += item_b
     /// 3. Writes the result back
     /// 4. Recomputes feature lambdas
     #[inline]
@@ -918,8 +938,7 @@ impl ArrowSpace {
         if !results.is_empty() {
             trace!(
                 "Top result: index={}, score={:.6}",
-                results[0].0,
-                results[0].1
+                results[0].0, results[0].1
             );
         }
 
@@ -1054,6 +1073,18 @@ impl ArrowSpace {
 
         debug!("Final: {} results", final_results.len());
         final_results
+    }
+
+    /// Search using only taumode lambdas sorted index
+    pub fn search_linear_sorted(
+        &self,
+        query: &[f64],
+        gl: &GraphLaplacian,
+        k: usize,
+    ) -> Vec<(usize, f64)> {
+        let q_lambda = self.prepare_query_item(query, gl); // f64
+        self.lambdas_sorted
+            .range_bylambda(q_lambda, k, gl.graph_params.p)
     }
 
     /// Normalise lambdas to [0, 1] range for consistent search behavior

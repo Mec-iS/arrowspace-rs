@@ -270,10 +270,27 @@ impl TauMode {
             return 0.0;
         }
 
-        let projected_item = if aspace.projection_matrix.is_some() {
+        // project only if unprojected
+        let projected_item = if aspace.projection_matrix.is_some()
+            && item_vector.len() == aspace.projection_matrix.as_ref().unwrap().original_dim
+        {
             aspace.project_query(&item_vector)
-        } else {
+        } else if aspace.projection_matrix.is_none()
+            || item_vector.len() == aspace.projection_matrix.as_ref().unwrap().reduced_dim
+        {
             item_vector.to_owned()
+        } else {
+            panic!(
+                "Check the projection pipeline, item seems neither projected nor unprojected. \n\
+                   input item len: {:?} \
+                   projection matrix is set: {} \
+                   projection matrix original dims: {} \
+                   projection matrix reduced dims: {}",
+                item_vector.len(),
+                aspace.projection_matrix.as_ref().is_some(),
+                aspace.projection_matrix.as_ref().unwrap().original_dim,
+                aspace.projection_matrix.as_ref().unwrap().reduced_dim
+            )
         };
 
         // Parallel computation of E_raw and G_raw
@@ -291,10 +308,7 @@ impl TauMode {
 
         trace!(
             "Synthetic λ: E_raw={:.6}, G_raw={:.6}, τ={:.6}, S={:.6}",
-            e_raw,
-            g_raw,
-            tau,
-            synthetic_lambda
+            e_raw, g_raw, tau, synthetic_lambda
         );
 
         synthetic_lambda
@@ -306,23 +320,27 @@ impl TauMode {
     /// - graph is F×F Laplacian (features × features)
     /// - item_vector is F-dimensional
     /// - i,j indices reference FEATURES, not items
-    pub fn compute_rayleigh_quotient_from_matrix(
-        matrix: &CsMat<f64>,
-        vector: &[f64],
-    ) -> f64 {
+    pub fn compute_rayleigh_quotient_from_matrix(matrix: &CsMat<f64>, vector: &[f64]) -> f64 {
         let n = vector.len();
-        
-        assert_eq!(matrix.rows(), n, "Matrix rows {} must match vector length {}", matrix.rows(), n);
+
         assert_eq!(matrix.rows(), matrix.cols(), "Matrix must be square");
+        assert_eq!(
+            matrix.rows(),
+            n,
+            "Matrix rows {} must match vector length {}. Matrix shape: {:?}",
+            matrix.rows(),
+            n,
+            matrix.shape()
+        );
 
         // Compute x^T M x efficiently using sparse structure
         let numerator: f64 = matrix
-            .outer_iterator()      // Iterate over rows (CSR format)
-            .enumerate()           // Get (row_idx, row_view) pairs
-            .par_bridge()          // Parallelize
+            .outer_iterator() // Iterate over rows (CSR format)
+            .enumerate() // Get (row_idx, row_view) pairs
+            .par_bridge() // Parallelize
             .map(|(i, row)| {
                 let xi = vector[i];
-                
+
                 // row.iter() gives (col_idx, &value) for non-zero entries ONLY
                 row.iter()
                     .map(|(j, &mij)| xi * mij * vector[j])

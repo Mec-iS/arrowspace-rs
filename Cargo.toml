@@ -1,6 +1,6 @@
 [package]
 name = "arrowspace"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2024"
 description = "Spectral vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
@@ -68,4 +68,3 @@ crate-type = ["rlib"]
 [[bench]]
 name = "index_compute_bench"
 harness = false
-

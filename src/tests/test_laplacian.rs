@@ -40,6 +40,7 @@ fn test_basic_laplacian_construction() {
         DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
         &params,
         None,
+        false,
     );
 
     assert_eq!(laplacian.nnodes, 5);
@@ -55,6 +56,7 @@ fn test_laplacian_mathematical_properties() {
         DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
         &params,
         None,
+        false,
     );
 
     let n = laplacian.nnodes;
@@ -307,6 +309,7 @@ fn test_insufficient_data_panics() {
         DenseMatrix::<f64>::from_2d_vec(&insufficient_items).unwrap(),
         &params,
         None,
+        false,
     );
 }
 
@@ -329,6 +332,7 @@ fn test_numerical_stability() {
         DenseMatrix::<f64>::from_2d_vec(&small_values).unwrap(),
         &params,
         None,
+        false,
     );
 
     // Should produce finite values - check all stored entries in sparse matrix
@@ -460,6 +464,7 @@ fn test_arrowspace_integration_pattern_sparse() {
             .transpose(),
         &arrowspace_params,
         None,
+        false,
     );
 
     // Basic shape checks
@@ -541,6 +546,7 @@ fn test_optimized_sparse_matrix_laplacian() {
         DenseMatrix::<f64>::from_2d_vec(&items).unwrap().transpose(),
         &params,
         None,
+        false,
     );
 
     // Verify structure

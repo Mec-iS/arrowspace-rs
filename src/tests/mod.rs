@@ -10,6 +10,7 @@ mod test_energy_search;
 mod test_graph_factory;
 mod test_laplacian;
 mod test_laplacian_unnormalised;
+mod test_motives;
 mod test_querying_proj;
 mod test_reduction;
 mod test_sparsification;
