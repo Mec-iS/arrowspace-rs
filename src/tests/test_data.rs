@@ -509,8 +509,8 @@ pub fn make_moons_hd(
     out
 }
 
-use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Normal, Uniform};
 
 /// Generate Gaussian blob dataset with configurable noise and outliers
@@ -664,4 +664,67 @@ pub fn make_energy_test_dataset(n_items: usize, n_features: usize, seed: u64) ->
     }
 
     data
+}
+
+// 3 tight blobs of size 12 each + 15 outliers = 51 points, 10D
+pub fn make_gaussian_cliques(
+    n_per: usize,
+    noise: f64,
+    n_out: usize,
+    dims: usize,
+    seed: u64,
+) -> Vec<Vec<f64>> {
+    use rand::SeedableRng;
+    use rand_distr::{Distribution, Normal, Uniform};
+    use rand_pcg::Pcg64;
+    let mut rng = Pcg64::seed_from_u64(seed);
+    let mut rows = Vec::with_capacity(3 * n_per + n_out);
+    let centers = vec![
+        {
+            let mut c = vec![0.0; dims];
+            c[0] = 10.0;
+            c
+        },
+        {
+            let mut c = vec![0.0; dims];
+            c[1] = 10.0;
+            c
+        },
+        {
+            let mut c = vec![0.0; dims];
+            c[0] = -10.0;
+            c[1] = -10.0;
+            c
+        },
+    ];
+    for ctr in &centers {
+        for _ in 0..n_per {
+            let mut v = Vec::with_capacity(dims);
+            for &m in ctr {
+                let d = Normal::new(m, noise).unwrap();
+                v.push(d.sample(&mut rng));
+            }
+            rows.push(v);
+        }
+    }
+    // a few bridges close to midpoints between clusters to create small cuts
+    for b in &[(0.5, 0.5), (0.7, 0.3), (0.3, 0.7)] {
+        let mut v = vec![0.0; dims];
+        v[0] = 10.0 * b.0 - 10.0 * (1.0 - b.0);
+        v[1] = 10.0 * b.1 - 10.0 * (1.0 - b.1);
+        for d in 2..dims {
+            v[d] = Normal::new(0.0, noise).unwrap().sample(&mut rng);
+        }
+        rows.push(v);
+    }
+    // outliers
+    let uni = Uniform::new(-5.0, 15.0).unwrap();
+    for _ in 0..n_out {
+        let mut v = Vec::with_capacity(dims);
+        for _ in 0..dims {
+            v.push(uni.sample(&mut rng));
+        }
+        rows.push(v);
+    }
+    rows
 }

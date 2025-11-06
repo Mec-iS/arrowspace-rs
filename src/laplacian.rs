@@ -124,6 +124,7 @@ pub fn build_laplacian_matrix(
     params: &GraphParams,         // requested params from the graph
     // n_items of the original dataset (in case to need the computation of L(FxN))
     n_items: Option<usize>,
+    energy: bool,
 ) -> GraphLaplacian {
     let (d, n) = transposed.shape();
     assert!(
@@ -166,6 +167,7 @@ pub fn build_laplacian_matrix(
             None => n,
         },
         graph_params: params.clone(),
+        energy: energy,
     };
 
     info!(

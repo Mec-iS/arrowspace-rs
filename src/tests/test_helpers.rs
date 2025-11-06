@@ -49,6 +49,7 @@ pub fn build_laplacian_matrix_with_adjacency(
         matrix: laplacian_matrix,
         nnodes: n_items,
         graph_params: params.clone(),
+        energy: false,
     };
 
     info!("Successfully built Laplacian with adjacency matrix");

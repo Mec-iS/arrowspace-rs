@@ -476,7 +476,7 @@ impl EnergyMaps for ArrowSpace {
 
         // Build Laplacian where nodes = centroids (rows), edges based on centroid similarity
         // This produces an x×x Laplacian operating in centroid space
-        let gl = build_laplacian_matrix(centroids.transpose(), &params, Some(x));
+        let gl = build_laplacian_matrix(centroids.transpose(), &params, Some(x), true);
 
         assert_eq!(gl.nnodes, x, "L₀ must be in centroid space ({}×{})", x, x);
         gl

@@ -185,7 +185,7 @@ impl ArrowSpaceBuilder {
     }
 
     pub fn with_sparsity_check(mut self, sparsity_check: bool) -> Self {
-        info!("Setting sparsity check falg: {}", sparsity_check);
+        info!("Setting sparsity check flag: {}", sparsity_check);
         self.sparsity_check = sparsity_check;
         self
     }
