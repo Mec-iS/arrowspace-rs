@@ -457,6 +457,30 @@ impl GraphLaplacian {
         result
     }
 
+    /// Returns an iterator over (neighbor_index, weight) for node `i` by negating Laplacian off-diagonals.
+    ///
+    /// Since L = D - W, we have W_ij = -L_ij for i ≠ j.
+    ///
+    /// This materializes neighbors into a Vec to avoid sprs lifetime issues;
+    /// typical degree is small (k=8-32 in kNN graphs), so overhead is minimal.
+    /// Returns an iterator over neighbors of node `i`.
+    pub fn neighbors_of(&self, i: usize) -> Vec<(usize, f64)> {
+        match self.matrix.outer_view(i) {
+            Some(row_vec) => row_vec
+                .iter()
+                .filter_map(|(j, &val)| {
+                    if i != j {
+                        let w = -val;
+                        if w > 0.0 { Some((j, w)) } else { None }
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Check if the matrix is symmetric within tolerance
     pub fn is_symmetric(&self, tolerance: f64) -> bool {
         trace!("Checking matrix symmetry with tolerance {:.2e}", tolerance);

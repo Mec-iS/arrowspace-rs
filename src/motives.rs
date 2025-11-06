@@ -27,7 +27,6 @@
 //!     max_motif_size: 24,
 //!     max_sets: 128,
 //!     jaccard_dedup: 0.8,
-//!     rayleigh_max: Some(0.5),
 //! };
 //! let motifs: Vec<Vec<usize>> = gl.spot_motives(&cfg);
 //! ```
@@ -39,9 +38,9 @@
 //! - Cheeger inequality & spectral cuts: MIT OCW Lecture Notes
 
 use crate::graph::GraphLaplacian;
-use log::{debug, info, trace};
-use smartcore::linalg::basic::arrays::Array;
-use std::collections::{HashMap, HashSet};
+use log::{debug, info};
+use rayon::prelude::*;
+use std::collections::HashSet;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -62,8 +61,6 @@ pub struct MotiveConfig {
     pub max_sets: usize,
     /// Jaccard similarity threshold for deduplication (0..=1).
     pub jaccard_dedup: f64,
-    /// Optional maximum Rayleigh quotient on indicator vector to accept expansion.
-    pub rayleigh_max: Option<f64>,
 }
 
 impl Default for MotiveConfig {
@@ -75,7 +72,6 @@ impl Default for MotiveConfig {
             max_motif_size: 32,
             max_sets: 256,
             jaccard_dedup: 0.8,
-            rayleigh_max: None,
         }
     }
 }
@@ -153,8 +149,9 @@ impl Motives for GraphLaplacian {
 
         let n = self.nnodes;
 
-        // 1. Build top-L neighbor lists per node from Laplacian off-diagonals
+        // 1) Build top-L neighbor lists per node (parallel)
         let neigh: Vec<Vec<(usize, f64)>> = (0..n)
+            .into_par_iter()
             .map(|i| {
                 let mut nb: Vec<(usize, f64)> = self.neighbors_of(i);
                 nb.sort_unstable_by(|a, b| {
@@ -167,14 +164,18 @@ impl Motives for GraphLaplacian {
             })
             .collect();
 
-        // 2. Convert to hash-set neighbor indices for fast triangle lookup
-        let neigh_sets: Vec<HashSet<usize>> = neigh
-            .iter()
-            .map(|v| v.iter().map(|(j, _)| *j).collect())
+        // Sorted neighbor-only vectors for faster intersections
+        let neigh_idx: Vec<Vec<usize>> = neigh
+            .par_iter()
+            .map(|v| {
+                let mut ids: Vec<usize> = v.iter().map(|(j, _)| *j).collect();
+                ids.sort_unstable();
+                ids
+            })
             .collect();
 
-        // 3. Triangle counting and clustering coefficient
-        let (tri_count, clust) = triangle_stats(&neigh_sets, n);
+        // 2) Triangle stats (parallel per node)
+        let (tri_count, clust) = triangle_stats_sorted(&neigh_idx, n);
 
         debug!(
             "Triangle stats: max_tri={}, max_clust={:.3}",
@@ -182,99 +183,94 @@ impl Motives for GraphLaplacian {
             clust.iter().cloned().fold(0.0f64, f64::max)
         );
 
-        // 4. Seed selection
+        // 3) Seed selection and sorting (parallel filter, then sort)
         let mut seeds: Vec<usize> = (0..n)
+            .into_par_iter()
             .filter(|&i| tri_count[i] >= cfg.min_triangles && clust[i] >= cfg.min_clust)
             .collect();
-        seeds.sort_unstable_by_key(|&i| std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64)));
+        seeds.par_sort_unstable_by_key(|&i| {
+            std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64))
+        });
 
         info!("Seeds identified: {}", seeds.len());
         debug!("Motives Seeds used: {:?}", seeds);
 
+        // 4) Greedy expansions per seed in parallel, with local state
+        let expansions: Vec<Option<HashSet<usize>>> = seeds
+            .par_iter()
+            .map(|&s| {
+                // Skip seeds that are trivially dominated later during global dedup
+                let mut S: HashSet<usize> = HashSet::from([s]);
+
+                loop {
+                    if S.len() >= cfg.max_motif_size {
+                        break;
+                    }
+
+                    // Frontier
+                    let mut cand = HashSet::new();
+                    for &u in &S {
+                        for &v in &neigh_idx[u] {
+                            if !S.contains(&v) {
+                                cand.insert(v);
+                            }
+                        }
+                    }
+                    if cand.is_empty() {
+                        break;
+                    }
+
+                    // Select by triangle gain
+                    let mut best_u: Option<usize> = None;
+                    let mut best_gain: i64 = -1;
+
+                    for u in cand {
+                        // neighbors of u inside S
+                        let mut s_nbrs: Vec<usize> = neigh_idx[u]
+                            .iter()
+                            .copied()
+                            .filter(|v| S.contains(v))
+                            .collect();
+                        s_nbrs.sort_unstable();
+                        let mut edges = 0i64;
+                        for i in 0..s_nbrs.len() {
+                            // count links among s_nbrs
+                            let ui = s_nbrs[i];
+                            // two-pointer count intersection between neigh_idx[ui] and s_nbrs[(i+1)..]
+                            edges += count_edges_among(&neigh_idx[ui], &s_nbrs, i + 1) as i64;
+                        }
+                        if edges > best_gain {
+                            best_gain = edges;
+                            best_u = Some(u);
+                        }
+                    }
+
+                    match best_u {
+                        Some(u) => {
+                            let mut S2 = S.clone();
+                            S2.insert(u);
+                            S = S2;
+                        }
+                        None => break,
+                    }
+                }
+
+                if S.len() >= 3 { Some(S) } else { None }
+            })
+            .collect();
+
+        // 5) Global Jaccard dedup (sequential for deterministic ordering)
         let mut results: Vec<HashSet<usize>> = Vec::new();
-
-        // 5. Greedy expansion from each seed
-        for &s in &seeds {
-            if results.iter().any(|res| res.contains(&s)) {
-                continue;
-            }
-
-            let mut seed_expansion = HashSet::from([s]);
-
-            loop {
-                if seed_expansion.len() >= cfg.max_motif_size {
-                    break;
-                }
-
-                // Frontier N(seed_expansion)
-                let mut cand = HashSet::new();
-                for &u in &seed_expansion {
-                    for &v in &neigh_sets[u] {
-                        if !seed_expansion.contains(&v) {
-                            cand.insert(v);
-                        }
-                    }
-                }
-                if cand.is_empty() {
-                    break;
-                }
-
-                // Select candidate with max triangle gain
-                let mut best_u: Option<usize> = None;
-                let mut best_gain: i64 = -1;
-
-                for u in cand {
-                    let s_nbrs: Vec<usize> = neigh_sets[u]
-                        .intersection(&seed_expansion)
-                        .copied()
-                        .collect();
-                    let mut edges = 0i64;
-                    for i in 0..s_nbrs.len() {
-                        for j in (i + 1)..s_nbrs.len() {
-                            if neigh_sets[s_nbrs[i]].contains(&s_nbrs[j]) {
-                                edges += 1;
-                            }
-                        }
-                    }
-                    if edges > best_gain {
-                        best_gain = edges;
-                        best_u = Some(u);
-                    }
-                }
-
-                match best_u {
-                    Some(u) => {
-                        let mut s2 = seed_expansion.clone();
-                        s2.insert(u);
-
-                        // Optional Rayleigh acceptance
-                        if let Some(rmax) = cfg.rayleigh_max {
-                            let r_after = self.rayleigh_indicator(&s2);
-                            if r_after > rmax {
-                                trace!(
-                                    "Rayleigh {:.4} exceeds max {:.4}, stopping expansion",
-                                    r_after, rmax
-                                );
-                                break;
-                            }
-                        }
-
-                        seed_expansion = s2;
-                    }
-                    None => break,
-                }
-            }
-
-            // 6. Deduplicate
+        for opt in expansions.into_iter().flatten() {
             let mut keep = true;
-            for result in &results {
-                if jaccard(&seed_expansion, result) >= cfg.jaccard_dedup {
+            for T in &results {
+                if jaccard(&opt, T) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
             }
-            if keep && seed_expansion.len() >= 3 {
-                results.push(seed_expansion);
+            if keep {
+                results.push(opt);
                 if results.len() >= cfg.max_sets {
                     break;
                 }
@@ -283,11 +279,10 @@ impl Motives for GraphLaplacian {
 
         info!("Motifs found: {}", results.len());
 
-        // Convert to sorted vectors
         let mut out: Vec<Vec<usize>> = results
             .into_iter()
-            .map(|seed_expansion| {
-                let mut v: Vec<usize> = seed_expansion.into_iter().collect();
+            .map(|S| {
+                let mut v: Vec<usize> = S.into_iter().collect();
                 v.sort_unstable();
                 v
             })
@@ -299,12 +294,11 @@ impl Motives for GraphLaplacian {
     fn spot_motives_energy(
         &self,
         aspace: &crate::core::ArrowSpace,
-        cfg: &crate::motives::MotiveConfig,
+        cfg: &MotiveConfig,
     ) -> Vec<Vec<usize>> {
-        // 0) Determine subcentroid graph size from the active energy Laplacian
+        // Operate strictly on the energy Laplacian over subcentroids
         let (rows, cols) = self.matrix.shape();
         if rows == 0 || rows != cols {
-            // Not a valid square Laplacian
             return Vec::new();
         }
         let n_sc = rows;
@@ -314,32 +308,31 @@ impl Motives for GraphLaplacian {
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size, n_sc
         );
 
-        // 1) Build top-L neighbor lists strictly in subcentroid space, clamping indices
-        let neigh: Vec<Vec<(usize, f64)>> = (0..n_sc)
+        // 1) Neighbors with clamped indices (parallel)
+        let neigh_idx: Vec<Vec<usize>> = (0..n_sc)
+            .into_par_iter()
             .map(|i| {
-                let mut nb = self
+                let mut ids: Vec<usize> = self
                     .neighbors_of(i)
                     .into_iter()
-                    .filter(|(j, w)| *j < n_sc && *j != i && *w > 0.0)
-                    .collect::<Vec<_>>();
-                nb.sort_unstable_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                if nb.len() > cfg.top_l {
-                    nb.truncate(cfg.top_l);
+                    .filter_map(|(j, w)| {
+                        if j < n_sc && j != i && w > 0.0 {
+                            Some(j)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                ids.sort_unstable();
+                if ids.len() > cfg.top_l {
+                    ids.truncate(cfg.top_l);
                 }
-                nb
+                ids
             })
             .collect();
 
-        // 2) Convert to set form for fast triangle checks
-        let neigh_sets: Vec<HashSet<usize>> = neigh
-            .iter()
-            .map(|v| v.iter().map(|(j, _)| *j).collect())
-            .collect();
-
-        // 3) Triangle stats on 0..n_sc
-        let (tri_count, clust) = triangle_stats(&neigh_sets, n_sc);
+        // 2) Triangle stats (parallel)
+        let (tri_count, clust) = triangle_stats_sorted(&neigh_idx, n_sc);
 
         debug!(
             "Energy triangle stats: max_tri={}, max_clust={:.3}",
@@ -347,113 +340,87 @@ impl Motives for GraphLaplacian {
             clust.iter().cloned().fold(0.0f64, f64::max)
         );
 
-        // 4) Seed selection in subcentroid space
+        // 3) Seeds (parallel filter + sort)
         let mut seeds: Vec<usize> = (0..n_sc)
+            .into_par_iter()
             .filter(|&i| tri_count[i] >= cfg.min_triangles && clust[i] >= cfg.min_clust)
             .collect();
-        seeds.sort_unstable_by_key(|&i| std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64)));
+        seeds.par_sort_unstable_by_key(|&i| {
+            std::cmp::Reverse((tri_count[i], (clust[i] * 1e6) as i64))
+        });
 
-        debug!(
-            "Energy motifs: seeds identified in subcentroid space: {}",
-            seeds.len()
-        );
         debug!("Energy motifs seeds (subcentroids): {:?}", seeds);
 
-        // 5) Greedy expansion in subcentroid space
+        // 4) Parallel greedy expansions per seed in subcentroid space
+        let expansions: Vec<Option<HashSet<usize>>> = seeds
+            .par_iter()
+            .map(|&s| {
+                let mut S: HashSet<usize> = HashSet::from([s]);
+
+                loop {
+                    if S.len() >= cfg.max_motif_size {
+                        break;
+                    }
+
+                    let mut cand = HashSet::new();
+                    for &u in &S {
+                        for &v in &neigh_idx[u] {
+                            if !S.contains(&v) {
+                                cand.insert(v);
+                            }
+                        }
+                    }
+                    if cand.is_empty() {
+                        break;
+                    }
+
+                    let mut best_u: Option<usize> = None;
+                    let mut best_gain: i64 = -1;
+
+                    for u in cand {
+                        let mut s_nbrs: Vec<usize> = neigh_idx[u]
+                            .iter()
+                            .copied()
+                            .filter(|v| S.contains(v))
+                            .collect();
+                        s_nbrs.sort_unstable();
+                        let mut edges = 0i64;
+                        for i in 0..s_nbrs.len() {
+                            let ui = s_nbrs[i];
+                            edges += count_edges_among(&neigh_idx[ui], &s_nbrs, i + 1) as i64;
+                        }
+                        if edges > best_gain {
+                            best_gain = edges;
+                            best_u = Some(u);
+                        }
+                    }
+
+                    match best_u {
+                        Some(u) => {
+                            let mut S2 = S.clone();
+                            S2.insert(u);
+                            S = S2;
+                        }
+                        None => break,
+                    }
+                }
+
+                if S.len() >= 3 { Some(S) } else { None }
+            })
+            .collect();
+
+        // 5) Global dedup in subcentroid space
         let mut sc_results: Vec<HashSet<usize>> = Vec::new();
-
-        for &s in &seeds {
-            if sc_results.iter().any(|res| res.contains(&s)) {
-                continue;
-            }
-            let mut seeds_set = HashSet::from([s]);
-
-            loop {
-                if seeds_set.len() >= cfg.max_motif_size {
-                    break;
-                }
-
-                // Frontier N(S) within 0..n_sc
-                let mut cand = HashSet::new();
-                for &u in &seeds_set {
-                    for &v in &neigh_sets[u] {
-                        if v < n_sc && !seeds_set.contains(&v) {
-                            cand.insert(v);
-                        }
-                    }
-                }
-                if cand.is_empty() {
-                    break;
-                }
-
-                // Candidate with maximum triangle gain vs S
-                let mut best_u: Option<usize> = None;
-                let mut best_gain: i64 = -1;
-
-                for u in cand {
-                    // Neighbors of u inside S
-                    let s_nbrs: Vec<usize> =
-                        neigh_sets[u].intersection(&seeds_set).copied().collect();
-                    let mut edges = 0i64;
-                    for i in 0..s_nbrs.len() {
-                        for j in (i + 1)..s_nbrs.len() {
-                            if neigh_sets[s_nbrs[i]].contains(&s_nbrs[j]) {
-                                edges += 1;
-                            }
-                        }
-                    }
-                    if edges > best_gain {
-                        best_gain = edges;
-                        best_u = Some(u);
-                    }
-                }
-
-                match best_u {
-                    Some(u) => {
-                        let mut s2 = seeds_set.clone();
-                        s2.insert(u);
-
-                        // Optional Rayleigh acceptance in subcentroid space
-                        if let Some(rmax) = cfg.rayleigh_max {
-                            // Build indicator sized to n_sc; reject on mismatch
-                            let mut x = vec![0.0f64; n_sc];
-                            for &i in &s2 {
-                                if i >= n_sc {
-                                    x.clear();
-                                    break;
-                                }
-                                x[i] = 1.0;
-                            }
-                            if x.is_empty() {
-                                // bounds issue; stop growth for safety
-                                break;
-                            }
-                            let r_after = self.rayleigh_quotient(&x);
-                            if r_after > rmax {
-                                trace!(
-                                    "Energy motifs: Rayleigh {:.4} > {:.4}, stopping expansion",
-                                    r_after, rmax
-                                );
-                                break;
-                            }
-                        }
-
-                        seeds_set = s2;
-                    }
-                    None => break,
-                }
-            }
-
-            // Deduplicate in subcentroid space first
+        for opt in expansions.into_iter().flatten() {
             let mut keep = true;
-            for sc in &sc_results {
-                if jaccard(&seeds_set, sc) >= cfg.jaccard_dedup {
+            for T in &sc_results {
+                if jaccard(&opt, T) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
             }
-            if keep && seeds_set.len() >= 3 {
-                sc_results.push(seeds_set);
+            if keep {
+                sc_results.push(opt);
                 if sc_results.len() >= cfg.max_sets {
                     break;
                 }
@@ -465,16 +432,15 @@ impl Motives for GraphLaplacian {
             sc_results.len()
         );
 
-        // 6) Map subcentroid motifs to item indices via centroid_map
+        // 6) Map to item indices via centroid_map (parallel)
         let cmap = match &aspace.centroid_map {
             Some(m) => m,
             None => {
-                // No mapping available; return subcentroid motifs as-is (optional)
-                // Convert to sorted Vec<usize> for consistency
+                // Return subcentroid motifs if mapping not available
                 let mut out_sc: Vec<Vec<usize>> = sc_results
                     .into_iter()
-                    .map(|sc| {
-                        let mut v: Vec<usize> = sc.into_iter().collect();
+                    .map(|S| {
+                        let mut v: Vec<usize> = S.into_iter().collect();
                         v.sort_unstable();
                         v
                     })
@@ -484,41 +450,55 @@ impl Motives for GraphLaplacian {
             }
         };
 
-        // Build inverted map: sc_id -> items
-        let mut sc_to_items: HashMap<usize, Vec<usize>> = HashMap::new();
-        for (item_idx, &sc_idx) in cmap.iter().enumerate() {
+        // sc_id -> items (parallel build with local buckets, then merge)
+        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); n_sc];
+        cmap.par_iter().enumerate().for_each(|(item_idx, &sc_idx)| {
             if sc_idx < n_sc {
-                sc_to_items.entry(sc_idx).or_default().push(item_idx);
+                // local push via interior mutability avoided; collect pairs then group
+                // fallback: lightweight locking-free grouping by preallocating pairs
             }
+        });
+        // Simpler and safe: collect pairs and group
+        let sc_item_pairs: Vec<(usize, usize)> = cmap
+            .par_iter()
+            .enumerate()
+            .filter_map(|(it, &sc)| if sc < n_sc { Some((sc, it)) } else { None })
+            .collect();
+        let mut sc_to_items: Vec<Vec<usize>> = vec![Vec::new(); n_sc];
+        for (sc, it) in sc_item_pairs {
+            sc_to_items[sc].push(it);
         }
 
-        // Map each subcentroid motif to item-level set
-        let mut item_sets: Vec<HashSet<usize>> = Vec::new();
-        for seeds_set_sc in &sc_results {
-            let mut seeds_set_items = HashSet::new();
-            for &sc in seeds_set_sc {
-                if let Some(bucket) = sc_to_items.get(&sc) {
-                    for &it in bucket {
-                        seeds_set_items.insert(it);
+        // Project each subcentroid motif to items (parallel)
+        let item_sets: Vec<HashSet<usize>> = sc_results
+            .par_iter()
+            .map(|S_sc| {
+                let mut S_items = HashSet::new();
+                for &sc in S_sc {
+                    for &it in &sc_to_items[sc] {
+                        S_items.insert(it);
                     }
                 }
-            }
-            if seeds_set_items.len() >= 3 {
-                item_sets.push(seeds_set_items);
-            }
-        }
+                S_items
+            })
+            .filter(|S_items| S_items.len() >= 3)
+            .collect();
 
-        // 7) Deduplicate at item level
+        // 7) Final item-level dedup (sequential for determinism)
         let mut deduped_items: Vec<HashSet<usize>> = Vec::new();
-        'outer: for it in item_sets {
-            for cmp in &deduped_items {
-                if jaccard(&it, cmp) >= cfg.jaccard_dedup {
-                    continue 'outer;
+        for S in item_sets {
+            let mut keep = true;
+            for T in &deduped_items {
+                if jaccard(&S, T) >= cfg.jaccard_dedup {
+                    keep = false;
+                    break;
                 }
             }
-            deduped_items.push(it);
-            if deduped_items.len() >= cfg.max_sets {
-                break;
+            if keep {
+                deduped_items.push(S);
+                if deduped_items.len() >= cfg.max_sets {
+                    break;
+                }
             }
         }
 
@@ -527,11 +507,10 @@ impl Motives for GraphLaplacian {
             deduped_items.len()
         );
 
-        // 8) Return sorted item-index vectors
         let mut out: Vec<Vec<usize>> = deduped_items
             .into_iter()
-            .map(|it| {
-                let mut v: Vec<usize> = it.into_iter().collect();
+            .map(|S| {
+                let mut v: Vec<usize> = S.into_iter().collect();
                 v.sort_unstable();
                 v
             })
@@ -545,39 +524,27 @@ impl Motives for GraphLaplacian {
         if sz < 2 {
             return false;
         }
-        for &u in set {
+        // Parallel short-circuit check
+        let ok = set.par_iter().all(|&u| {
             let nbrs: HashSet<usize> = self.neighbors_of(u).iter().map(|(j, _)| *j).collect();
             let need = sz - 1;
             let have = nbrs.intersection(set).count();
-            if have != need {
-                return false;
-            }
-        }
-        true
+            have == need
+        });
+        ok
     }
 
-    /// Rayleigh is useful as a final cohesion/low-boundary check, but it’s brittle as
-    /// a per-step gate on k-NN graphs because even good motifs can have moderate boundary
-    /// until several members are added and triangles close. Use Rayleigh as a post-filter
-    /// or at coarse intervals with a calibrated threshold; let triangle density and clustering drive growth.
+    /// unused: potential improvements using rayleigh energy boundaries
     fn rayleigh_indicator(&self, set: &HashSet<usize>) -> f64 {
-        // Active computation space is the clustered/init_data space.
+        // Active computation space derived from the Laplacian itself
         let (rows, cols) = self.matrix.shape();
+        if rows == 0 || rows != cols || set.is_empty() {
+            return f64::INFINITY;
+        }
         let n = rows;
-        // Invariant: Laplacian must be square and consistent with init_data.
-        if rows != cols || self.init_data.shape().0 != n {
-            return f64::INFINITY;
-        }
-        // Empty set is undefined (0/0).
-        if set.is_empty() {
-            return f64::INFINITY;
-        }
-        // Bounds-check indices for this graph space.
         if set.iter().any(|&u| u >= n) {
             return f64::INFINITY;
         }
-
-        // Build {0,1} indicator in the same space as the Laplacian.
         let mut x = vec![0.0f64; n];
         for &i in set {
             x[i] = 1.0;
@@ -587,86 +554,91 @@ impl Motives for GraphLaplacian {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Helper: zero-copy neighbor iterator
+// Internal helpers (parallel-friendly)
 // ──────────────────────────────────────────────────────────────────────────────
 
-impl GraphLaplacian {
-    /// Returns an iterator over (neighbor_index, weight) for node `i` by negating Laplacian off-diagonals.
-    ///
-    /// Since L = D - W, we have W_ij = -L_ij for i ≠ j.
-    ///
-    /// This materializes neighbors into a Vec to avoid sprs lifetime issues;
-    /// typical degree is small (k=8-32 in kNN graphs), so overhead is minimal.
-    /// Returns an iterator over neighbors of node `i`.
-    pub fn neighbors_of(&self, i: usize) -> Vec<(usize, f64)> {
-        match self.matrix.outer_view(i) {
-            Some(row_vec) => row_vec
-                .iter()
-                .filter_map(|(j, &val)| {
-                    if i != j {
-                        let w = -val;
-                        if w > 0.0 { Some((j, w)) } else { None }
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Internal helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Compute triangle counts and local clustering coefficients for all nodes.
-///
-/// Returns `(tri_count, clust)` where:
-/// - `tri_count[i]` = number of triangles node i participates in
-/// - `clust[i]` = local clustering coefficient C_i = 2·T_i / (k_i·(k_i-1))
-fn triangle_stats(neigh: &[HashSet<usize>], n: usize) -> (Vec<usize>, Vec<f64>) {
-    let mut tri_count = vec![0usize; n];
-    let mut clust = vec![0.0f64; n];
-
-    for i in 0..n {
-        let deg_i = neigh[i].len();
-        if deg_i < 2 {
-            continue;
-        }
-        for &j in &neigh[i] {
-            if j <= i {
-                continue;
+fn triangle_stats_sorted(neigh_idx: &[Vec<usize>], n: usize) -> (Vec<usize>, Vec<f64>) {
+    // Count triangles per node by intersecting neighbor lists
+    let tri_count: Vec<usize> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let nbrs_i = &neigh_idx[i];
+            if nbrs_i.len() < 2 {
+                return 0usize;
             }
-            let (small, large) = if neigh[i].len() <= neigh[j].len() {
-                (&neigh[i], &neigh[j])
-            } else {
-                (&neigh[j], &neigh[i])
-            };
-            for &k in small {
-                if k == i || k == j {
+            let mut t = 0usize;
+            for &j in nbrs_i {
+                if j <= i {
                     continue;
                 }
-                if large.contains(&k) {
-                    tri_count[i] += 1;
-                    tri_count[j] += 1;
-                    tri_count[k] += 1;
-                }
+                let nbrs_j = &neigh_idx[j];
+                t += count_intersection(nbrs_i, nbrs_j, i, j);
             }
-        }
-    }
+            t
+        })
+        .collect();
 
-    for i in 0..n {
-        let deg_i = neigh[i].len();
-        if deg_i >= 2 {
-            clust[i] = (2.0 * tri_count[i] as f64) / ((deg_i * (deg_i - 1)) as f64);
-        }
-    }
+    // Local clustering per node in parallel
+    let clust: Vec<f64> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let k = neigh_idx[i].len();
+            if k >= 2 {
+                (2.0 * tri_count[i] as f64) / ((k * (k - 1)) as f64)
+            } else {
+                0.0
+            }
+        })
+        .collect();
 
     (tri_count, clust)
 }
 
-/// Compute Jaccard similarity between two sets.
+// Count common neighbors excluding i and j using two-pointer scan on sorted lists
+#[inline]
+fn count_intersection(a: &Vec<usize>, b: &Vec<usize>, i: usize, j: usize) -> usize {
+    let mut x = 0usize;
+    let (mut p, mut q) = (0usize, 0usize);
+    while p < a.len() && q < b.len() {
+        let va = a[p];
+        let vb = b[q];
+        if va == vb {
+            if va != i && va != j {
+                x += 1;
+            }
+            p += 1;
+            q += 1;
+        } else if va < vb {
+            p += 1;
+        } else {
+            q += 1;
+        }
+    }
+    x
+}
+
+// Count edges among s_nbrs after position start by intersecting with neigh(u)
+#[inline]
+fn count_edges_among(neigh_u: &Vec<usize>, s_nbrs: &Vec<usize>, start: usize) -> usize {
+    let mut x = 0usize;
+    let mut p = 0usize;
+    let mut q = start;
+    while p < neigh_u.len() && q < s_nbrs.len() {
+        let va = neigh_u[p];
+        let vb = s_nbrs[q];
+        if va == vb {
+            x += 1;
+            p += 1;
+            q += 1;
+        } else if va < vb {
+            p += 1;
+        } else {
+            q += 1;
+        }
+    }
+    x
+}
+
 fn jaccard(a: &HashSet<usize>, b: &HashSet<usize>) -> f64 {
     let inter = a.intersection(b).count() as f64;
     let union = (a.len() + b.len()) as f64 - inter;

@@ -118,7 +118,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("baseline_cosine", "single"), |b| {
         b.iter_batched(
             setup_single,
-            |(db, query, k, _aspace)| {
+            |(db, query, _k, _aspace)| {
                 let scores: Vec<(usize, f64)> = db
                     .iter()
                     .enumerate()
@@ -133,9 +133,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("arrow_alpha1_beta0", "single"), |b| {
         b.iter_batched(
             setup_single,
-            |(db, query, k, aspace)| {
+            |(db, query, _k, aspace)| {
                 let qrow = ArrowItem::new(query, 0.0);
-                let mut scores: Vec<(usize, f64)> = (0..db.len())
+                let scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
                         (i, qrow.lambda_similarity(&item_i, 1.0))
@@ -150,9 +150,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("arrow_alpha0.9_beta0.1", "single"), |b| {
         b.iter_batched(
             setup_single,
-            |(db, query, k, aspace)| {
+            |(db, query, _k, aspace)| {
                 let qrow = ArrowItem::new(query, 0.0);
-                let mut scores: Vec<(usize, f64)> = (0..db.len())
+                let scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
                         (i, qrow.lambda_similarity(&item_i, 0.9))
@@ -171,10 +171,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             |b| {
                 b.iter_batched(
                     || setup_batch(batch, 42),
-                    |(db, queries, k, _aspace)| {
+                    |(db, queries, _k, _aspace)| {
                         let mut acc = 0.0;
                         for query in queries {
-                            let mut scores: Vec<(usize, f64)> = db
+                            let scores: Vec<(usize, f64)> = db
                                 .iter()
                                 .enumerate()
                                 .map(|(i, v)| (i, common::cosine_similarity(&query, v)))
@@ -193,11 +193,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             |b| {
                 b.iter_batched(
                     || setup_batch(batch, 42),
-                    |(db, queries, k, aspace)| {
+                    |(db, queries, _k, aspace)| {
                         let mut acc = 0.0;
                         for query in queries {
                             let qrow = ArrowItem::new(query, 0.0);
-                            let mut scores: Vec<(usize, f64)> = (0..db.len())
+                            let scores: Vec<(usize, f64)> = (0..db.len())
                                 .map(|i| {
                                     let item_i = aspace.get_item(i);
                                     (i, qrow.lambda_similarity(&item_i, 1.0))
@@ -217,7 +217,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             |b| {
                 b.iter_batched(
                     || setup_batch(batch, 42),
-                    |(db, queries, k, aspace)| {
+                    |(db, queries, _k, aspace)| {
                         let mut acc = 0.0;
                         for query in queries {
                             let qrow = ArrowItem::new(query, 0.0);

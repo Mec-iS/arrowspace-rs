@@ -25,7 +25,6 @@ fn test_motives_basic() {
         max_motif_size: 24,
         max_sets: 100,
         jaccard_dedup: 0.8,
-        rayleigh_max: None, // enable later after validating density
     };
 
     let motifs = gl.spot_motives_eigen(&cfg);
@@ -38,7 +37,7 @@ fn test_motives_basic() {
 }
 
 #[test]
-fn test_motives_with_rayleigh() {
+fn test_motives_2() {
     crate::tests::init();
 
     let rows = make_gaussian_cliques(12, 0.05, 15, 10, 42);
@@ -56,7 +55,6 @@ fn test_motives_with_rayleigh() {
         max_motif_size: 24,
         max_sets: 100,
         jaccard_dedup: 0.8,
-        rayleigh_max: Some(1.5), // realistic bound for k=16/topk=10
     };
 
     // rayleigh_max: In this setup, small sets had R(1S)R(1S) near 2.0 when k/topk were higher; with k=14, topk=8 and top_l=16,
@@ -100,7 +98,6 @@ fn test_motives_energy_basic() {
         max_motif_size: 24,
         max_sets: 100,
         jaccard_dedup: 0.8,
-        rayleigh_max: None, // enable later once density is validated
     };
 
     let motifs = gl_energy.spot_motives_energy(&aspace, &cfg);
