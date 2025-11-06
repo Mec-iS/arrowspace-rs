@@ -40,6 +40,7 @@
 use crate::graph::GraphLaplacian;
 use log::{debug, info};
 use rayon::prelude::*;
+use smartcore::linalg::basic::arrays::Array;
 use std::collections::HashSet;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ impl Motives for GraphLaplacian {
             cfg.top_l, cfg.min_triangles, cfg.min_clust, cfg.max_motif_size
         );
 
-        let n = self.nnodes;
+        let n = self.init_data.shape().0;
 
         // 1) Build top-L neighbor lists per node (parallel)
         let neigh: Vec<Vec<(usize, f64)>> = (0..n)

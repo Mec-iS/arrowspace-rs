@@ -924,9 +924,9 @@ fn test_energy_vs_energy_extra_dims_reduction_recall_at_k() {
         recall_at_k * 100.0
     );
 
-    // Ensure the two runs are not trivially identical (optionally)
-    let identical = results_base.iter().map(|(i, _)| *i).collect::<Vec<_>>()
-        == results_extra.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+    // // Ensure the two runs are not trivially identical (optionally)
+    // let identical = results_base.iter().map(|(i, _)| *i).collect::<Vec<_>>()
+    //     == results_extra.iter().map(|(i, _)| *i).collect::<Vec<_>>();
 
     // TODO: Flaky - enable this when energy_search is a little more stable
     // assert!(
