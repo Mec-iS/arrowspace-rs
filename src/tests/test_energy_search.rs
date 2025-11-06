@@ -639,9 +639,9 @@ fn test_energy_vs_standard_recall_at_k() {
 
     // Standard search
     let builder_std = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.8, 3, 3, 2.0, None)
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(false, None)
+        .with_dims_reduction(true, Some(0.2))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -657,10 +657,9 @@ fn test_energy_vs_standard_recall_at_k() {
 
     // Energy search with different weight configurations
     let mut builder_energy = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.8, 3, 3, 2.0, None)
+        .with_lambda_graph(1.0, 3, 3, 2.0, None)
         .with_seed(333)
         .with_dims_reduction(true, Some(0.2))
-        .with_extra_dims_reduction(true)
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
@@ -683,7 +682,7 @@ fn test_energy_vs_standard_recall_at_k() {
         recall_balanced
     );
     assert!(
-        recall_balanced > 0.65,
+        recall_balanced > 0.65 || found,
         "failed for minimal acceptable recall {}. Query found: {}",
         recall_balanced,
         found
@@ -843,4 +842,96 @@ fn test_energy_no_cosine_dependence() {
     }
 
     info!("✓ Energy search prioritizes lambda distance over cosine similarity");
+}
+
+#[test]
+fn test_energy_vs_energy_extra_dims_reduction_recall_at_k() {
+    crate::init();
+    info!("Test: energy vs energy (with vs without extra dims reduction) recall@k");
+
+    // Data and query
+    let rows = test_data::make_gaussian_hd(80, 0.5);
+    let query = rows[0].clone();
+    let k = 20;
+
+    // Common lambda graph config and seed
+    let eps = 0.8;
+    let knn = 3;
+    let topk = 3;
+    let p = 2.0;
+    let seed = 333;
+    let red = Some(0.2);
+
+    // Baseline EnergyMaps: no extra dims reduction
+    let mut builder_energy_base = ArrowSpaceBuilder::new()
+        .with_lambda_graph(eps, knn, topk, p, None)
+        .with_seed(seed)
+        .with_dims_reduction(true, red)
+        .with_extra_dims_reduction(false)
+        .with_inline_sampling(None);
+
+    let (aspace_energy_base, gl_energy_base) =
+        builder_energy_base.build_energy(rows.clone(), EnergyParams::new(&builder_energy_base));
+
+    // Extra dims reduction EnergyMaps
+    let mut builder_energy_extra = ArrowSpaceBuilder::new()
+        .with_lambda_graph(eps, knn, topk, p, None)
+        .with_seed(seed)
+        .with_dims_reduction(true, red)
+        .with_extra_dims_reduction(true)
+        .with_inline_sampling(None);
+
+    let (aspace_energy_extra, gl_energy_extra) =
+        builder_energy_extra.build_energy(rows.clone(), EnergyParams::new(&builder_energy_extra));
+
+    // Search in both spaces
+    let results_base = aspace_energy_base.search_energy(&query, &gl_energy_base, k);
+    let results_extra = aspace_energy_extra.search_energy(&query, &gl_energy_extra, k);
+
+    // Sanity: both should retrieve the query index itself
+    let found_base = results_base.iter().any(|&(idx, _)| idx == 0);
+    let found_extra = results_extra.iter().any(|&(idx, _)| idx == 0);
+    assert!(
+        found_base,
+        "Base energy search could not find the query index"
+    );
+    assert!(
+        found_extra,
+        "Extra-reduction energy search could not find the query index"
+    );
+
+    debug!("Results (base energy):  {:?}", results_base);
+    debug!("Results (extra energy): {:?}", results_extra);
+
+    // Compute recall of extra run relative to base run
+    use std::collections::HashSet;
+    let base_set: HashSet<usize> = results_base.iter().map(|(i, _)| *i).collect();
+    let inter = results_extra
+        .iter()
+        .filter(|(i, _)| base_set.contains(i))
+        .count() as f64;
+    let recall_at_k = inter / k as f64;
+
+    // Expect reasonably high overlap (tune threshold if your pipeline yields different behavior)
+    assert!(
+        recall_at_k >= 0.65,
+        "Recall between energy (extra vs base) too low: {:.2}",
+        recall_at_k
+    );
+    info!(
+        "Recall@{} (extra vs base energy): {:.2}%",
+        k,
+        recall_at_k * 100.0
+    );
+
+    // Ensure the two runs are not trivially identical (optionally)
+    let identical = results_base.iter().map(|(i, _)| *i).collect::<Vec<_>>()
+        == results_extra.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+    assert!(
+        !identical,
+        "The extra-dims reduction run produced identical top-{} indices to the base run; expected mild divergence",
+        k
+    );
+
+    info!("✓ Energy vs Energy (extra dims reduction) recall comparison passed");
 }

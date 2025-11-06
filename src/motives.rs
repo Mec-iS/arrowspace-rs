@@ -646,7 +646,7 @@ fn count_edges_among(neigh_u: &Vec<usize>, s_nbrs: &Vec<usize>, start: usize) ->
     x
 }
 
-fn jaccard(a: &HashSet<usize>, b: &HashSet<usize>) -> f64 {
+pub fn jaccard(a: &HashSet<usize>, b: &HashSet<usize>) -> f64 {
     let inter = a.intersection(b).count() as f64;
     let union = (a.len() + b.len()) as f64 - inter;
     if union == 0.0 { 0.0 } else { inter / union }
