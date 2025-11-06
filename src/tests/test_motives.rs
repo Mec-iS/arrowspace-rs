@@ -37,13 +37,13 @@ fn test_motives_basic() {
 }
 
 #[test]
-fn test_motives_2() {
+fn test_motives_basic_2() {
     crate::tests::init();
 
     let rows = make_gaussian_cliques(12, 0.05, 15, 10, 42);
 
     let (_aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.35, 16, 10, 2.0, None) // denser intra-group
+        .with_lambda_graph(0.4, 16, 10, 2.0, None) // denser intra-group
         .with_normalisation(true)
         .with_sparsity_check(false)
         .build(rows);
@@ -54,7 +54,7 @@ fn test_motives_2() {
         min_clust: 0.5,   // tighter seeding
         max_motif_size: 24,
         max_sets: 100,
-        jaccard_dedup: 0.8,
+        jaccard_dedup: 0.4,
     };
 
     // rayleigh_max: In this setup, small sets had R(1S)R(1S) near 2.0 when k/topk were higher; with k=14, topk=8 and top_l=16,

@@ -200,18 +200,18 @@ impl Motives for GraphLaplacian {
             .par_iter()
             .map(|&s| {
                 // Skip seeds that are trivially dominated later during global dedup
-                let mut S: HashSet<usize> = HashSet::from([s]);
+                let mut seeds_hashset: HashSet<usize> = HashSet::from([s]);
 
                 loop {
-                    if S.len() >= cfg.max_motif_size {
+                    if seeds_hashset.len() >= cfg.max_motif_size {
                         break;
                     }
 
                     // Frontier
                     let mut cand = HashSet::new();
-                    for &u in &S {
+                    for &u in &seeds_hashset {
                         for &v in &neigh_idx[u] {
-                            if !S.contains(&v) {
+                            if !seeds_hashset.contains(&v) {
                                 cand.insert(v);
                             }
                         }
@@ -225,11 +225,11 @@ impl Motives for GraphLaplacian {
                     let mut best_gain: i64 = -1;
 
                     for u in cand {
-                        // neighbors of u inside S
+                        // neighbors of u inside seeds_hashset
                         let mut s_nbrs: Vec<usize> = neigh_idx[u]
                             .iter()
                             .copied()
-                            .filter(|v| S.contains(v))
+                            .filter(|v| seeds_hashset.contains(v))
                             .collect();
                         s_nbrs.sort_unstable();
                         let mut edges = 0i64;
@@ -247,15 +247,19 @@ impl Motives for GraphLaplacian {
 
                     match best_u {
                         Some(u) => {
-                            let mut S2 = S.clone();
-                            S2.insert(u);
-                            S = S2;
+                            let mut s2 = seeds_hashset.clone();
+                            s2.insert(u);
+                            seeds_hashset = s2;
                         }
                         None => break,
                     }
                 }
 
-                if S.len() >= 3 { Some(S) } else { None }
+                if seeds_hashset.len() >= 3 {
+                    Some(seeds_hashset)
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -263,8 +267,8 @@ impl Motives for GraphLaplacian {
         let mut results: Vec<HashSet<usize>> = Vec::new();
         for opt in expansions.into_iter().flatten() {
             let mut keep = true;
-            for T in &results {
-                if jaccard(&opt, T) >= cfg.jaccard_dedup {
+            for res in &results {
+                if jaccard(&opt, res) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
@@ -281,8 +285,8 @@ impl Motives for GraphLaplacian {
 
         let mut out: Vec<Vec<usize>> = results
             .into_iter()
-            .map(|S| {
-                let mut v: Vec<usize> = S.into_iter().collect();
+            .map(|res| {
+                let mut v: Vec<usize> = res.into_iter().collect();
                 v.sort_unstable();
                 v
             })
@@ -355,17 +359,17 @@ impl Motives for GraphLaplacian {
         let expansions: Vec<Option<HashSet<usize>>> = seeds
             .par_iter()
             .map(|&s| {
-                let mut S: HashSet<usize> = HashSet::from([s]);
+                let mut seeds_hashset: HashSet<usize> = HashSet::from([s]);
 
                 loop {
-                    if S.len() >= cfg.max_motif_size {
+                    if seeds_hashset.len() >= cfg.max_motif_size {
                         break;
                     }
 
                     let mut cand = HashSet::new();
-                    for &u in &S {
+                    for &u in &seeds_hashset {
                         for &v in &neigh_idx[u] {
-                            if !S.contains(&v) {
+                            if !seeds_hashset.contains(&v) {
                                 cand.insert(v);
                             }
                         }
@@ -381,7 +385,7 @@ impl Motives for GraphLaplacian {
                         let mut s_nbrs: Vec<usize> = neigh_idx[u]
                             .iter()
                             .copied()
-                            .filter(|v| S.contains(v))
+                            .filter(|v| seeds_hashset.contains(v))
                             .collect();
                         s_nbrs.sort_unstable();
                         let mut edges = 0i64;
@@ -397,15 +401,19 @@ impl Motives for GraphLaplacian {
 
                     match best_u {
                         Some(u) => {
-                            let mut S2 = S.clone();
-                            S2.insert(u);
-                            S = S2;
+                            let mut s2 = seeds_hashset.clone();
+                            s2.insert(u);
+                            seeds_hashset = s2;
                         }
                         None => break,
                     }
                 }
 
-                if S.len() >= 3 { Some(S) } else { None }
+                if seeds_hashset.len() >= 3 {
+                    Some(seeds_hashset)
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -413,8 +421,8 @@ impl Motives for GraphLaplacian {
         let mut sc_results: Vec<HashSet<usize>> = Vec::new();
         for opt in expansions.into_iter().flatten() {
             let mut keep = true;
-            for T in &sc_results {
-                if jaccard(&opt, T) >= cfg.jaccard_dedup {
+            for res in &sc_results {
+                if jaccard(&opt, res) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
@@ -439,8 +447,8 @@ impl Motives for GraphLaplacian {
                 // Return subcentroid motifs if mapping not available
                 let mut out_sc: Vec<Vec<usize>> = sc_results
                     .into_iter()
-                    .map(|S| {
-                        let mut v: Vec<usize> = S.into_iter().collect();
+                    .map(|res| {
+                        let mut v: Vec<usize> = res.into_iter().collect();
                         v.sort_unstable();
                         v
                     })
@@ -451,8 +459,7 @@ impl Motives for GraphLaplacian {
         };
 
         // sc_id -> items (parallel build with local buckets, then merge)
-        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); n_sc];
-        cmap.par_iter().enumerate().for_each(|(item_idx, &sc_idx)| {
+        cmap.par_iter().enumerate().for_each(|(_, &sc_idx)| {
             if sc_idx < n_sc {
                 // local push via interior mutability avoided; collect pairs then group
                 // fallback: lightweight locking-free grouping by preallocating pairs
@@ -472,30 +479,30 @@ impl Motives for GraphLaplacian {
         // Project each subcentroid motif to items (parallel)
         let item_sets: Vec<HashSet<usize>> = sc_results
             .par_iter()
-            .map(|S_sc| {
-                let mut S_items = HashSet::new();
-                for &sc in S_sc {
+            .map(|s_sc| {
+                let mut s_items = HashSet::new();
+                for &sc in s_sc {
                     for &it in &sc_to_items[sc] {
-                        S_items.insert(it);
+                        s_items.insert(it);
                     }
                 }
-                S_items
+                s_items
             })
-            .filter(|S_items| S_items.len() >= 3)
+            .filter(|s_items| s_items.len() >= 3)
             .collect();
 
         // 7) Final item-level dedup (sequential for determinism)
         let mut deduped_items: Vec<HashSet<usize>> = Vec::new();
-        for S in item_sets {
+        for item in item_sets {
             let mut keep = true;
-            for T in &deduped_items {
-                if jaccard(&S, T) >= cfg.jaccard_dedup {
+            for cmp in &deduped_items {
+                if jaccard(&item, cmp) >= cfg.jaccard_dedup {
                     keep = false;
                     break;
                 }
             }
             if keep {
-                deduped_items.push(S);
+                deduped_items.push(item);
                 if deduped_items.len() >= cfg.max_sets {
                     break;
                 }
@@ -509,8 +516,8 @@ impl Motives for GraphLaplacian {
 
         let mut out: Vec<Vec<usize>> = deduped_items
             .into_iter()
-            .map(|S| {
-                let mut v: Vec<usize> = S.into_iter().collect();
+            .map(|it| {
+                let mut v: Vec<usize> = it.into_iter().collect();
                 v.sort_unstable();
                 v
             })

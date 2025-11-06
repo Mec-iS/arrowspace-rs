@@ -108,7 +108,7 @@ use sprs::{CsMat, TriMat};
 /// };
 ///
 /// let laplacian = build_laplacian_matrix(
-///     DenseMatrix::from_2d_vec(&items).unwrap().transpose(), &params, None);
+///     DenseMatrix::from_2d_vec(&items).unwrap().transpose(), &params, None, false);
 /// assert_eq!(laplacian.nnodes, 4);
 /// assert_eq!(laplacian.matrix.shape(), (3, 3));
 /// println!("{:?}", laplacian);
