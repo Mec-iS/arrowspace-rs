@@ -438,8 +438,7 @@ impl Default for ArrowSpace {
 }
 
 impl ArrowSpace {
-    /// Returns an empty space.
-    /// Only to be used in tests. `ArrowSpaceBuilder`
+    /// Returns an empty space from the initial data
     pub(crate) fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(
@@ -476,6 +475,45 @@ impl ArrowSpace {
             item_norms: None,
         }
     }
+
+    /// Returns an empty space from the initial data
+    pub(crate) fn new_from_dense(items: DenseMatrix<f64>, taumode: TauMode) -> Self {
+        assert!(!items.is_empty(), "items cannot be empty");
+        assert!(
+            items.shape().0 > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
+        let n_items = items.shape().0; // Number of items (columns in final layout)
+        let n_features = items.shape().1; // Number of features (rows in final layout)
+        Self {
+            nfeatures: n_features,
+            nitems: n_items,
+            data: items,
+            signals: sprs::CsMat::zero((0, 0)), // will be computed later
+            lambdas: vec![0.0; n_items],        // will be computed later
+            lambdas_sorted: SortedLambdas::new(),
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
+            taumode,
+            // Clustering defaults
+            n_clusters: 0,
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
+            extra_reduced_dim: false,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
+            item_norms: None,
+        }
+    }
+
     /// Builds from a vector of equally-sized rows and per-row lambdas.
     /// Only to be used in tests. Use `ArrowSpaceBuilder`
     #[inline]
