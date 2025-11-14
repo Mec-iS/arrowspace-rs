@@ -1,14 +1,14 @@
-# ArrowSpace
+# arrowspace
 
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.09002/status.svg)](https://doi.org/10.21105/joss.09002)
 
-**Fast spectral vector search that finds similarity beyond traditional distance metrics**
+**Spectral vector search and analysis using dipersion models**
 
-ArrowSpace is a high-performance Rust library for vector similarity search that goes beyond 
-geometric distance (cosine, L2) by incorporating spectral graph properties, enabling more 
-nuanced similarity matching for scientific and structured data.
+`arrowspace` is a database for vectors supported by a graph representation and a key-value store. The main use-cases targeted are: **AI search capabilities as advanced vector similarity, graph characterisation analysis and search, indexing of high-dimensional vectors**.
 
-`ArrowSpace` is a data structure library that encapsulates the use of `λτ` indexing; a novel scoring method that mixes Rayleigh and Laplacian scoring (see [`RESEARCH.md`](./RESEARCH.md)) for building vector-search-friendly lookup tables with built-in spectral-awareness. This allows better managing of datasets where spectral characteristics are most relevant. It pairs dense, row‑major arrays with per‑row spectral scores (`λτ`) derived from a Rayleigh-Laplacian score built over items, enabling lambda‑aware similarity, range queries, and composable operations like superposition and element‑wise multiplication over rows. It has been designed to work on datasets where spectral characteristics can be leveraged to find matches that are usually ranked lower by commonly used distance metrics.
+A complete DevLog for this package is available [here](https://www.tuned.org.uk/blog).
+
+`ArrowSpace` is the data structure that encapsulates the use of `λτ` (lambda-tau) indexing; a novel scoring method that mixes Rayleigh and Laplacian scoring (see [`RESEARCH.md`](./RESEARCH.md)) for building vector-search-friendly lookup tables with built-in spectral-awareness. This allows better managing of datasets where spectral characteristics are most relevant. It pairs dense, row‑major arrays with per‑row spectral scores (`λτ`) derived from a Rayleigh-Laplacian score built over items, enabling lambda‑aware similarity, range queries, and composable operations like superposition and element‑wise multiplication over rows. It has been designed to work on datasets where spectral characteristics can be leveraged to find matches that are usually ranked lower by commonly used distance metrics.
 
 Run `cargo run --example 01_compare_cosine` for an example about how it compares with cosine similarity.
 
@@ -21,7 +21,7 @@ use arrowspace::builder::ArrowSpaceBuilder;
 // Simple example that works immediately
 let vectors = vec![
     vec![1.0, 2.0, 3.0],
-    vec![2.0, 3.0, 1.0], 
+    vec![2.0, 3.0, 1.0],
     vec![3.0, 1.0, 2.0],
 ];
 
@@ -31,7 +31,7 @@ let (aspace, _) = ArrowSpaceBuilder::new()
 
 ### Requirements
 
-- Rust 1.81+ (edition 2024)
+- Rust 1.90+ (edition 2024)
 
 ## Installation
 
@@ -39,7 +39,7 @@ let (aspace, _) = ArrowSpaceBuilder::new()
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-arrowspace = "^0.13.1"
+arrowspace = "^0.22.0"
 ```
 
 ### From Source
@@ -92,7 +92,7 @@ let items = vec![
 
 let (aspace, graph) = ArrowSpaceBuilder::new()
     // setting the right eps is critical to avoid zeroed lambdas
-    // check `tests` and `examples` for extensive examples 
+    // check `tests` and `examples` for extensive examples
     .with_lambda_graph(0.5, 3, 2.0, sigma: 0.25)
     .build(items);
 
