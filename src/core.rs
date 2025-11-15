@@ -366,7 +366,7 @@ pub struct ArrowSpace {
     pub nfeatures: usize, // F: original dimensions
     pub nitems: usize,
     pub data: DenseMatrix<f64>,        // NxF raw data
-    pub signals: CsMat<f64>,           // Laplacian(Transpose(Laplacian(FxN)))
+    pub signals: CsMat<f64>,           // Laplacian(Transpose(FfxFn))
     pub lambdas: Vec<f64>,             // N lambdas (every lambda is a lambda for an item-row)
     pub lambdas_sorted: SortedLambdas, // sorted by lambda ascending
     pub taumode: TauMode,              // tau_mode as in select_tau_mode
