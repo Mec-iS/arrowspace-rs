@@ -5,7 +5,6 @@ use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::clustering::ClusteringHeuristic;
@@ -44,6 +43,7 @@ impl FromStr for Pipeline {
     }
 }
 
+#[derive(Clone, PartialEq)]
 pub struct ArrowSpaceBuilder {
     pub(crate) n_items_original: usize,
     pub prebuilt_spectral: bool, // true if spectral laplacian has been computed
@@ -532,7 +532,6 @@ impl ArrowSpaceBuilder {
         rows: DenseMatrix<f64>,
         pipeline: &str,
         energy_params: Option<EnergyParams>,
-        storage_meta: &PathBuf,
     ) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.shape().0;
         self.n_items_original = n_items;

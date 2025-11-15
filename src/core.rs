@@ -366,7 +366,7 @@ pub struct ArrowSpace {
     pub nfeatures: usize, // F: original dimensions
     pub nitems: usize,
     pub data: DenseMatrix<f64>,        // NxF raw data
-    pub signals: CsMat<f64>,           // Laplacian(Transpose(NxF))
+    pub signals: CsMat<f64>,           // Laplacian(Transpose(Laplacian(FxN)))
     pub lambdas: Vec<f64>,             // N lambdas (every lambda is a lambda for an item-row)
     pub lambdas_sorted: SortedLambdas, // sorted by lambda ascending
     pub taumode: TauMode,              // tau_mode as in select_tau_mode
@@ -476,15 +476,23 @@ impl ArrowSpace {
         }
     }
 
+    // drop stored in-memory data
+    // to be used after data has been persisted to file
+    pub fn drop_data(&mut self) {
+        info!("Freeing raw input memory, should have been persisted to file");
+        self.data = DenseMatrix::new(0, 0, vec![], true).unwrap();
+    }
+
     /// Returns an empty space from the initial data
     pub(crate) fn new_from_dense(items: DenseMatrix<f64>, taumode: TauMode) -> Self {
-        assert!(!items.is_empty(), "items cannot be empty");
+        let n_items = items.shape().0; // Number of items (columns in final layout)
+        let n_features = items.shape().1; // Number of features (rows in final layout)
+        let empty = items.is_empty();
+        info!(r#"new_from_dense: {n_items}x{n_features} -> empty: {empty}"#);
         assert!(
             items.shape().0 > 1,
             "cannot create a arrowspace of one arrow only"
         );
-        let n_items = items.shape().0; // Number of items (columns in final layout)
-        let n_features = items.shape().1; // Number of features (rows in final layout)
         Self {
             nfeatures: n_features,
             nitems: n_items,
