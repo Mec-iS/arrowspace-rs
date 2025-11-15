@@ -1,11 +1,17 @@
 use log::{debug, info, warn};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::matrix::DenseMatrix;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Debug};
+use std::str::FromStr;
 
 use crate::clustering::ClusteringHeuristic;
 use crate::core::{ArrowSpace, TAUDEFAULT};
 use crate::eigenmaps::{ClusteredOutput, EigenMaps};
+use crate::energymaps::EnergyMaps;
+use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::sampling::SamplerType;
 use crate::taumode::TauMode;
@@ -17,6 +23,27 @@ pub enum PairingStrategy {
     CoverTreeKNN(usize), // k for k-NN build
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Pipeline {
+    Eigen,
+    Energy,
+    Default,
+}
+
+impl FromStr for Pipeline {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Eigen" => Ok(Pipeline::Eigen),
+            "Energy" => Ok(Pipeline::Energy),
+            "Default" => Ok(Pipeline::Default),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct ArrowSpaceBuilder {
     pub(crate) n_items_original: usize,
     pub prebuilt_spectral: bool, // true if spectral laplacian has been computed
@@ -38,7 +65,7 @@ pub struct ArrowSpaceBuilder {
     pub sampling: Option<SamplerType>,
 
     // Synthetic index configuration (used `with_synthesis`)
-    pub(crate) synthesis: TauMode, // (tau_mode)
+    pub synthesis: TauMode, // (tau_mode)
 
     /// Max clusters X (default: nfeatures; cap on centroids)
     pub(crate) cluster_max_clusters: Option<usize>,
@@ -497,6 +524,421 @@ impl ArrowSpaceBuilder {
         info!("ArrowSpace build completed successfully");
 
         (aspace, gl)
+    }
+
+    /// Same as build but passing a `DenseMatrix` instead of a `Vec<Vec<..>>`
+    pub fn build_for_persistence(
+        mut self,
+        rows: DenseMatrix<f64>,
+        pipeline: &str,
+        energy_params: Option<EnergyParams>,
+    ) -> (ArrowSpace, GraphLaplacian) {
+        let n_items = rows.shape().0;
+        self.n_items_original = n_items;
+        let n_features = rows.shape().1;
+        let start = std::time::Instant::now();
+
+        // set baseline for topk
+        self.define_result_k();
+
+        info!(
+            "Building ArrowSpace from {} items with {} features",
+            n_items, n_features
+        );
+        debug!(
+            "Build configuration: eps={:?}, k={}, p={}, sigma={:?}, normalise={}, synthesis={:?}",
+            self.lambda_eps,
+            self.lambda_k,
+            self.lambda_p,
+            self.lambda_sigma,
+            self.normalise,
+            self.synthesis
+        );
+
+        let pipeline = match pipeline.parse::<Pipeline>() {
+            Ok(p) => p,
+            Err(_) => panic!("Invalid pipeline value: {}", pipeline),
+        };
+
+        match pipeline {
+            Pipeline::Eigen => {
+                // ============================================================
+                // Stage 1: Clustering with sampling and optional projection
+                // ============================================================
+                let ClusteredOutput {
+                    mut aspace,
+                    centroids,
+                    n_items: _n_items,
+                    n_features: _n_features,
+                    ..
+                } = ArrowSpace::start_clustering_dense(&mut self, rows.clone());
+
+                // ============================================================
+                // Stage 2: Build item-graph Laplacian
+                // ============================================================
+                let gl = aspace.eigenmaps(&self, &centroids, n_items);
+
+                // ============================================================
+                // Stage 4: Compute taumode lambdas
+                // ============================================================
+                info!(
+                    "Computing taumode lambdas with synthesis: {:?}",
+                    self.synthesis
+                );
+                aspace.compute_taumode(&gl);
+                // create the sorted index
+                aspace.build_lambdas_sorted();
+
+                let lambda_stats = {
+                    let lambdas = aspace.lambdas();
+                    let min = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                    let max: f64 = lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                    let mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
+                    (min, max, mean)
+                };
+
+                debug!(
+                    "Lambda computation completed - min: {:.6}, max: {:.6}, mean: {:.6}",
+                    lambda_stats.0, lambda_stats.1, lambda_stats.2
+                );
+
+                info!(
+                    "Total ArrowSpaceBuilder construction time: {:?}",
+                    start.elapsed()
+                );
+                debug!("ArrowSpaceBuilder configuration: {}", self);
+                info!("ArrowSpace build completed successfully");
+
+                (aspace, gl)
+            }
+            Pipeline::Energy | Pipeline::Default => {
+                assert!(
+                    self.use_dims_reduction == true,
+                    "When using energy pipeline, dim reduction is needed"
+                );
+                assert!(
+                    energy_params.is_some(),
+                    "if using energy pipeline, energy_params should be some"
+                );
+                if self.prebuilt_spectral == true {
+                    panic!(
+                        "Spectral mode not compatible with energy pipeline, please do not enable for energy search"
+                    );
+                }
+                self.n_items_original = rows.shape().0;
+
+                // ============================================================
+                // Stage 1: Clustering with sampling and optional projection
+                // ============================================================n
+                let ClusteredOutput {
+                    mut aspace,
+                    mut centroids,
+                    ..
+                } = ArrowSpace::start_clustering_dense(&mut self, rows);
+
+                // check that projection has been applied or not
+                if aspace.projection_matrix.is_some() && aspace.nfeatures > 64 {
+                    assert_ne!(
+                        centroids.shape().1,
+                        aspace.nfeatures,
+                        "aspace is now projected"
+                    );
+                } else {
+                    assert_eq!(
+                        centroids.shape().1,
+                        aspace.nfeatures,
+                        "aspace has not been projected"
+                    );
+                }
+
+                // Step 2: Optional optical compression on centroids
+                if let Some(tokens) = energy_params.as_ref().unwrap().optical_tokens {
+                    // mutate centroids with compression
+                    centroids = ArrowSpace::optical_compress_centroids(
+                        &centroids,
+                        tokens,
+                        energy_params.as_ref().unwrap().trim_quantile,
+                    );
+                }
+
+                // Step 3: Bootstrap Laplacian on centroids
+                let l0: GraphLaplacian =
+                    ArrowSpace::bootstrap_centroid_laplacian(&centroids, &self);
+
+                assert_eq!(centroids.shape().0, l0.nnodes, "l0 is still non-projected");
+
+                // Step 4: Diffuse and split to create sub_centroids
+                let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
+                    &centroids,
+                    &l0,
+                    &energy_params.as_ref().unwrap(),
+                );
+
+                assert_eq!(sub_centroids.shape().1, centroids.shape().1);
+
+                // Step 5: apply EXTRA JL dimensionality reduction (optional `with_extra_dims_reduction`)
+                let (n_subcentroids, current_features) = sub_centroids.shape();
+                let (sub_centroids, reduced_dim) = if self.use_dims_reduction
+                    && self.extra_dims_reduction
+                    && current_features > 64
+                {
+                    info!("Apply EXTRA JL dimensionality reduction");
+                    use crate::reduction::{
+                        ImplicitProjection, compute_jl_dimension, project_matrix,
+                    };
+
+                    let jl_dim = compute_jl_dimension(n_subcentroids, self.rp_eps);
+                    let target_dim = jl_dim.min(current_features / 2);
+
+                    if target_dim < current_features {
+                        info!(
+                            "Applying JL projection to sub_centroids: {} features → {} dimensions (ε={:.2})",
+                            current_features, target_dim, self.rp_eps
+                        );
+
+                        let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                        let projected = project_matrix(&sub_centroids, &implicit_proj);
+
+                        info!(
+                            "Sub_centroids projection complete: {:.1}x compression",
+                            current_features as f64 / target_dim as f64
+                        );
+
+                        (projected, target_dim)
+                    } else {
+                        debug!(
+                            "JL target dimension {} >= current {}, skipping projection",
+                            target_dim, current_features
+                        );
+                        (sub_centroids, current_features)
+                    }
+                } else {
+                    (sub_centroids, current_features)
+                };
+
+                info!(
+                    "Energy graph: {:?} centroids → {:?} sub_centroids (reduced_dim={})",
+                    centroids.shape(),
+                    sub_centroids.shape(),
+                    reduced_dim
+                );
+
+                // Step 6: Build Laplacian on sub_centroids using energy dispersion
+                let (gl_energy, _, _) =
+                    self.build_energy_laplacian(&sub_centroids, &energy_params.as_ref().unwrap());
+
+                assert_eq!(
+                    gl_energy.shape().1,
+                    sub_centroids.shape().1,
+                    "Graph cols ({}) must match sub_centroids features ({})",
+                    gl_energy.shape().1,
+                    sub_centroids.shape().1
+                );
+
+                // Step 7: Compute lambdas on sub_centroids ONLY
+                // Store sub_centroids for query mapping
+                aspace.sub_centroids = Some(sub_centroids.clone());
+                let sub_centroids_shape = sub_centroids.shape();
+
+                // Create a sub-ArrowSpace to match gl_energy
+                let mut subcentroid_space =
+                    ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
+                subcentroid_space.taumode = aspace.taumode;
+                subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
+                subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
+                // safeguard to clear signals
+                subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
+
+                assert_eq!(
+                    subcentroid_space.nfeatures,
+                    gl_energy.shape().1,
+                    "Subcentroid count must match energy graph dimensions"
+                );
+
+                info!(
+                    "Computing lambdas on {} sub_centroids...",
+                    subcentroid_space.nitems
+                );
+
+                // finally compute taumode on the subcentroids
+                TauMode::compute_taumode_lambdas_parallel(
+                    &mut subcentroid_space,
+                    &gl_energy,
+                    self.synthesis,
+                );
+
+                aspace.subcentroid_lambdas = Some(subcentroid_space.lambdas.clone());
+                info!(
+                    "Sub_centroid λ: min={:.6}, max={:.6}, mean={:.6}",
+                    subcentroid_space
+                        .lambdas
+                        .iter()
+                        .fold(f64::INFINITY, |a, &b| a.min(b)),
+                    subcentroid_space
+                        .lambdas
+                        .iter()
+                        .fold(0.0_f64, |a, &b| a.max(b)),
+                    subcentroid_space.lambdas.iter().sum::<f64>() / subcentroid_space.nitems as f64
+                );
+
+                // Step 8: Assign lambdas + compute norms (single parallel loop)
+                info!(
+                    "Mapping {} items to {:?} sub_centroids and computing norms...",
+                    aspace.nitems, sub_centroids_shape
+                );
+
+                // Step 8: Compute taumode
+                // epsilon for considering lambdas "tied"
+                let epsilon: f64 = 1e-11;
+
+                // Parallel assignment using taumode distance
+                let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
+                    .into_par_iter()
+                    .map(|i| {
+                        let item = aspace.get_item(i);
+
+                        // project only if unprojected
+                        let projected_item = if aspace.projection_matrix.is_some()
+                            && item.item.len() == aspace.projection_matrix.as_ref().unwrap().original_dim
+                        {
+                            aspace.project_query(&item.item)
+                        } else if aspace.projection_matrix.is_none()
+                            || item.item.len() == aspace.projection_matrix.as_ref().unwrap().reduced_dim
+                        {
+                            item.item.to_owned()
+                        } else {
+                            panic!(
+                                "Check the projection pipeline, item seems neither projected nor unprojected. \n\
+                                   input item len: {:?} \
+                                   projection matrix is set: {} \
+                                   projection matrix original dims: {} \
+                                   projection matrix reduced dims: {}",
+                                item.item.len(),
+                                aspace.projection_matrix.as_ref().is_some(),
+                                aspace.projection_matrix.as_ref().unwrap().original_dim,
+                                aspace.projection_matrix.as_ref().unwrap().reduced_dim
+                            )
+                        };
+
+                        // 1) Compute item's synthetic lambda via taumode
+                        let item_lambda = aspace.prepare_query_item(&projected_item, &gl_energy);
+
+                        // 2) Find nearest subcentroid by linear synthetic distance in lambda-space
+                        //    distance := |lambda_item - lambda_subcentroid|
+                        let mut best_idx = 0usize;
+                        let mut best_dist = f64::INFINITY;
+
+                        for sc_idx in 0..sub_centroids.shape().0 {
+                            let sc_lambda = subcentroid_space.lambdas[sc_idx];
+                            let lambda_dist = (item_lambda - sc_lambda).abs();
+                            if lambda_dist < best_dist {
+                                best_dist = lambda_dist;
+                                best_idx = sc_idx;
+                            }
+                        }
+
+                        // 3) Tie-break with cosine on projected space if multiple subcentroids tie within epsilon
+                        //    Collect all candidates at the same minimal lambda distance within epsilon
+                        let mut candidates: Vec<usize> = Vec::new();
+                        for sc_idx in 0..sub_centroids.shape().0 {
+                            let sc_lambda = subcentroid_space.lambdas[sc_idx];
+                            let lambda_dist = (item_lambda - sc_lambda).abs();
+                            if (lambda_dist - best_dist).abs() < epsilon {
+                                candidates.push(sc_idx);
+                            }
+                        }
+
+                        if candidates.len() > 1 {
+                            let item_norm_proj: f64 =
+                                projected_item.iter().map(|x| x * x).sum::<f64>().sqrt();
+                            // fallback to zero-safe cosine
+                            let mut best_cos = f64::NEG_INFINITY;
+                            let mut best_sc = best_idx;
+
+                            for sc_idx in candidates {
+                                // read centroid row into a temporary slice or iterator
+                                let mut dot = 0.0f64;
+                                let mut cent_norm_sq = 0.0f64;
+                                for (a, b) in projected_item
+                                    .iter()
+                                    .zip(sub_centroids.get_row(sc_idx).iterator(0))
+                                {
+                                    dot += a * b;
+                                    cent_norm_sq += b * b;
+                                }
+                                let cent_norm = cent_norm_sq.sqrt();
+                                let cosine = if item_norm_proj > 0.0 && cent_norm > 0.0 {
+                                    dot / (item_norm_proj * cent_norm)
+                                } else {
+                                    0.0
+                                };
+
+                                if cosine > best_cos {
+                                    best_cos = cosine;
+                                    best_sc = sc_idx;
+                                }
+                            }
+
+                            best_idx = best_sc;
+                        }
+
+                        // 4) Compute norm on ORIGINAL item for cosine metadata consumers
+                        let norm: f64 = item.item.iter().map(|x| x * x).sum::<f64>().sqrt();
+
+                        // Return the chosen centroid index, store that centroid's lambda, and the item norm
+                        (best_idx, subcentroid_space.lambdas[best_idx], norm)
+                    })
+                    .collect();
+
+                // Unzip results into separate vectors (unchanged)
+                let (centroid_map, item_lambdas, item_norms): (Vec<_>, Vec<_>, Vec<_>) = {
+                    let mut cmap = Vec::with_capacity(results.len());
+                    let mut lambdas = Vec::with_capacity(results.len());
+                    let mut norms = Vec::with_capacity(results.len());
+
+                    for (cidx, lambda, norm) in results {
+                        cmap.push(cidx);
+                        lambdas.push(lambda);
+                        norms.push(norm);
+                    }
+
+                    (cmap, lambdas, norms)
+                };
+
+                // Store in aspace
+                aspace.centroid_map = Some(centroid_map);
+                aspace.lambdas = item_lambdas;
+                aspace.item_norms = Some(item_norms);
+
+                aspace.build_lambdas_sorted();
+
+                info!(
+                    "Item λ assigned: min={:.6}, max={:.6}, mean={:.6}",
+                    aspace.lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                    aspace.lambdas.iter().fold(0.0_f64, |a, &b| a.max(b)),
+                    aspace.lambdas.iter().sum::<f64>() / aspace.nitems as f64
+                );
+
+                debug!(
+                    "Item norms computed: min={:.6}, max={:.6}, mean={:.6}",
+                    aspace
+                        .item_norms
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .fold(f64::INFINITY, |a, &b| a.min(b)),
+                    aspace
+                        .item_norms
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .fold(0.0_f64, |a, &b| a.max(b)),
+                    aspace.item_norms.as_ref().unwrap().iter().sum::<f64>() / aspace.nitems as f64
+                );
+
+                (aspace, gl_energy)
+            }
+        }
     }
 }
 

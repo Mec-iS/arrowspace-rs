@@ -366,7 +366,7 @@ pub struct ArrowSpace {
     pub nfeatures: usize, // F: original dimensions
     pub nitems: usize,
     pub data: DenseMatrix<f64>,        // NxF raw data
-    pub signals: CsMat<f64>,           // Laplacian(Transpose(NxF))
+    pub signals: CsMat<f64>,           // Laplacian(Transpose(FfxFn))
     pub lambdas: Vec<f64>,             // N lambdas (every lambda is a lambda for an item-row)
     pub lambdas_sorted: SortedLambdas, // sorted by lambda ascending
     pub taumode: TauMode,              // tau_mode as in select_tau_mode
@@ -438,8 +438,7 @@ impl Default for ArrowSpace {
 }
 
 impl ArrowSpace {
-    /// Returns an empty space.
-    /// Only to be used in tests. `ArrowSpaceBuilder`
+    /// Returns an empty space from the initial data
     pub(crate) fn new(items: Vec<Vec<f64>>, taumode: TauMode) -> Self {
         assert!(!items.is_empty(), "items cannot be empty");
         assert!(
@@ -476,6 +475,53 @@ impl ArrowSpace {
             item_norms: None,
         }
     }
+
+    // drop stored in-memory data
+    // to be used after data has been persisted to file
+    pub fn drop_data(&mut self) {
+        info!("Freeing raw input memory, should have been persisted to file");
+        self.data = DenseMatrix::new(0, 0, vec![], true).unwrap();
+    }
+
+    /// Returns an empty space from the initial data
+    pub(crate) fn new_from_dense(items: DenseMatrix<f64>, taumode: TauMode) -> Self {
+        let n_items = items.shape().0; // Number of items (columns in final layout)
+        let n_features = items.shape().1; // Number of features (rows in final layout)
+        let empty = items.is_empty();
+        info!(r#"new_from_dense: {n_items}x{n_features} -> empty: {empty}"#);
+        assert!(
+            items.shape().0 > 1,
+            "cannot create a arrowspace of one arrow only"
+        );
+        Self {
+            nfeatures: n_features,
+            nitems: n_items,
+            data: items,
+            signals: sprs::CsMat::zero((0, 0)), // will be computed later
+            lambdas: vec![0.0; n_items],        // will be computed later
+            lambdas_sorted: SortedLambdas::new(),
+            // lambdas normalisation
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
+            taumode,
+            // Clustering defaults
+            n_clusters: 0,
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius: 0.0,
+            // projection
+            projection_matrix: None,
+            reduced_dim: None,
+            extra_reduced_dim: false,
+            // energymaps
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
+            item_norms: None,
+        }
+    }
+
     /// Builds from a vector of equally-sized rows and per-row lambdas.
     /// Only to be used in tests. Use `ArrowSpaceBuilder`
     #[inline]

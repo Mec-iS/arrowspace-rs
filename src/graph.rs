@@ -222,8 +222,9 @@ impl GraphFactory {
         // Convert sparse matrix to dense for signals storage
         trace!("Building feature-to-feature Laplacian matrix");
 
+        let trsp = &graph_laplacian.matrix.clone().transpose_into();
         aspace.signals = build_laplacian_matrix(
-            sparse_to_dense(&graph_laplacian.matrix).transpose(),
+            sparse_to_dense(trsp),
             &graph_laplacian.graph_params,
             Some(aspace.nitems),
             false,
@@ -590,7 +591,7 @@ impl GraphLaplacian {
 
     pub fn extract_adjacency(&self) -> CsMat<f64> {
         info!("Extracting adjacency matrix from Laplacian");
-        let mut triplets = sprs::TriMat::new((self.nnodes, self.nnodes));
+        let mut triplets = sprs::TriMat::new((self.matrix.rows(), self.matrix.cols()));
 
         for (i, row) in self.matrix.outer_iterator().enumerate() {
             for (j, &value) in row.iter() {
