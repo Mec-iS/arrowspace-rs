@@ -35,9 +35,9 @@ impl FromStr for Pipeline {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Eigen" => Ok(Pipeline::Eigen),
-            "Energy" => Ok(Pipeline::Energy),
-            "Default" => Ok(Pipeline::Default),
+            "eigen" => Ok(Pipeline::Eigen),
+            "energy" => Ok(Pipeline::Energy),
+            "default" => Ok(Pipeline::Default),
             _ => Err(()),
         }
     }
