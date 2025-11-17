@@ -218,18 +218,32 @@ impl CentroidHierarchy {
 
 /// Build root item indices for the root centroid level from ArrowSpace.
 ///
-/// Assumes `aspace.centroid_map` maps each item index j to a centroid index
-/// in [0, n_root). Returns a vector of length n_root where each entry is the
-/// list of item indices assigned to that centroid.
+/// Prefers `aspace.centroid_map` if populated; otherwise falls back to
+/// `aspace.cluster_assignments` (which may contain `None` for unassigned items).
+/// Returns a vector of length `n_root` where each entry is the list of item
+/// indices assigned to that centroid.
 fn build_root_indices_from_centroid_map(aspace: &ArrowSpace, n_root: usize) -> Vec<Vec<usize>> {
     let mut root_indices: Vec<Vec<usize>> = vec![Vec::new(); n_root];
 
+    // Prefer centroid_map (definitive cluster ID per item).
     if let Some(cmap) = &aspace.centroid_map {
         for (item_idx, &cid) in cmap.iter().enumerate() {
             if cid < n_root {
                 root_indices[cid].push(item_idx);
             }
         }
+    } else if !aspace.cluster_assignments.is_empty() {
+        // Fallback: cluster_assignments (Vec<Option<usize>>).
+        for (item_idx, &assignment) in aspace.cluster_assignments.iter().enumerate() {
+            if let Some(cid) = assignment {
+                if cid < n_root {
+                    root_indices[cid].push(item_idx);
+                }
+            }
+            // Ignore items with assignment == None (outliers / unassigned).
+        }
+    } else {
+        panic!("centroid_map or cluster_assignments should be set at this point");
     }
 
     root_indices

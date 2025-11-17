@@ -755,3 +755,89 @@ pub fn make_gaussian_cliques(
     }
     rows
 }
+
+/// Generate multiple Gaussian cliques with clear separation for motif detection.
+///
+/// # Parameters
+/// - `n_points`: total number of points
+/// - `noise`: intra-cluster Gaussian noise (lower = tighter clusters)
+/// - `n_cliques`: number of distinct cliques/clusters
+/// - `dims`: feature dimension
+/// - `seed`: RNG seed
+///
+/// Returns a dataset with `n_cliques` well-separated clusters, suitable for
+/// motif-based subgraph extraction.
+pub fn make_gaussian_cliques_multi(
+    n_points: usize,
+    noise: f64,
+    n_cliques: usize,
+    dims: usize,
+    seed: u64,
+) -> Vec<Vec<f64>> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut rows = Vec::with_capacity(n_points);
+
+    // Add some outliers (5% of data) to make it realistic.
+    let n_outliers = (n_points as f64 * 0.05).round() as usize;
+    let n_cluster_points = n_points - n_outliers;
+
+    // Distribute points evenly across cliques, with remainder in first clique.
+    let base = n_cluster_points / n_cliques;
+    let rem = n_cluster_points % n_cliques;
+
+    // Generate clique centers in a grid layout for maximum separation.
+    let grid_size = (n_cliques as f64).sqrt().ceil() as usize;
+    let spacing = 20.0; // large spacing between cliques
+
+    let mut clique_centers = Vec::new();
+    for i in 0..n_cliques {
+        let mut center = vec![0.0; dims];
+        let grid_x = (i % grid_size) as f64;
+        let grid_y = (i / grid_size) as f64;
+        // Place clique centers along first two dimensions, rest at 0.
+        center[0] = grid_x * spacing;
+        if dims > 1 {
+            center[1] = grid_y * spacing;
+        }
+        clique_centers.push(center);
+    }
+
+    // Generate points for each clique.
+    for (clique_idx, center) in clique_centers.iter().enumerate() {
+        let n_for_clique = base + if clique_idx < rem { 1 } else { 0 };
+
+        for _ in 0..n_for_clique {
+            let mut point = Vec::with_capacity(dims);
+            for &c in center {
+                let normal = Normal::new(c, noise).unwrap();
+                point.push(normal.sample(&mut rng));
+            }
+            rows.push(point);
+        }
+    }
+
+    // Generate outliers uniformly across the space.
+    let outlier_dist = Uniform::new(-10.0, (grid_size as f64) * spacing + 10.0).unwrap();
+    for _ in 0..n_outliers {
+        let mut point = Vec::with_capacity(dims);
+        for _ in 0..dims {
+            point.push(outlier_dist.sample(&mut rng));
+        }
+        rows.push(point);
+    }
+
+    // Ensure exact count.
+    if rows.len() > n_points {
+        rows.truncate(n_points);
+    }
+    while rows.len() < n_points {
+        let mut point = Vec::with_capacity(dims);
+        for _ in 0..dims {
+            point.push(outlier_dist.sample(&mut rng));
+        }
+        rows.push(point);
+    }
+
+    rows.shuffle(&mut rng);
+    rows
+}

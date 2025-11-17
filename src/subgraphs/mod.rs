@@ -53,11 +53,11 @@ pub trait Subgraphs {
     ///
     /// This wraps `spotmotiveseigen` and materializes each motif as a `Subgraph`
     /// with a local Laplacian and optional spectral metadata.
-    fn spot_subgraphs_eigen(&self, cfg: SubgraphConfig) -> Vec<Subgraph>;
+    fn spot_subgraphs_eigen(&self, cfg: &SubgraphConfig) -> Vec<Subgraph>;
 
     /// Spot subgraphs using energy-mode motif detection with item mapping.
     ///
     /// This wraps `spotmotivesenergy`, operating on subcentroids and mapping
     /// back to original item indices via `ArrowSpace.centroid_map`.
-    fn spot_subgraphs_energy(&self, aspace: &ArrowSpace, cfg: SubgraphConfig) -> Vec<Subgraph>;
+    fn spot_subgraphs_energy(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph>;
 }
