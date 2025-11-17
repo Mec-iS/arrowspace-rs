@@ -411,16 +411,16 @@ fn test_energy_vs_standard_search_overlap() {
     crate::init();
     info!("Test: energy-only vs standard search overlap");
 
-    let rows = test_data::make_gaussian_hd(100, 0.6);
+    let rows = test_data::make_gaussian_cliques_multi(100, 0.3, 5, 5, 42);
     let k = 10;
     let query = rows[5].clone();
 
     // Standard cosine-based pipeline
     let builder_std = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(12345)
         .with_inline_sampling(None)
-        .with_dims_reduction(true, Some(0.3))
+        .with_dims_reduction(true, Some(1.0))
         .with_synthesis(TauMode::Median);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
 
@@ -432,9 +432,11 @@ fn test_energy_vs_standard_search_overlap() {
 
     // Energy-only pipeline
     let mut builder_energy = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(12345)
-        .with_dims_reduction(true, Some(0.3))
-        .with_inline_sampling(None);
+        .with_inline_sampling(None)
+        .with_dims_reduction(true, Some(1.0))
+        .with_synthesis(TauMode::Median);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
@@ -646,7 +648,7 @@ fn test_energy_vs_standard_recall_at_k() {
     crate::init();
     info!("Test: energy vs standard recall@k");
 
-    let rows = test_data::make_gaussian_hd(80, 0.3);
+    let rows = test_data::make_gaussian_cliques_multi(250, 0.3, 5, 5, 42);
     let query = rows[0].clone();
     let k = 20;
 
@@ -654,7 +656,7 @@ fn test_energy_vs_standard_recall_at_k() {
     let builder_std = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.8))
+        .with_dims_reduction(true, Some(1.0))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -672,7 +674,7 @@ fn test_energy_vs_standard_recall_at_k() {
     let mut builder_energy = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.8))
+        .with_dims_reduction(true, Some(1.0))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
@@ -714,6 +716,9 @@ fn test_energy_vs_standard_recall_at_k() {
 #[test]
 fn test_energy_vs_standard_build_time() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
     info!("Test: energy vs standard build time comparison");
 
     let rows = test_data::make_moons_hd(100, 0.3, 0.08, 99, 42);
