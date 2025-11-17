@@ -6,7 +6,7 @@
 //! - `laplacian.nnodes`: N_l, number of nodes (centroids) at this level.
 //! - `root_indices[c]`: original item indices summarized by node c.
 
-use log::{debug, info};
+use log::info;
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 

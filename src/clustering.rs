@@ -24,7 +24,6 @@ use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
-use crate::core::ArrowSpace;
 use crate::sampling::InlineSampler;
 
 /// Fixed seed for deterministic clustering

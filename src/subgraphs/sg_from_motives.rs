@@ -9,7 +9,7 @@
 //! For every motif subgraph `sg`:
 //! 1. `sg.node_indices` are **centroid** indices in the parent's `init_data` (F × X_centroids).
 //! 2. `sg.item_indices` are the original **item** indices from the motif in item space.
-//! 3. `sg.laplacian.init_data` is F × X_motif s(centroids for this motif).
+//! 3. `sg.laplacian.init_data` is F × X_motif (centroids for this motif).
 //! 4. `sg.laplacian.matrix` is F × F (feature Laplacian for this motif).
 //! 5. `sg.laplacian.nnodes` is X_motif (number of centroids in this motif).
 //!
@@ -19,16 +19,17 @@
 //! on the subcentroid graph (a coarser, cheaper graph than the full item graph).
 
 use log::{debug, info};
+use rayon::prelude::*;
 use smartcore::linalg::basic::{
     arrays::{Array, Array2},
     matrix::DenseMatrix,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
-use crate::motives::{MotiveConfig, Motives};
+use crate::motives::Motives;
 use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 
 impl Subgraph {
@@ -147,8 +148,9 @@ impl SubgraphsMotive for GraphLaplacian {
 
         let (_f_parent, n_centroids) = self.init_data.shape();
 
+        // Parallelize motif processing with rayon
         let mut subgraphs: Vec<Subgraph> = item_motifs
-            .into_iter()
+            .into_par_iter()
             .filter(|items| items.len() >= cfg.min_size)
             .filter_map(|item_nodes| {
                 // Map items → centroids.
@@ -166,11 +168,12 @@ impl SubgraphsMotive for GraphLaplacian {
 
                 // Skip motifs that collapse to 0 or 1 centroid.
                 if centroid_set.len() < 2 {
-                    panic!(
+                    debug!(
                         "Skipping motif with {} items → {} centroids (need >= 2 for graph)",
                         item_nodes.len(),
                         centroid_set.len()
                     );
+                    return None;
                 }
 
                 let mut centroid_nodes: Vec<usize> = centroid_set.into_iter().collect();
