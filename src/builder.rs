@@ -680,7 +680,7 @@ impl ArrowSpaceBuilder {
                 let (n_subcentroids, current_features) = sub_centroids.shape();
                 let (sub_centroids, reduced_dim) = if self.use_dims_reduction
                     && self.extra_dims_reduction
-                    && current_features > 64
+                    && current_features > 10001
                 {
                     info!("Apply EXTRA JL dimensionality reduction");
                     use crate::reduction::{

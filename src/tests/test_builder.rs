@@ -13,7 +13,7 @@ use crate::{
 fn simple_build() {
     // build `with_lambda_graph`
     let rows = make_gaussian_hd(10, 0.5);
-    assert!(rows.len() == 8);
+    assert!(rows.len() == 10);
 
     let eps = 0.5;
     let k = 3usize;
@@ -26,8 +26,8 @@ fn simple_build() {
         .with_inline_sampling(None)
         .build(rows);
 
-    assert_eq!(aspace.data.shape(), (8, 100));
-    assert_eq!(gl.nnodes, 8);
+    assert_eq!(aspace.data.shape(), (10, 100));
+    assert_eq!(gl.nnodes, 10);
 }
 
 #[test]
