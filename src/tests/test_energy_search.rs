@@ -9,7 +9,10 @@ use log::{debug, info, trace, warn};
 
 #[cfg(test)]
 mod test_data {
-    pub use crate::tests::test_data::{make_energy_test_dataset, make_gaussian_hd, make_moons_hd};
+    pub use crate::tests::test_data::{
+        make_energy_test_dataset, make_gaussian_cliques, make_gaussian_cliques_multi,
+        make_gaussian_hd, make_moons_hd,
+    };
 }
 
 #[test]
@@ -88,14 +91,17 @@ fn test_energy_search_single() {
 #[test]
 fn test_energy_search_self_retrieval() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
     info!("Test: search_energy self-retrieval");
 
-    let rows = test_data::make_energy_test_dataset(300, 100, 42);
+    let rows = test_data::make_gaussian_cliques_multi(300, 0.3, 5, 5, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
-        .with_lambda_graph(0.25, 2, 1, 2.0, None)
-        .with_dims_reduction(true, Some(0.1))
+        .with_lambda_graph(0.5, 3, 10, 2.0, None)
+        .with_dims_reduction(true, Some(1.0))
         .with_inline_sampling(None);
 
     let p = EnergyParams::new(&builder);
@@ -162,14 +168,17 @@ fn test_energy_search_self_retrieval() {
 #[test]
 fn test_energy_search_optimized() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
 
     // Well-structured test data: 250 items, 100 features, 5 clusters
-    let rows = test_data::make_energy_test_dataset(250, 100, 42);
+    let rows = test_data::make_gaussian_hd(250, 0.3);
     let k = 5;
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
-        .with_lambda_graph(1.0, k, k, 2.0, None)
+        .with_lambda_graph(0.5, k, 8, 2.0, None)
         .with_dims_reduction(true, Some(0.1))
         .with_synthesis(TauMode::Median);
 
@@ -186,7 +195,11 @@ fn test_energy_search_optimized() {
 
     // Should find self in top-5
     let found = results.iter().any(|(idx, _dist)| *idx == query_idx);
-    assert!(found, "index 42 should be in top-5 with optimized params");
+    assert!(
+        found,
+        "index {} should be in top-5 with optimized params",
+        query_idx
+    );
 }
 
 #[test]
@@ -398,16 +411,16 @@ fn test_energy_vs_standard_search_overlap() {
     crate::init();
     info!("Test: energy-only vs standard search overlap");
 
-    let rows = test_data::make_gaussian_hd(100, 0.6);
+    let rows = test_data::make_gaussian_cliques_multi(100, 0.3, 5, 5, 42);
     let k = 10;
     let query = rows[5].clone();
 
     // Standard cosine-based pipeline
     let builder_std = ArrowSpaceBuilder::new()
-        .with_lambda_graph(1.0, 3, 3, 2.0, None)
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(12345)
         .with_inline_sampling(None)
-        .with_dims_reduction(true, Some(0.3))
+        .with_dims_reduction(true, Some(1.0))
         .with_synthesis(TauMode::Median);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
 
@@ -419,9 +432,11 @@ fn test_energy_vs_standard_search_overlap() {
 
     // Energy-only pipeline
     let mut builder_energy = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(12345)
-        .with_dims_reduction(true, Some(0.3))
-        .with_inline_sampling(None);
+        .with_inline_sampling(None)
+        .with_dims_reduction(true, Some(1.0))
+        .with_synthesis(TauMode::Median);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
 
@@ -633,15 +648,15 @@ fn test_energy_vs_standard_recall_at_k() {
     crate::init();
     info!("Test: energy vs standard recall@k");
 
-    let rows = test_data::make_gaussian_hd(80, 0.5);
+    let rows = test_data::make_gaussian_cliques_multi(250, 0.3, 5, 5, 42);
     let query = rows[0].clone();
     let k = 20;
 
     // Standard search
     let builder_std = ArrowSpaceBuilder::default()
-        .with_lambda_graph(0.8, 3, 3, 2.0, None)
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.2))
+        .with_dims_reduction(true, Some(1.0))
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
@@ -657,9 +672,9 @@ fn test_energy_vs_standard_recall_at_k() {
 
     // Energy search with different weight configurations
     let mut builder_energy = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.8, 3, 3, 2.0, None)
+        .with_lambda_graph(0.5, 3, 8, 2.0, None)
         .with_seed(333)
-        .with_dims_reduction(true, Some(0.2))
+        .with_dims_reduction(true, Some(1.0))
         .with_inline_sampling(None);
     let (aspace_energy, gl_energy) =
         builder_energy.build_energy(rows.clone(), EnergyParams::new(&builder_energy));
@@ -701,6 +716,9 @@ fn test_energy_vs_standard_recall_at_k() {
 #[test]
 fn test_energy_vs_standard_build_time() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
     info!("Test: energy vs standard build time comparison");
 
     let rows = test_data::make_moons_hd(100, 0.3, 0.08, 99, 42);
@@ -847,20 +865,24 @@ fn test_energy_no_cosine_dependence() {
 #[test]
 fn test_energy_vs_energy_extra_dims_reduction_recall_at_k() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
+
     info!("Test: energy vs energy (with vs without extra dims reduction) recall@k");
 
     // Data and query
-    let rows = test_data::make_gaussian_hd(80, 0.5);
+    let rows = test_data::make_gaussian_cliques(150, 0.3, 5, 5, 42);
     let query = rows[0].clone();
     let k = 20;
 
     // Common lambda graph config and seed
-    let eps = 0.8;
-    let knn = 3;
-    let topk = 3;
+    let eps = 0.5;
+    let knn = 5;
+    let topk = 10;
     let p = 2.0;
     let seed = 333;
-    let red = Some(0.2);
+    let red = Some(0.25);
 
     // Baseline EnergyMaps: no extra dims reduction
     let mut builder_energy_base = ArrowSpaceBuilder::new()

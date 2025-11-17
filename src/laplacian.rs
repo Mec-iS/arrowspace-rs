@@ -42,7 +42,7 @@ use log::{debug, info, trace};
 use rayon::prelude::*;
 use sprs::{CsMat, TriMat};
 
-/// Builds a graph Laplacian matrix from a collection of high-dimensional vectors
+/// Builds a Feature-space graph Laplacian (L_FxF) matrix from a collection of high-dimensional vectors
 ///
 /// This function constructs a k-nearest neighbor graph based on cosine similarity between items,
 /// then converts it to a symmetric Laplacian matrix suitable for spectral analysis. The resulting

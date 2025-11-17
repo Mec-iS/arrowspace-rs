@@ -22,13 +22,13 @@ pub mod reduction;
 pub mod sampling;
 pub mod sorted_index;
 pub mod sparsification;
+pub mod subgraphs;
 pub mod taumode;
 
 #[cfg(feature = "storage")]
 pub mod storage;
 
 #[cfg(test)]
-#[cfg(not(feature = "storage"))]
 mod tests;
 
 use std::sync::Once;

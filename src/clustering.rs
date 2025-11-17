@@ -16,8 +16,8 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, trace, warn};
-use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
 use smartcore::linalg::basic::arrays::Array2;
@@ -302,11 +302,7 @@ pub trait ClusteringHeuristic {
         }
 
         debug!("Best K={} with penalized score={:.4}", best_k, best_score);
-        if best_k < k_max {
-            best_k
-        } else {
-            k_max
-        }
+        if best_k < k_max { best_k } else { k_max }
     }
 
     /// Calinski-Harabasz index (parallelized).
@@ -590,9 +586,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             let (idx, dist) = nearest_centroid(row, &cent_snap);
             trace!(
                 "Row {}: Snapshot nearest - idx={}, dist²={:.6}",
-                row_idx,
-                idx,
-                dist
+                row_idx, idx, dist
             );
             (idx, dist)
         };
@@ -672,8 +666,14 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         if c.len() < max_clusters && snap_best_dist_sq > (radius * 0.5) {
             // avoid overfitting the radius and falling into a single-cluster
             // CREATE NEW CLUSTER
-            trace!("Row {}: CONDITION MET for new cluster: len({}) < max({}) AND dist²({:.6}) > radius²({:.6})",
-                    row_idx, c.len(), max_clusters, snap_best_dist_sq, radius);
+            trace!(
+                "Row {}: CONDITION MET for new cluster: len({}) < max({}) AND dist²({:.6}) > radius²({:.6})",
+                row_idx,
+                c.len(),
+                max_clusters,
+                snap_best_dist_sq,
+                radius
+            );
 
             let new_idx = c.len();
 
@@ -712,16 +712,16 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             // ASSIGN TO EXISTING CLUSTER
             trace!(
                 "Row {}: ASSIGNING to existing cluster (dist²={:.6} <= radius²={:.6})",
-                row_idx,
-                snap_best_dist_sq,
-                radius
+                row_idx, snap_best_dist_sq, radius
             );
 
             // Recompute with current centroids for assignment
             let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
 
-            trace!("Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
-                    row_idx, best_idx, current_dist_sq, snap_best_dist_sq);
+            trace!(
+                "Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
+                row_idx, best_idx, current_dist_sq, snap_best_dist_sq
+            );
 
             // Assert: best_idx should be valid
             #[cfg(test)]
@@ -752,9 +752,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
 
             trace!(
                 "Row {}: Assigned to cluster {}, count now={}",
-                row_idx,
-                best_idx,
-                k[best_idx]
+                row_idx, best_idx, k[best_idx]
             );
         } else {
             // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
@@ -859,9 +857,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
     let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
         trace!(
             "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
-            flat,
-            x_out,
-            nfeatures
+            flat, x_out, nfeatures
         );
         let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
         dm

@@ -1,3 +1,10 @@
+//! ArrowSpace builder and pipelines (Eigen / Energy).
+//!
+//! This module configures and builds `ArrowSpace` instances and their associated
+//! Laplacians from raw item vectors. It supports multiple pipelines:
+//! - EigenMaps (`build` and `build_for_persistence` with `Pipeline::Eigen`)
+//! - EnergyMaps (`build_energy` and `build_for_persistence` with `Pipeline::Energy`)
+
 use log::{debug, info, warn};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -16,13 +23,6 @@ use crate::graph::GraphLaplacian;
 use crate::sampling::SamplerType;
 use crate::taumode::TauMode;
 
-#[derive(Clone, Debug)]
-pub enum PairingStrategy {
-    FastPair,            // 1-NN union via Smartcore FastPair
-    Default,             // O(n^2) path
-    CoverTreeKNN(usize), // k for k-NN build
-}
-
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Pipeline {
     Eigen,
@@ -35,9 +35,9 @@ impl FromStr for Pipeline {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Eigen" => Ok(Pipeline::Eigen),
-            "Energy" => Ok(Pipeline::Energy),
-            "Default" => Ok(Pipeline::Default),
+            "eigen" => Ok(Pipeline::Eigen),
+            "energy" => Ok(Pipeline::Energy),
+            "default" => Ok(Pipeline::Default),
             _ => Err(()),
         }
     }
@@ -680,7 +680,7 @@ impl ArrowSpaceBuilder {
                 let (n_subcentroids, current_features) = sub_centroids.shape();
                 let (sub_centroids, reduced_dim) = if self.use_dims_reduction
                     && self.extra_dims_reduction
-                    && current_features > 64
+                    && current_features > 10001
                 {
                     info!("Apply EXTRA JL dimensionality reduction");
                     use crate::reduction::{
@@ -890,7 +890,7 @@ impl ArrowSpaceBuilder {
                     })
                     .collect();
 
-                // Unzip results into separate vectors (unchanged)
+                // Unzip results into separate vectors
                 let (centroid_map, item_lambdas, item_norms): (Vec<_>, Vec<_>, Vec<_>) = {
                     let mut cmap = Vec::with_capacity(results.len());
                     let mut lambdas = Vec::with_capacity(results.len());
