@@ -29,7 +29,7 @@ use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::motives::{MotiveConfig, Motives};
-use crate::subgraphs::{Subgraph, SubgraphConfig, Subgraphs};
+use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 
 impl Subgraph {
     /// Build a motif subgraph with centroid matrix and feature Laplacian.
@@ -116,13 +116,8 @@ impl Subgraph {
     }
 }
 
-impl Subgraphs for GraphLaplacian {
-    fn spot_subgraphs_eigen(&self, _cfg: &SubgraphConfig) -> Vec<Subgraph> {
-        // Eigen mode is not supported for motif-based subgraphs; use energy mode or compute from centroids.
-        panic!("spot_subgraphs_eigen is not supported; use spot_subgraphs_energy instead");
-    }
-
-    fn spot_subgraphs_energy(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph> {
+impl SubgraphsMotive for GraphLaplacian {
+    fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph> {
         info!(
             "Spotting energy subgraphs: topl={}, mintri={}, minsize={}",
             cfg.motives.top_l, cfg.motives.min_triangles, cfg.min_size

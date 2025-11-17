@@ -48,16 +48,76 @@ pub struct Subgraph {
 }
 
 /// Trait for extracting subgraphs from a graph Laplacian.
-pub trait Subgraphs {
-    /// Spot subgraphs using eigen-mode motif detection.
-    ///
-    /// This wraps `spotmotiveseigen` and materializes each motif as a `Subgraph`
-    /// with a local Laplacian and optional spectral metadata.
-    fn spot_subgraphs_eigen(&self, cfg: &SubgraphConfig) -> Vec<Subgraph>;
-
+pub trait SubgraphsMotive {
     /// Spot subgraphs using energy-mode motif detection with item mapping.
     ///
     /// This wraps `spotmotivesenergy`, operating on subcentroids and mapping
     /// back to original item indices via `ArrowSpace.centroid_map`.
-    fn spot_subgraphs_energy(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph>;
+    fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph>;
+}
+
+/// Trait extension for centroid-based subgraph extraction.
+pub trait SubgraphsCentroid {
+    /// Extract all centroid subgraphs across hierarchy levels.
+    ///
+    /// Returns a flat list of subgraphs from all levels of the centroid hierarchy.
+    fn spot_subg_centroids(
+        &self,
+        aspace: &ArrowSpace,
+        params: &CentroidGraphParams,
+    ) -> Vec<Subgraph>;
+
+    /// Build the full centroid hierarchy for advanced use.
+    ///
+    /// Returns the complete hierarchy tree, allowing level-by-level traversal
+    /// and parent-child relationships.
+    fn build_centroid_hierarchy(
+        &self,
+        aspace: &ArrowSpace,
+        params: CentroidGraphParams,
+    ) -> CentroidHierarchy;
+}
+
+#[derive(Clone)]
+pub struct CentroidNode {
+    pub graph: Subgraph,
+    pub parent_map: Vec<usize>,
+    pub root_indices: Vec<Vec<usize>>,
+    pub children: Vec<CentroidNode>,
+}
+
+pub struct CentroidHierarchy {
+    pub root: CentroidNode,
+    pub levels: Vec<Vec<CentroidNode>>,
+}
+
+#[derive(Clone)]
+pub struct CentroidGraphParams {
+    pub eps: f64,
+    pub k: usize,
+    pub topk: usize,
+    pub p: f64,
+    pub sigma: Option<f64>,
+    pub normalise: bool,
+    pub sparsitycheck: bool,
+    pub seed: Option<u64>,
+    pub min_centroids: usize,
+    pub max_depth: usize,
+}
+
+impl Default for CentroidGraphParams {
+    fn default() -> Self {
+        Self {
+            eps: 0.5,
+            k: 16,
+            topk: 16,
+            p: 2.0,
+            sigma: None,
+            normalise: false,
+            sparsitycheck: false,
+            seed: None,
+            min_centroids: 8,
+            max_depth: 2,
+        }
+    }
 }

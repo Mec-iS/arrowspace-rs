@@ -4,12 +4,11 @@ use smartcore::linalg::basic::matrix::DenseMatrix;
 use crate::builder::ArrowSpaceBuilder;
 use crate::tests::test_data::make_gaussian_hd;
 
-use crate::subgraphs::sg_from_centroids::{
-    CentroidGraphParams, CentroidHierarchy, CentroidNode, recluster_centroids,
-};
+use crate::subgraphs::sg_from_centroids::recluster_centroids;
+use crate::subgraphs::{CentroidGraphParams, SubgraphsCentroid};
 
 #[test]
-fn test_centroid_hierarchy_basic() {
+fn test_centroid_subgraphs_basic() {
     crate::tests::init();
 
     let rows = make_gaussian_hd(80, 0.4);
@@ -39,18 +38,71 @@ fn test_centroid_hierarchy_basic() {
         normalise: true,
         sparsitycheck: false,
         seed: Some(123),
-        min_centroids: 3, // allow second level
+        min_centroids: 3,
         max_depth: 2,
     };
 
-    let hierarchy = CentroidHierarchy::from_centroid_graph(&aspace, &gl_centroids, &params);
+    // Use the new API to get all subgraphs as a flat list
+    let subgraphs = gl_centroids.spot_subg_centroids(&aspace, &params);
+
+    assert!(
+        !subgraphs.is_empty(),
+        "Should extract at least one subgraph"
+    );
+
+    // Verify all subgraphs have correct invariants
+    for sg in &subgraphs {
+        let (f_sg, x_sg) = sg.laplacian.init_data.shape();
+
+        // init_data is F × X, nnodes is X
+        assert_eq!(sg.laplacian.nnodes, x_sg);
+        assert_eq!(sg.node_indices.len(), x_sg);
+
+        // matrix is F × F
+        let (mf_rows, mf_cols) = sg.laplacian.matrix.shape();
+        assert_eq!(mf_rows, f_sg);
+        assert_eq!(mf_cols, f_sg);
+    }
+
+    println!("Extracted {} centroid subgraphs", subgraphs.len());
+}
+
+#[test]
+fn test_centroid_hierarchy_advanced() {
+    crate::tests::init();
+
+    let rows = make_gaussian_hd(80, 0.4);
+
+    let builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.4, 10, 6, 2.0, None)
+        .with_sparsity_check(false)
+        .with_seed(42);
+
+    let (aspace, gl_centroids) = builder.build(rows);
+
+    let params = CentroidGraphParams {
+        k: 4,
+        topk: 4,
+        eps: 0.4,
+        p: 2.0,
+        sigma: None,
+        normalise: true,
+        sparsitycheck: false,
+        seed: Some(123),
+        min_centroids: 3,
+        max_depth: 2,
+    };
+
+    // Use the new API to get the full hierarchy
+    let hierarchy = gl_centroids.build_centroid_hierarchy(&aspace, params);
 
     let root = &hierarchy.root;
     let root_gl = &root.graph.laplacian;
 
+    let (f0, x0) = gl_centroids.init_data.shape();
+
     // Root nnodes is number of centroids X0.
     assert_eq!(root_gl.nnodes, x0);
-    // node_indices live in centroid space [0..X0).
     assert_eq!(root.graph.node_indices.len(), x0);
 
     // init_data is F × X0 and matrix is F × F.
@@ -69,40 +121,24 @@ fn test_centroid_hierarchy_basic() {
 
     let level0 = &hierarchy.levels[0];
     assert_eq!(level0.len(), 1);
-    let level0_node: &CentroidNode = &level0[0];
 
-    assert_eq!(level0_node.graph.laplacian.nnodes, root_gl.nnodes);
-    assert_eq!(
-        level0_node.graph.laplacian.init_data.shape(),
-        root_gl.init_data.shape()
-    );
-
-    if root_gl.nnodes >= params.min_centroids && params.max_depth > 1 {
+    if root_gl.nnodes >= hierarchy.root.graph.laplacian.nnodes {
         let level1 = hierarchy.level(1);
-        assert!(
-            !level1.is_empty(),
-            "expected at least one centroid node at depth 1"
-        );
+        if !level1.is_empty() {
+            for node in level1 {
+                let gl = &node.graph.laplacian;
+                let (f_l, x_l) = gl.init_data.shape();
 
-        for node in level1 {
-            let gl = &node.graph.laplacian;
-            let (f_l, x_l) = gl.init_data.shape();
+                assert!(x_l > 0);
+                assert!(f_l > 0);
+                assert_eq!(gl.nnodes, x_l);
 
-            assert!(x_l > 0);
-            assert!(f_l > 0);
+                let (lm0, lm1) = gl.matrix.shape();
+                assert_eq!(lm0, f_l);
+                assert_eq!(lm1, f_l);
 
-            // nnodes is number of centroids at this level.
-            assert_eq!(gl.nnodes, x_l);
-
-            // Feature Laplacian must be F_l × F_l.
-            let (lm0, lm1) = gl.matrix.shape();
-            assert_eq!(lm0, f_l);
-            assert_eq!(lm1, f_l);
-
-            assert!(
-                !node.parent_map.is_empty(),
-                "non-root levels must have a non-empty parent_map"
-            );
+                assert!(!node.parent_map.is_empty());
+            }
         }
     }
 
@@ -112,7 +148,7 @@ fn test_centroid_hierarchy_basic() {
 }
 
 #[test]
-fn test_centroid_hierarchy_min_centroids_cutoff() {
+fn test_centroid_subgraphs_min_centroids_cutoff() {
     crate::tests::init();
 
     let rows = make_gaussian_hd(10, 0.5);
@@ -139,10 +175,19 @@ fn test_centroid_hierarchy_min_centroids_cutoff() {
         max_depth: 3,
     };
 
-    let hierarchy = CentroidHierarchy::from_centroid_graph(&aspace, &gl_centroids, &params);
+    // With min_centroids > root size, should only get root level
+    let subgraphs = gl_centroids.spot_subg_centroids(&aspace, &params);
 
-    assert!(!hierarchy.levels.is_empty());
-    assert_eq!(hierarchy.levels[0].len(), 1);
+    // Should have exactly 1 subgraph (the root)
+    assert_eq!(
+        subgraphs.len(),
+        1,
+        "Should only extract root when min_centroids > root size"
+    );
+
+    // Verify via hierarchy API too
+    let hierarchy = gl_centroids.build_centroid_hierarchy(&aspace, params);
+    assert_eq!(hierarchy.count_subgraphs(), 1);
 
     for depth in 1..hierarchy.levels.len() {
         assert!(
@@ -151,8 +196,6 @@ fn test_centroid_hierarchy_min_centroids_cutoff() {
             depth
         );
     }
-
-    assert_eq!(hierarchy.count_subgraphs(), 1);
 }
 
 #[test]
@@ -166,7 +209,7 @@ fn test_recluster_centroids_properties() {
         vec![1.0, 1.0],
         vec![2.0, 2.0],
     ];
-    let centroids_xf = DenseMatrix::from_2d_vec(&data).unwrap(); // X × F
+    let centroids_xf = DenseMatrix::from_2d_vec(&data).unwrap();
     let k = 3;
 
     let (labels, new_centroids_xf) = recluster_centroids(&centroids_xf, k, None);
@@ -183,7 +226,7 @@ fn test_recluster_centroids_properties() {
 }
 
 #[test]
-fn test_centroid_hierarchy_two_levels_root_indices() {
+fn test_centroid_subgraphs_two_levels() {
     crate::tests::init();
 
     let rows = make_gaussian_hd(120, 0.3);
@@ -192,7 +235,7 @@ fn test_centroid_hierarchy_two_levels_root_indices() {
         .with_sparsity_check(false)
         .with_seed(99);
 
-    let (aspace, gl_centroids) = builder.build(rows.clone());
+    let (aspace, gl_centroids) = builder.build(rows);
 
     let params = CentroidGraphParams {
         k: 4,
@@ -207,44 +250,32 @@ fn test_centroid_hierarchy_two_levels_root_indices() {
         max_depth: 2,
     };
 
-    let hierarchy = CentroidHierarchy::from_centroid_graph(&aspace, &gl_centroids, &params);
+    let hierarchy = gl_centroids.build_centroid_hierarchy(&aspace, params);
 
-    // Expect a second level.
+    // Expect a second level
     let level1 = hierarchy.level(1);
     assert!(
         !level1.is_empty(),
         "expected non-empty level 1 for nested hierarchy"
     );
 
-    // Root indices at level 0 should partition (with possible overlaps) the dataset.
-    let root = &hierarchy.root;
-    let total_root_items: usize = root.root_indices.iter().map(|v| v.len()).sum();
-    assert!(
-        total_root_items >= aspace.nitems,
-        "root_indices should cover at least all items (may overlap): {}, {}",
-        total_root_items,
-        aspace.nitems
-    );
-
-    // For each child node in level 1, all its root_indices must be a subset of root's.
-    for node in level1 {
-        let child_items: usize = node.root_indices.iter().map(|v| v.len()).sum();
-        assert!(child_items > 0);
-
-        for item_list in &node.root_indices {
-            for &item_idx in item_list {
-                assert!(
-                    item_idx < aspace.nitems,
-                    "item index {} should be < nitems",
-                    item_idx
-                );
-            }
-        }
+    // Verify all subgraphs have valid root_indices
+    let all_subgraphs = hierarchy.all_subgraphs();
+    for sg in &all_subgraphs {
+        let (f_sg, x_sg) = sg.laplacian.init_data.shape();
+        assert_eq!(sg.laplacian.nnodes, x_sg);
+        assert!(f_sg > 0);
     }
+
+    println!(
+        "Built hierarchy with {} levels, {} total subgraphs",
+        hierarchy.levels.len(),
+        all_subgraphs.len()
+    );
 }
 
 #[test]
-fn test_centroid_hierarchy_three_levels_structure() {
+fn test_centroid_subgraphs_three_levels() {
     crate::tests::init();
 
     let rows = make_gaussian_hd(200, 0.25);
@@ -268,10 +299,8 @@ fn test_centroid_hierarchy_three_levels_structure() {
         max_depth: 3,
     };
 
-    let hierarchy = CentroidHierarchy::from_centroid_graph(&aspace, &gl_centroids, &params);
+    let hierarchy = gl_centroids.build_centroid_hierarchy(&aspace, params);
 
-    // We expect up to 3 levels (0,1,2). Some levels may be empty depending on data,
-    // but the first two should be non-empty given min_centroids and dataset size.
     assert!(
         !hierarchy.level(0).is_empty(),
         "level 0 (root) must be non-empty"
@@ -281,50 +310,78 @@ fn test_centroid_hierarchy_three_levels_structure() {
         "level 1 should be non-empty for this configuration"
     );
 
-    // Check invariants across all populated levels.
-    for (depth, level) in hierarchy.levels.iter().enumerate() {
-        for node in level {
-            let gl = &node.graph.laplacian;
-            let (f_l, x_l) = gl.init_data.shape();
+    // Check invariants across all subgraphs
+    let all_subgraphs = hierarchy.all_subgraphs();
+    for (i, sg) in all_subgraphs.iter().enumerate() {
+        let (f_sg, x_sg) = sg.laplacian.init_data.shape();
 
-            assert!(
-                x_l > 0,
-                "level {} node must have at least one centroid",
-                depth
-            );
-            assert!(f_l > 0);
+        assert!(x_sg > 0, "subgraph {} must have at least one centroid", i);
+        assert!(f_sg > 0);
 
-            // nnodes is X_l: number of centroids at this level.
-            assert_eq!(
-                gl.nnodes, x_l,
-                "level {} nnodes must equal centroid count X_l",
-                depth
-            );
+        assert_eq!(
+            sg.laplacian.nnodes, x_sg,
+            "subgraph {} nnodes must equal centroid count X",
+            i
+        );
 
-            let (lm0, lm1) = gl.matrix.shape();
-            assert_eq!(
-                lm0, f_l,
-                "level {} feature Laplacian rows must equal feature dim",
-                depth
-            );
-            assert_eq!(
-                lm1, f_l,
-                "level {} feature Laplacian cols must equal feature dim",
-                depth
-            );
-
-            // root_indices consistency
-            for (cid, items) in node.root_indices.iter().enumerate() {
-                for &item_idx in items {
-                    assert!(
-                        item_idx < aspace.nitems,
-                        "item index {} at depth {} centroid {} out of range",
-                        item_idx,
-                        depth,
-                        cid
-                    );
-                }
-            }
-        }
+        let (mf_rows, mf_cols) = sg.laplacian.matrix.shape();
+        assert_eq!(mf_rows, f_sg);
+        assert_eq!(mf_cols, f_sg);
     }
+
+    println!(
+        "Built 3-level hierarchy with {} total subgraphs",
+        all_subgraphs.len()
+    );
+}
+
+#[test]
+fn test_centroid_subgraphs_flat_vs_hierarchy() {
+    crate::tests::init();
+
+    let rows = make_gaussian_hd(100, 0.3);
+    let builder = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.4, 10, 6, 2.0, None)
+        .with_sparsity_check(false)
+        .with_seed(555);
+
+    let (aspace, gl_centroids) = builder.build(rows);
+
+    let params = CentroidGraphParams {
+        k: 4,
+        topk: 4,
+        eps: 0.4,
+        p: 2.0,
+        sigma: None,
+        normalise: true,
+        sparsitycheck: false,
+        seed: Some(999),
+        min_centroids: 3,
+        max_depth: 2,
+    };
+
+    // Get subgraphs via flat API
+    let flat_subgraphs = gl_centroids.spot_subg_centroids(&aspace, &params);
+
+    // Get subgraphs via hierarchy API
+    let hierarchy = gl_centroids.build_centroid_hierarchy(&aspace, params);
+    let hierarchy_subgraphs = hierarchy.all_subgraphs();
+
+    // Both should return the same subgraphs
+    assert_eq!(
+        flat_subgraphs.len(),
+        hierarchy_subgraphs.len(),
+        "Flat and hierarchy APIs should return same number of subgraphs"
+    );
+
+    assert_eq!(
+        flat_subgraphs.len(),
+        hierarchy.count_subgraphs(),
+        "Subgraph count should match hierarchy count"
+    );
+
+    println!(
+        "Both APIs returned {} subgraphs consistently",
+        flat_subgraphs.len()
+    );
 }

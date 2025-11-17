@@ -1,37 +1,9 @@
 use crate::builder::ArrowSpaceBuilder;
 use crate::motives::MotiveConfig;
-use crate::subgraphs::{Subgraph, SubgraphConfig, Subgraphs};
+use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
 use smartcore::linalg::basic::arrays::Array;
-
-#[test]
-#[should_panic(expected = "spot_subgraphs_eigen is not supported")]
-fn test_spot_subgraphs_eigen_panics() {
-    crate::init();
-
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
-    let (aspace, gl) = ArrowSpaceBuilder::new()
-        .with_lambda_graph(0.4, 10, 6, 2.0, None)
-        .with_seed(999)
-        .build(rows);
-
-    let cfg = SubgraphConfig {
-        motives: MotiveConfig {
-            top_l: 16,
-            min_triangles: 3,
-            min_clust: 0.4,
-            max_motif_size: 25,
-            max_sets: 60,
-            jaccard_dedup: 0.6,
-        },
-        rayleigh_max: Some(0.3),
-        min_size: 5,
-    };
-
-    // This should panic as eigen mode is disabled.
-    let _ = gl.spot_subgraphs_eigen(&cfg);
-}
 
 #[test]
 fn test_subgraph_from_parent() {
@@ -111,7 +83,7 @@ fn test_spot_subgraphs_energy_basic() {
         min_size: 5,
     };
 
-    let subgraphs = gl.spot_subgraphs_energy(&aspace, &cfg);
+    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
         println!("No subgraphs extracted (may need different params)");
@@ -180,7 +152,7 @@ fn test_spot_subgraphs_energy_with_item_mapping() {
         min_size: 5,
     };
 
-    let subgraphs = gl.spot_subgraphs_energy(&aspace, &cfg);
+    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
         println!("No energy subgraphs extracted");
@@ -258,7 +230,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
         min_size: 6,
     };
 
-    let subgraphs = gl.spot_subgraphs_energy(&aspace, &cfg);
+    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.len() < 2 {
         println!(
@@ -335,7 +307,7 @@ fn test_subgraph_energy_rayleigh_filter() {
         min_size: 5,
     };
 
-    let subgraphs_strict = gl.spot_subgraphs_energy(&aspace, &cfg_strict);
+    let subgraphs_strict = gl.spot_subg_motives(&aspace, &cfg_strict);
 
     // Relaxed Rayleigh filter.
     let cfg_relaxed = SubgraphConfig {
@@ -343,7 +315,7 @@ fn test_subgraph_energy_rayleigh_filter() {
         ..cfg_strict
     };
 
-    let subgraphs_relaxed = gl.spot_subgraphs_energy(&aspace, &cfg_relaxed);
+    let subgraphs_relaxed = gl.spot_subg_motives(&aspace, &cfg_relaxed);
 
     // Relaxed filter should yield >= strict filter results.
     assert!(
@@ -362,7 +334,7 @@ fn test_subgraph_energy_rayleigh_filter() {
 fn test_subgraph_structure_clique_data() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 50, 999);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 14, 10, 2.0, None)
         .with_seed(999)
@@ -378,10 +350,10 @@ fn test_subgraph_structure_clique_data() {
             jaccard_dedup: 0.6,
         },
         rayleigh_max: None,
-        min_size: 8,
+        min_size: 8, // minimum ITEM count
     };
 
-    let subgraphs = gl.spot_subgraphs_energy(&aspace, &cfg);
+    let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
         println!("No subgraphs extracted with these strict parameters");
@@ -400,14 +372,23 @@ fn test_subgraph_structure_clique_data() {
             sg.item_indices.as_ref().map(|v| v.len()).unwrap_or(0)
         );
 
+        // Centroid count must be >= 2 for graph construction.
         assert!(
             x_centroids >= 2,
             "Subgraph {} must have at least 2 centroids for graph construction",
             i
         );
 
-        // Item count should generally be >= centroid count (many-to-one mapping).
+        // Item count should meet min_size threshold (enforced during filtering).
         if let Some(ref items) = sg.item_indices {
+            assert!(
+                items.len() >= cfg.min_size,
+                "Subgraph {} should have at least min_size items",
+                i
+            );
+
+            // With clique structure, item count is typically >> centroid count
+            // (many items per centroid).
             assert!(
                 items.len() >= x_centroids,
                 "Subgraph {} should have at least as many items as centroids",

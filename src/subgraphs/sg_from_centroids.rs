@@ -6,69 +6,76 @@
 //! - `laplacian.nnodes`: N_l, number of nodes (centroids) at this level.
 //! - `root_indices[c]`: original item indices summarized by node c.
 
+use log::{debug, info};
 use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::core::ArrowSpace;
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
-use crate::subgraphs::Subgraph;
+use crate::subgraphs::{
+    CentroidGraphParams, CentroidHierarchy, CentroidNode, Subgraph, SubgraphsCentroid,
+};
 
-#[derive(Clone)]
-pub struct CentroidGraphParams {
-    pub eps: f64,
-    pub k: usize,
-    pub topk: usize,
-    pub p: f64,
-    pub sigma: Option<f64>,
-    pub normalise: bool,
-    pub sparsitycheck: bool,
-    pub seed: Option<u64>,
-    pub min_centroids: usize,
-    pub max_depth: usize,
-}
+impl SubgraphsCentroid for GraphLaplacian {
+    fn spot_subg_centroids(
+        &self,
+        aspace: &ArrowSpace,
+        params: &CentroidGraphParams,
+    ) -> Vec<Subgraph> {
+        info!(
+            "Building centroid hierarchy: max_depth={}, min_centroids={}",
+            params.max_depth, params.min_centroids
+        );
 
-impl Default for CentroidGraphParams {
-    fn default() -> Self {
-        Self {
-            eps: 0.5,
-            k: 16,
-            topk: 16,
-            p: 2.0,
-            sigma: None,
-            normalise: false,
-            sparsitycheck: false,
-            seed: None,
-            min_centroids: 8,
-            max_depth: 2,
-        }
+        let hierarchy = CentroidHierarchy::from_centroid_graph(aspace, self, &params);
+
+        let subgraphs = hierarchy.all_subgraphs();
+
+        info!(
+            "Extracted {} centroid subgraphs across {} levels",
+            subgraphs.len(),
+            hierarchy.levels.len()
+        );
+
+        subgraphs
+    }
+
+    fn build_centroid_hierarchy(
+        &self,
+        aspace: &ArrowSpace,
+        params: CentroidGraphParams,
+    ) -> CentroidHierarchy {
+        info!(
+            "Building full centroid hierarchy: max_depth={}, min_centroids={}",
+            params.max_depth, params.min_centroids
+        );
+
+        let hierarchy = CentroidHierarchy::from_centroid_graph(aspace, self, &params);
+
+        info!(
+            "Built hierarchy with {} levels, {} total subgraphs",
+            hierarchy.levels.len(),
+            hierarchy.count_subgraphs()
+        );
+
+        hierarchy
     }
 }
 
-#[derive(Clone)]
-pub struct CentroidNode {
-    pub graph: Subgraph,
-    pub parent_map: Vec<usize>,
-    pub root_indices: Vec<Vec<usize>>,
-    pub children: Vec<CentroidNode>,
-}
-
-pub struct CentroidHierarchy {
-    pub root: CentroidNode,
-    pub levels: Vec<Vec<CentroidNode>>,
-}
-
 impl CentroidHierarchy {
+    /// Build a centroid hierarchy from an existing centroid Laplacian and ArrowSpace.
+    ///
+    /// This is the internal constructor; prefer `GraphLaplacian::build_centroid_hierarchy`
+    /// for the public API.
     pub fn from_centroid_graph(
         aspace: &ArrowSpace,
         gl_centroids: &GraphLaplacian,
         params: &CentroidGraphParams,
     ) -> Self {
-        // Level-0 centroid matrix is F × X_0 (features × centroids).
         let centroids_fx_x = gl_centroids.init_data.clone();
         let (f_dim, x0) = centroids_fx_x.shape();
 
-        // Root: centroid → items mapping from ArrowSpace.centroid_map.
         let root_indices = build_root_indices_from_centroid_map(aspace, x0);
 
         let graph_params = GraphParams {
@@ -81,7 +88,6 @@ impl CentroidHierarchy {
             sparsity_check: params.sparsitycheck,
         };
 
-        // init_data is already F × X_0, so pass it directly to build_laplacian_matrix.
         let feature_gl = build_laplacian_matrix(
             centroids_fx_x.clone(),
             &graph_params,
@@ -89,12 +95,10 @@ impl CentroidHierarchy {
             false,
         );
 
-        // Feature Laplacian F × F.
         let (lf_rows, lf_cols) = feature_gl.matrix.shape();
         debug_assert_eq!(lf_rows, f_dim);
         debug_assert_eq!(lf_cols, f_dim);
 
-        // Assemble GraphLaplacian: nnodes = X_0 (node count), init_data = F × X_0.
         let root_gl = GraphLaplacian {
             init_data: centroids_fx_x,
             matrix: feature_gl.matrix,
@@ -154,8 +158,6 @@ impl CentroidHierarchy {
         let (f_dim, x_curr2) = centroids_fx_x.shape();
         debug_assert_eq!(x_curr, x_curr2);
 
-        // Recluster centroids: we operate in node space, so we need X × F view.
-        // Convert F × X to X × F for reclustering.
         let centroids_xf = centroids_fx_x.transpose();
         let (labels, sub_centroids_xf) = recluster_centroids(&centroids_xf, params.k, params.seed);
 
@@ -165,12 +167,9 @@ impl CentroidHierarchy {
         }
         debug_assert_eq!(f_dim, f_dim2);
 
-        // Back to F × X_next layout for init_data.
         let sub_centroids_fx_x = sub_centroids_xf.transpose();
-
         let next_root_indices = propagate_root_indices(&node.root_indices, &labels, x_next);
 
-        // Recompute feature Laplacian F × F for this level.
         let feature_gl = build_laplacian_matrix(
             sub_centroids_fx_x.clone(),
             graph_params,
@@ -207,12 +206,22 @@ impl CentroidHierarchy {
         self.collect_levels(aspace, next_node, depth + 1, params, graph_params);
     }
 
+    /// Get all centroid nodes at a given depth (0 = root centroids).
     pub fn level(&self, depth: usize) -> &[CentroidNode] {
         self.levels.get(depth).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
+    /// Total number of centroid subgraphs in the hierarchy.
     pub fn count_subgraphs(&self) -> usize {
         self.levels.iter().map(|lvl| lvl.len()).sum()
+    }
+
+    /// Flatten the hierarchy into a list of all centroid subgraphs.
+    pub fn all_subgraphs(&self) -> Vec<Subgraph> {
+        self.levels
+            .iter()
+            .flat_map(|level| level.iter().map(|node| node.graph.clone()))
+            .collect()
     }
 }
 
