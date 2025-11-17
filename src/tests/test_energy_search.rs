@@ -10,7 +10,8 @@ use log::{debug, info, trace, warn};
 #[cfg(test)]
 mod test_data {
     pub use crate::tests::test_data::{
-        make_energy_test_dataset, make_gaussian_cliques, make_gaussian_hd, make_moons_hd,
+        make_energy_test_dataset, make_gaussian_cliques, make_gaussian_cliques_multi,
+        make_gaussian_hd, make_moons_hd,
     };
 }
 
@@ -90,9 +91,12 @@ fn test_energy_search_single() {
 #[test]
 fn test_energy_search_self_retrieval() {
     crate::init();
+    unsafe {
+        std::env::set_var("RAYON_NUM_THREADS", "1");
+    }
     info!("Test: search_energy self-retrieval");
 
-    let rows = test_data::make_gaussian_hd(300, 0.3);
+    let rows = test_data::make_gaussian_cliques_multi(300, 0.3, 5, 5, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
