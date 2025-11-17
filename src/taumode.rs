@@ -135,9 +135,7 @@ impl TauMode {
         info!("║   TauMode:         {:<40} ║", format!("{:?}", taumode));
 
         // Determine graph source, cannot use signals in the subcentroid space or when signals are off
-        let using_signals = aspace.signals.shape() != (0, 0)
-            && aspace.signals.rows() == gl.matrix.shape().0
-            && aspace.centroid_map.is_none();
+        let using_signals = aspace.signals.shape() != (0, 0);
         let graph = if using_signals {
             debug!("compute_taumode_lambdas_parallel: YES signals");
             &aspace.signals

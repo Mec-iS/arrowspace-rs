@@ -573,15 +573,28 @@ pub fn make_gaussian_blob(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
 
 pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(435);
-    let mut rows = Vec::new();
+    let mut rows = Vec::with_capacity(n_points);
 
     let n_outliers = (n_points as f64 * 0.15).round() as usize;
     let n_cluster_points = n_points - n_outliers;
-    let points_per_cluster = n_cluster_points / 3;
 
-    // Define cluster centers in 10D space
+    // Split cluster points across 3 clusters, distributing the remainder.
+    let base = n_cluster_points / 3;
+    let rem = n_cluster_points % 3;
+    let cluster_sizes = [
+        base + if rem > 0 { 1 } else { 0 },
+        base + if rem > 1 { 1 } else { 0 },
+        base,
+    ];
+    debug_assert_eq!(
+        cluster_sizes.iter().sum::<usize>(),
+        n_cluster_points,
+        "cluster size split must match n_cluster_points"
+    );
+
+    // Define cluster centers in 100D space
     let centers = vec![
-        vec![0.0; 100], // Cleaner than listing 10 zeros
+        vec![0.0; 100],
         {
             let mut c = vec![0.0; 100];
             c[0] = 10.0;
@@ -595,9 +608,10 @@ pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
     ];
 
     // Generate cluster points
-    for center in &centers {
-        for _ in 0..points_per_cluster {
-            let mut point = Vec::new();
+    for (cluster_idx, center) in centers.iter().enumerate() {
+        let n_for_cluster = cluster_sizes[cluster_idx];
+        for _ in 0..n_for_cluster {
+            let mut point = Vec::with_capacity(100);
             for &c in center {
                 let normal = Normal::new(c, noise).unwrap();
                 point.push(normal.sample(&mut rng));
@@ -609,7 +623,20 @@ pub fn make_gaussian_hd(n_points: usize, noise: f64) -> Vec<Vec<f64>> {
     // Generate outliers
     let outlier_dist = Uniform::new(-5.0, 15.0).unwrap();
     for _ in 0..n_outliers {
-        let mut point = Vec::new();
+        let mut point = Vec::with_capacity(100);
+        for _ in 0..100 {
+            point.push(outlier_dist.sample(&mut rng));
+        }
+        rows.push(point);
+    }
+
+    // If rounding made us overshoot (theoretically shouldn't), trim.
+    if rows.len() > n_points {
+        rows.truncate(n_points);
+    }
+    // If for any reason we're short, top up with random outliers.
+    while rows.len() < n_points {
+        let mut point = Vec::with_capacity(100);
         for _ in 0..100 {
             point.push(outlier_dist.sample(&mut rng));
         }

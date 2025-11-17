@@ -16,14 +16,15 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, trace, warn};
-use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use smartcore::cluster::kmeans::{KMeans, KMeansParameters};
 use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::core::ArrowSpace;
 use crate::sampling::InlineSampler;
 
 /// Fixed seed for deterministic clustering
@@ -302,11 +303,7 @@ pub trait ClusteringHeuristic {
         }
 
         debug!("Best K={} with penalized score={:.4}", best_k, best_score);
-        if best_k < k_max {
-            best_k
-        } else {
-            k_max
-        }
+        if best_k < k_max { best_k } else { k_max }
     }
 
     /// Calinski-Harabasz index (parallelized).
@@ -590,9 +587,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             let (idx, dist) = nearest_centroid(row, &cent_snap);
             trace!(
                 "Row {}: Snapshot nearest - idx={}, dist²={:.6}",
-                row_idx,
-                idx,
-                dist
+                row_idx, idx, dist
             );
             (idx, dist)
         };
@@ -672,8 +667,14 @@ pub(crate) fn run_incremental_clustering_with_sampling(
         if c.len() < max_clusters && snap_best_dist_sq > (radius * 0.5) {
             // avoid overfitting the radius and falling into a single-cluster
             // CREATE NEW CLUSTER
-            trace!("Row {}: CONDITION MET for new cluster: len({}) < max({}) AND dist²({:.6}) > radius²({:.6})",
-                    row_idx, c.len(), max_clusters, snap_best_dist_sq, radius);
+            trace!(
+                "Row {}: CONDITION MET for new cluster: len({}) < max({}) AND dist²({:.6}) > radius²({:.6})",
+                row_idx,
+                c.len(),
+                max_clusters,
+                snap_best_dist_sq,
+                radius
+            );
 
             let new_idx = c.len();
 
@@ -712,16 +713,16 @@ pub(crate) fn run_incremental_clustering_with_sampling(
             // ASSIGN TO EXISTING CLUSTER
             trace!(
                 "Row {}: ASSIGNING to existing cluster (dist²={:.6} <= radius²={:.6})",
-                row_idx,
-                snap_best_dist_sq,
-                radius
+                row_idx, snap_best_dist_sq, radius
             );
 
             // Recompute with current centroids for assignment
             let (best_idx, current_dist_sq) = nearest_centroid(row, &c);
 
-            trace!("Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
-                    row_idx, best_idx, current_dist_sq, snap_best_dist_sq);
+            trace!(
+                "Row {}: Recomputed nearest with current - idx={}, dist²={:.6} (was {:.6} in snapshot)",
+                row_idx, best_idx, current_dist_sq, snap_best_dist_sq
+            );
 
             // Assert: best_idx should be valid
             #[cfg(test)]
@@ -752,9 +753,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
 
             trace!(
                 "Row {}: Assigned to cluster {}, count now={}",
-                row_idx,
-                best_idx,
-                k[best_idx]
+                row_idx, best_idx, k[best_idx]
             );
         } else {
             // Soft outlier policy: after we hit max_clusters, allow a relaxed assignment
@@ -859,9 +858,7 @@ pub(crate) fn run_incremental_clustering_with_sampling(
     let centroids_dm: DenseMatrix<f64> = if *x_out > 0 && !final_centroids.is_empty() {
         trace!(
             "Centroids:  {:?}\n : nitems->{} nfeatures->{}",
-            flat,
-            x_out,
-            nfeatures
+            flat, x_out, nfeatures
         );
         let dm = DenseMatrix::from_iterator(flat.iter().map(|x| *x), *x_out, nfeatures, 1);
         dm
@@ -920,4 +917,75 @@ pub(crate) fn nearest_centroid(row: &[f64], centroids: &[Vec<f64>]) -> (usize, f
         }
     }
     (best_idx, best_dist2)
+}
+
+// ---------------------------------------------------------------------------------
+// Centroids Helpers
+// ---------------------------------------------------------------------------------
+
+/// Compose an item→centroid and centroid→subcentroid mapping into item→subcentroid.
+///
+/// - `item_to_centroid[i]` ∈ [0, C) for C centroids
+/// - `centroid_to_sub[c]` ∈ [0, S) for S subcentroids
+/// - Result has length `item_to_centroid.len()` and values in [0, S)
+///
+/// This is used in the energy pipeline to map items directly into subcentroid
+/// node space, consistent with the GraphLaplacian built on subcentroids.
+pub(crate) fn compose_item_to_subcentroid(
+    item_to_centroid: &[usize],
+    centroid_to_sub: &[usize],
+) -> Vec<usize> {
+    item_to_centroid
+        .iter()
+        .map(|&cid| {
+            debug_assert!(
+                cid < centroid_to_sub.len(),
+                "compose_item_to_subcentroid: centroid id {} out of range {}",
+                cid,
+                centroid_to_sub.len()
+            );
+            centroid_to_sub[cid]
+        })
+        .collect()
+}
+
+/// Populate `ArrowSpace.centroid_map` for the Eigen / lambda pipeline.
+///
+/// This should be called once the initial clustering step has produced a vector
+/// of assignments item→centroid (length = nitems, values < ncentroids), and
+/// before returning from `build` or `build_for_persistence` (Eigen branch).
+pub(crate) fn set_centroid_map_eigen(aspace: &mut ArrowSpace, assignments: &[usize]) {
+    // assignments are item→centroid indices in [0, ncentroids)
+    debug!(
+        "Setting centroid_map (Eigen) for {} items, {} centroids",
+        assignments.len(),
+        assignments.iter().max().map(|x| x + 1).unwrap_or(0)
+    );
+    aspace.centroid_map = Some(assignments.to_vec());
+}
+
+/// Populate `ArrowSpace.centroid_map` for the Energy pipeline.
+///
+/// This composes the item→centroid assignments with centroid→subcentroid
+/// assignments to obtain item→subcentroid indices that match the node space of
+/// the energy GraphLaplacian.
+///
+/// - `item_to_centroid.len() == aspace.nitems`
+/// - `subcentroid_assignments.len() == ncentroids` used in the energy Laplacian
+pub(crate) fn set_centroid_map_energy(
+    aspace: &mut ArrowSpace,
+    item_to_centroid: &[usize],
+    subcentroid_assignments: &[usize],
+) {
+    let item_to_sub = compose_item_to_subcentroid(item_to_centroid, subcentroid_assignments);
+    debug!(
+        "Setting centroid_map (Energy) for {} items, {} subcentroids",
+        item_to_sub.len(),
+        subcentroid_assignments
+            .iter()
+            .max()
+            .map(|x| x + 1)
+            .unwrap_or(0)
+    );
+    aspace.centroid_map = Some(item_to_sub);
 }

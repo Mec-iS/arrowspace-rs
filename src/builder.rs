@@ -1,3 +1,10 @@
+//! ArrowSpace builder and pipelines (Eigen / Energy).
+//!
+//! This module configures and builds `ArrowSpace` instances and their associated
+//! Laplacians from raw item vectors. It supports multiple pipelines:
+//! - EigenMaps (`build` and `build_for_persistence` with `Pipeline::Eigen`)
+//! - EnergyMaps (`build_energy` and `build_for_persistence` with `Pipeline::Energy`)
+
 use log::{debug, info, warn};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -15,13 +22,6 @@ use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::sampling::SamplerType;
 use crate::taumode::TauMode;
-
-#[derive(Clone, Debug)]
-pub enum PairingStrategy {
-    FastPair,            // 1-NN union via Smartcore FastPair
-    Default,             // O(n^2) path
-    CoverTreeKNN(usize), // k for k-NN build
-}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Pipeline {
@@ -890,7 +890,7 @@ impl ArrowSpaceBuilder {
                     })
                     .collect();
 
-                // Unzip results into separate vectors (unchanged)
+                // Unzip results into separate vectors
                 let (centroid_map, item_lambdas, item_norms): (Vec<_>, Vec<_>, Vec<_>) = {
                     let mut cmap = Vec::with_capacity(results.len());
                     let mut lambdas = Vec::with_capacity(results.len());

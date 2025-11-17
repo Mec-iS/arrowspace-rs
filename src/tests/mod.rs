@@ -1,6 +1,6 @@
 mod test_arrow;
 mod test_builder;
-mod test_data;
+pub mod test_data;
 mod test_helpers;
 // mod test_dimensional;
 mod test_clustering;
