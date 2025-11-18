@@ -58,60 +58,20 @@
 //! ```
 
 use log::{debug, info, trace};
-use std::sync::{Arc, Mutex};
 
-use smartcore::linalg::basic::arrays::{Array, Array2};
+use smartcore::linalg::basic::arrays::Array;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
-use crate::clustering::{self, ClusteringHeuristic};
 use crate::core::{ArrowItem, ArrowSpace};
 use crate::graph::{GraphFactory, GraphLaplacian};
-use crate::reduction::{ImplicitProjection, compute_jl_dimension};
-use crate::sampling::{InlineSampler, SamplerType};
 use crate::taumode::TauMode;
-
-/// Output of the clustering stage: centroids, projected dimensions, and metadata-enriched ArrowSpace.
-#[derive(Clone, Debug)]
-pub struct ClusteredOutput {
-    /// ArrowSpace with cluster assignments, sizes, radius, and optional projection matrix.
-    pub aspace: ArrowSpace,
-    /// Clustered centroids (X × F' where X ≤ max_clusters, F' is reduced_dim or original F).
-    pub centroids: DenseMatrix<f64>,
-    /// Effective dimensionality after optional JL projection (F' ≤ F).
-    pub reduced_dim: usize,
-    /// Original dataset row count (N).
-    pub n_items: usize,
-    /// Original dataset column count (F).
-    pub n_features: usize,
-}
 
 /// This trait decomposes the `ArrowSpaceBuilder::build`` pipeline into explicit stages
 /// for custom workflows, debugging, and analysis. All stages preserve the semantics
 /// of the canonical build path: clustering heuristics, projection policies, λ-graph
 /// parameters, and taumode λ computation are applied consistently.
 pub trait EigenMaps {
-    /// Stage 1: Optimal-K clustering with sampling and optional JL projection.
-    ///
-    /// Computes clustering parameters (X, radius, intrinsic_dim) using the builder's
-    /// heuristic, runs incremental clustering with the configured sampler, and applies
-    /// JL projection if enabled and beneficial. Returns centroids and an ArrowSpace
-    /// enriched with cluster metadata and projection state.
-    ///
-    /// # Arguments
-    /// - `builder`: ArrowSpaceBuilder with configured clustering, sampling, and projection.
-    /// - `rows`: Original dataset as Vec<Vec<f64>> (N × F).
-    ///
-    /// # Returns
-    /// `ClusteredOutput` containing centroids (X × F'), enriched ArrowSpace, and dimensions.
-    fn start_clustering(builder: &mut ArrowSpaceBuilder, rows: Vec<Vec<f64>>) -> ClusteredOutput;
-
-    /// Same as above but for `DenseMatrix`
-    fn start_clustering_dense(
-        builder: &mut ArrowSpaceBuilder,
-        rows: DenseMatrix<f64>,
-    ) -> ClusteredOutput;
-
     /// Stage 2: Construct item-graph Laplacian from clustered centroids.
     ///
     /// Builds the λ-graph using the builder's eps, k, topk, p, sigma, normalization,
@@ -175,245 +135,6 @@ pub trait EigenMaps {
 }
 
 impl EigenMaps for ArrowSpace {
-    fn start_clustering(builder: &mut ArrowSpaceBuilder, rows: Vec<Vec<f64>>) -> ClusteredOutput {
-        let n_items = rows.len();
-        let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
-
-        info!(
-            "EigenMaps::start_clustering: N={} items, F={} features",
-            n_items, n_features
-        );
-
-        // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
-        debug!("Creating ArrowSpace with taumode: {:?}", builder.synthesis);
-        let mut aspace = ArrowSpace::new(rows.clone(), builder.synthesis);
-
-        // Configure inline sampler matching builder policy
-        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match builder.sampling.clone() {
-                Some(SamplerType::Simple(r)) => {
-                    debug!("Using Simple sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
-                }
-                Some(SamplerType::DensityAdaptive(r)) => {
-                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-                }
-                None => {
-                    debug!("No sampling configured, using full dataset");
-                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-                }
-            }
-        } else {
-            // For small datasets, keep everything
-            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-        };
-
-        // Auto-compute optimal clustering parameters via heuristic
-        info!("Computing optimal clustering parameters");
-        let (k_opt, radius, intrinsic_dim) =
-            builder.compute_optimal_k(&rows, n_items, n_features, builder.clustering_seed);
-        debug!(
-            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
-            k_opt, radius, intrinsic_dim
-        );
-
-        builder.cluster_max_clusters = Some(k_opt);
-        builder.cluster_radius = radius;
-
-        // Run incremental clustering with sampling
-        info!(
-            "Running incremental clustering: max_clusters={}, radius={:.6}",
-            k_opt, radius
-        );
-        let (clustered_dm, assignments, sizes) =
-            clustering::run_incremental_clustering_with_sampling(
-                builder, &rows, n_features, k_opt, radius, sampler,
-            );
-
-        let n_clusters = clustered_dm.shape().0;
-        info!(
-            "Clustering complete: {} centroids, {} items assigned",
-            n_clusters,
-            assignments.iter().filter(|x| x.is_some()).count()
-        );
-
-        // Store clustering metadata in ArrowSpace
-        aspace.n_clusters = n_clusters;
-        aspace.cluster_assignments = assignments;
-        aspace.cluster_sizes = sizes;
-        aspace.cluster_radius = radius;
-
-        // Optional JL projection for high-dimensional datasets
-        let (centroids, reduced_dim) = if builder.use_dims_reduction && n_features > 64 {
-            let jl_dim = compute_jl_dimension(n_clusters, builder.rp_eps);
-            let target_dim = jl_dim.min(n_features / 2);
-
-            if target_dim < n_features && target_dim > clustered_dm.shape().0 {
-                info!(
-                    "Applying JL projection: {} features → {} dimensions (ε={:.2})",
-                    n_features, target_dim, builder.rp_eps
-                );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
-                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
-
-                aspace.projection_matrix = Some(implicit_proj);
-                aspace.reduced_dim = Some(target_dim);
-
-                let compression = n_features as f64 / target_dim as f64;
-                info!(
-                    "Projection complete: {:.1}x compression, stored as 8-byte seed",
-                    compression
-                );
-
-                (projected, target_dim)
-            } else {
-                debug!(
-                    "JL target dimension {} >= original {}, skipping projection",
-                    target_dim, n_features
-                );
-                (clustered_dm.clone(), n_features)
-            }
-        } else {
-            debug!("JL projection disabled or dimension too small");
-            (clustered_dm.clone(), n_features)
-        };
-
-        trace!("Clustering stage complete, returning ClusteredOutput");
-        ClusteredOutput {
-            aspace,
-            centroids,
-            reduced_dim,
-            n_items,
-            n_features,
-        }
-    }
-
-    /// `start_clustering` but for `DenseMatrix`
-    fn start_clustering_dense(
-        builder: &mut ArrowSpaceBuilder,
-        rows: DenseMatrix<f64>,
-    ) -> ClusteredOutput {
-        let n_items = rows.shape().0;
-        let n_features = rows.shape().1;
-
-        info!(
-            "EigenMaps::start_clustering: N={} items, F={} features",
-            n_items, n_features
-        );
-
-        // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
-        debug!("Creating ArrowSpace with taumode: {:?}", builder.synthesis);
-        let mut aspace = ArrowSpace::new_from_dense(rows.clone(), builder.synthesis);
-
-        // Configure inline sampler matching builder policy
-        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
-            match builder.sampling.clone() {
-                Some(SamplerType::Simple(r)) => {
-                    debug!("Using Simple sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
-                }
-                Some(SamplerType::DensityAdaptive(r)) => {
-                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
-                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
-                }
-                None => {
-                    debug!("No sampling configured, using full dataset");
-                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-                }
-            }
-        } else {
-            // For small datasets, keep everything
-            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
-        };
-
-        // Auto-compute optimal clustering parameters via heuristic
-        info!("Computing optimal clustering parameters");
-        let compute: Vec<Vec<f64>> = (0..n_items)
-            .map(|i| rows.get_row(i).iterator(0).copied().collect())
-            .collect();
-        let (k_opt, radius, intrinsic_dim) = builder.compute_optimal_k(
-            &compute.clone(),
-            n_items,
-            n_features,
-            builder.clustering_seed,
-        );
-        debug!(
-            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
-            k_opt, radius, intrinsic_dim
-        );
-
-        builder.cluster_max_clusters = Some(k_opt);
-        builder.cluster_radius = radius;
-
-        // Run incremental clustering with sampling
-        info!(
-            "Running incremental clustering: max_clusters={}, radius={:.6}",
-            k_opt, radius
-        );
-        let (clustered_dm, assignments, sizes) =
-            clustering::run_incremental_clustering_with_sampling(
-                builder, &compute, n_features, k_opt, radius, sampler,
-            );
-
-        let n_clusters = clustered_dm.shape().0;
-        info!(
-            "Clustering complete: {} centroids, {} items assigned",
-            n_clusters,
-            assignments.iter().filter(|x| x.is_some()).count()
-        );
-
-        // Store clustering metadata in ArrowSpace
-        aspace.n_clusters = n_clusters;
-        aspace.cluster_assignments = assignments;
-        aspace.cluster_sizes = sizes;
-        aspace.cluster_radius = radius;
-
-        // Optional JL projection for high-dimensional datasets
-        let (centroids, reduced_dim) = if builder.use_dims_reduction && n_features > 64 {
-            let jl_dim = compute_jl_dimension(n_clusters, builder.rp_eps);
-            let target_dim = jl_dim.min(n_features / 2);
-
-            if target_dim < n_features && target_dim > clustered_dm.shape().0 {
-                info!(
-                    "Applying JL projection: {} features → {} dimensions (ε={:.2})",
-                    n_features, target_dim, builder.rp_eps
-                );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
-                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
-
-                aspace.projection_matrix = Some(implicit_proj);
-                aspace.reduced_dim = Some(target_dim);
-
-                let compression = n_features as f64 / target_dim as f64;
-                info!(
-                    "Projection complete: {:.1}x compression, stored as 8-byte seed",
-                    compression
-                );
-
-                (projected, target_dim)
-            } else {
-                debug!(
-                    "JL target dimension {} >= original {}, skipping projection",
-                    target_dim, n_features
-                );
-                (clustered_dm.clone(), n_features)
-            }
-        } else {
-            debug!("JL projection disabled or dimension too small");
-            (clustered_dm.clone(), n_features)
-        };
-
-        trace!("Clustering stage complete, returning ClusteredOutput");
-        ClusteredOutput {
-            aspace,
-            centroids,
-            reduced_dim,
-            n_items,
-            n_features,
-        }
-    }
-
     /// build items-graph laplacian
     fn eigenmaps(
         &mut self,
@@ -510,31 +231,6 @@ impl EigenMaps for ArrowSpace {
             lambda_stats.0, lambda_stats.1, lambda_stats.2
         );
     }
-
-    // fn spectral(self, gl: &GraphLaplacian) -> Self {
-    //     info!(
-    //         "EigenMaps::spectral: Building F×F feature Laplacian for {} features",
-    //         self.nfeatures
-    //     );
-    //     debug!(
-    //         "Input Laplacian: {}×{}, graph params: {:?}",
-    //         gl.shape().0,
-    //         gl.shape().1,
-    //         gl.graph_params
-    //     );
-
-    //     let aspace_with_signals = GraphFactory::build_spectral_laplacian(self, gl);
-
-    //     let (signal_rows, signal_cols) = aspace_with_signals.signals.shape();
-    //     info!(
-    //         "Spectral Laplacian complete: {}×{} signals matrix, {:.2}% sparse",
-    //         signal_rows,
-    //         signal_cols,
-    //         GraphLaplacian::sparsity(&aspace_with_signals.signals) * 100.0
-    //     );
-
-    //     aspace_with_signals
-    // }
 
     fn search(
         &mut self,

@@ -5,6 +5,11 @@ use crate::{
     taumode::TauMode,
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
+use std::collections::HashMap;
+
+use crate::builder::ConfigValue;
+use crate::core::ArrowSpace;
+use crate::reduction::ImplicitProjection;
 
 /// Helper to compare two GraphLaplacian matrices for equality
 fn laplacian_eq(a: &GraphLaplacian, b: &GraphLaplacian, eps: f64) -> bool {
@@ -415,4 +420,56 @@ fn test_builder_cluster_radius_impact() {
         aspace.cluster_radius > 0.0,
         "Cluster radius should be positive"
     );
+}
+
+#[test]
+fn empty_with_projection_happy_path() {
+    let mut proj_data = HashMap::new();
+    proj_data.insert("pj_mtx_original_dim".to_string(), ConfigValue::Usize(384));
+    proj_data.insert("pj_mtx_reduced_dim".to_string(), ConfigValue::Usize(91));
+    proj_data.insert("pj_mtx_seed".to_string(), ConfigValue::U64(123456789));
+    proj_data.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
+
+    let nrows = 10_000;
+    let ncols = 384;
+
+    let aspace = ArrowSpace::empty_with_projection(proj_data, nrows, ncols);
+
+    // Basic shape
+    assert_eq!(aspace.nitems, nrows);
+    assert_eq!(aspace.nfeatures, ncols);
+
+    // Projection is set correctly
+    let proj = aspace
+        .projection_matrix
+        .as_ref()
+        .expect("projection_matrix must be Some");
+    assert_eq!(
+        *proj,
+        ImplicitProjection {
+            original_dim: 384,
+            reduced_dim: 91,
+            seed: 123456789,
+        }
+    );
+
+    // reduced_dim and extra_reduced_dim are consistent with proj_data
+    assert_eq!(aspace.reduced_dim, Some(91));
+    assert_eq!(aspace.extra_reduced_dim, false);
+}
+
+#[test]
+#[should_panic(expected = "Reconstructing with extra dim reduction is not implemented yet")]
+fn empty_with_projection_panics_on_extra_reduced_dim_true() {
+    let mut proj_data = HashMap::new();
+    proj_data.insert("pj_mtx_original_dim".to_string(), ConfigValue::Usize(384));
+    proj_data.insert("pj_mtx_reduced_dim".to_string(), ConfigValue::Usize(91));
+    proj_data.insert("pj_mtx_seed".to_string(), ConfigValue::U64(123456789));
+    // This should trigger the assertion inside `empty_with_projection`.
+    proj_data.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(true));
+
+    let nrows = 10_000;
+    let ncols = 384;
+
+    let _ = ArrowSpace::empty_with_projection(proj_data, nrows, ncols);
 }

@@ -173,7 +173,7 @@ fn test_energy_search_optimized() {
     }
 
     // Well-structured test data: 250 items, 100 features, 5 clusters
-    let rows = test_data::make_gaussian_hd(250, 0.3);
+    let rows = test_data::make_gaussian_cliques_multi(250, 0.3, 5, 5, 42);
     let k = 5;
 
     let mut builder = ArrowSpaceBuilder::new()

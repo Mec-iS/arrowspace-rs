@@ -24,13 +24,50 @@ use smartcore::linalg::basic::arrays::Array2;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::core::ArrowSpace;
 use crate::sampling::InlineSampler;
 
 /// Fixed seed for deterministic clustering
 const CLUSTERING_SEED: u64 = 128;
 
+/// Output of the clustering stage: centroids, projected dimensions, and metadata-enriched ArrowSpace.
+#[derive(Clone, Debug)]
+pub struct ClusteredOutput {
+    /// ArrowSpace with cluster assignments, sizes, radius, and optional projection matrix.
+    pub aspace: ArrowSpace,
+    /// Clustered centroids (X × F' where X ≤ max_clusters, F' is reduced_dim or original F).
+    pub centroids: DenseMatrix<f64>,
+    /// Effective dimensionality after optional JL projection (F' ≤ F).
+    pub reduced_dim: usize,
+    /// Original dataset row count (N).
+    pub n_items: usize,
+    /// Original dataset column count (F).
+    pub n_features: usize,
+}
+
 /// Trait for computing optimal clustering parameters from data.
 pub trait ClusteringHeuristic {
+    /// Stage 1: Optimal-K clustering with sampling and optional JL projection.
+    ///
+    /// Computes clustering parameters (X, radius, intrinsic_dim) using the builder's
+    /// heuristic, runs incremental clustering with the configured sampler, and applies
+    /// JL projection if enabled and beneficial. Returns centroids and an ArrowSpace
+    /// enriched with cluster metadata and projection state.
+    ///
+    /// # Arguments
+    /// - `self`: ArrowSpaceBuilder with configured clustering, sampling, and projection.
+    /// - `rows`: Original dataset as Vec<Vec<f64>> (N × F).
+    ///
+    /// # Returns
+    /// `ClusteredOutput` containing centroids (X × F'), enriched ArrowSpace, and dimensions.
+    fn start_clustering(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput;
+
+    /// `start_clustering` but for `DenseMatrix`
+    fn start_clustering_dense(
+        builder: &mut ArrowSpaceBuilder,
+        rows: DenseMatrix<f64>,
+    ) -> ClusteredOutput;
+
     /// Compute optimal number of clusters K, squared-distance threshold radius,
     /// and estimated intrinsic dimension from NxF data matrix.
     fn compute_optimal_k(

@@ -23,8 +23,9 @@ use approx::relative_ne;
 use log::info;
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
-use crate::eigenmaps::{ClusteredOutput, EigenMaps};
+use crate::eigenmaps::EigenMaps;
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
 
@@ -123,7 +124,7 @@ fn test_eigenmaps_non_sensical_undecidable_query() {
         centroids,
         n_items,
         ..
-    } = ArrowSpace::start_clustering(&mut builder, rows.clone());
+    } = ArrowSpaceBuilder::start_clustering(&mut builder, rows.clone());
 
     let gl = aspace.eigenmaps(&builder, &centroids, n_items);
     aspace.compute_taumode(&gl);
@@ -165,7 +166,7 @@ fn test_eigenmaps_vs_build_basic() {
         centroids,
         n_items,
         ..
-    } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
+    } = ArrowSpaceBuilder::start_clustering(&mut builder_exp, rows.clone());
 
     let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
@@ -235,7 +236,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
         centroids,
         n_items,
         ..
-    } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
+    } = ArrowSpaceBuilder::start_clustering(&mut builder_exp, rows.clone());
 
     let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
@@ -312,7 +313,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
         centroids,
         n_items,
         ..
-    } = ArrowSpace::start_clustering(&mut builder_exp, rows.clone());
+    } = ArrowSpaceBuilder::start_clustering(&mut builder_exp, rows.clone());
 
     let gl_exp = aspace.eigenmaps(&builder_exp, &centroids, n_items);
     aspace.compute_taumode(&gl_exp);
@@ -364,7 +365,7 @@ fn test_search_without_taumode_panics() {
         centroids,
         n_items,
         ..
-    } = ArrowSpace::start_clustering(&mut builder, rows);
+    } = ArrowSpaceBuilder::start_clustering(&mut builder, rows);
 
     let gl = aspace.eigenmaps(&builder, &centroids, n_items);
 
@@ -391,7 +392,7 @@ fn test_eigenmaps_stages_produce_valid_state() {
         n_items,
         n_features,
         reduced_dim,
-    } = ArrowSpace::start_clustering(&mut builder, rows.clone());
+    } = ArrowSpaceBuilder::start_clustering(&mut builder, rows.clone());
 
     assert_eq!(n_items, 99, "n_items should match input");
     assert_eq!(n_features, 100, "n_features should match input");

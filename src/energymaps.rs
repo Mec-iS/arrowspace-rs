@@ -12,8 +12,8 @@ use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
-use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::reduction::ImplicitProjection;
@@ -1136,7 +1136,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             mut aspace,
             mut centroids,
             ..
-        } = ArrowSpace::start_clustering(self, rows);
+        } = self.start_clustering(rows);
 
         // check that projection has been applied or not
         if aspace.projection_matrix.is_some() && aspace.nfeatures > 64 {
@@ -1174,7 +1174,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
         assert_eq!(sub_centroids.shape().1, centroids.shape().1);
 
-        // Step 5: apply EXTRA JL dimensionality reduction (optional `with_extra_dims_reduction`)
+        // Step 5: apply EXTRA JL dimensionality reduction on sub-centroids (optional `with_extra_dims_reduction`)
         let (n_subcentroids, current_features) = sub_centroids.shape();
         let (sub_centroids, reduced_dim) = if self.use_dims_reduction
             && self.extra_dims_reduction
@@ -1194,6 +1194,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
 
                 let implicit_proj = ImplicitProjection::new(current_features, target_dim);
                 let projected = project_matrix(&sub_centroids, &implicit_proj);
+                aspace.extra_reduced_dim = true;
+                self.extra_dims_reduction = true;
 
                 info!(
                     "Sub_centroids projection complete: {:.1}x compression",
