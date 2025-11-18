@@ -626,10 +626,16 @@ fn builder_config_typed_roundtrip_with_projection() {
     // projection present branch
     assert_eq!(
         cfg.get("pj_mtx_original_dim"),
-        Some(&ConfigValue::Usize(384))
+        Some(&ConfigValue::OptionUsize(Some(384)))
     );
-    assert_eq!(cfg.get("pj_mtx_reduced_dim"), Some(&ConfigValue::Usize(91)));
-    assert_eq!(cfg.get("pj_mtx_seed"), Some(&ConfigValue::U64(123456789)));
+    assert_eq!(
+        cfg.get("pj_mtx_reduced_dim"),
+        Some(&ConfigValue::OptionUsize(Some(91)))
+    );
+    assert_eq!(
+        cfg.get("pj_mtx_seed"),
+        Some(&ConfigValue::OptionU64(Some(123456789)))
+    );
     assert_eq!(cfg.get("extra_reduced_dim"), Some(&ConfigValue::Bool(true)));
 
     assert_eq!(
