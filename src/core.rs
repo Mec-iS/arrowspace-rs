@@ -484,20 +484,61 @@ impl ArrowSpace {
         nrows: usize,
         ncols: usize,
     ) -> Self {
+        debug!(
+            "ArrowSpace::empty_with_projection called with nrows={}, ncols={}",
+            nrows, ncols
+        );
+
+        let extra_reduced = proj_data["extra_reduced_dim"].as_bool().unwrap();
+        debug!("extra_reduced_dim from proj_data: {}", extra_reduced);
+        assert!(
+            extra_reduced == false,
+            "Reconstructing with extra dim reduction is not implemented yet"
+        );
+
+        let has_projection = proj_data["pj_mtx_original_dim"].as_usize().is_some();
+        debug!("projection present in proj_data: {}", has_projection);
+
         let mut aspace = Self::default();
         aspace.nitems = nrows;
         aspace.nfeatures = ncols;
-        aspace.projection_matrix = Some(ImplicitProjection {
-            original_dim: proj_data["pj_mtx_original_dim"].as_usize().unwrap(),
-            reduced_dim: proj_data["pj_mtx_reduced_dim"].as_usize().unwrap(),
-            seed: proj_data["pj_mtx_seed"].as_u64().unwrap(),
-        });
-        aspace.reduced_dim = proj_data["pj_mtx_reduced_dim"].as_usize();
-        aspace.extra_reduced_dim = proj_data["extra_reduced_dim"].as_bool().unwrap();
-        assert!(
-            aspace.extra_reduced_dim == false,
-            "Reconstructing with extra dim reduction is not implemented yet"
+
+        if has_projection {
+            let original_dim = proj_data["pj_mtx_original_dim"]
+                .as_usize()
+                .expect("pj_mtx_original_dim must be usize when projection is present");
+            let reduced_dim = proj_data["pj_mtx_reduced_dim"]
+                .as_usize()
+                .expect("pj_mtx_reduced_dim must be usize when projection is present");
+            let seed = proj_data["pj_mtx_seed"]
+                .as_u64()
+                .expect("pj_mtx_seed must be u64 when projection is present");
+
+            info!(
+                "Reconstructing ImplicitProjection: original_dim={}, reduced_dim={}, seed={}",
+                original_dim, reduced_dim, seed
+            );
+
+            aspace.projection_matrix = Some(ImplicitProjection {
+                original_dim,
+                reduced_dim,
+                seed,
+            });
+            aspace.reduced_dim = Some(reduced_dim);
+            aspace.extra_reduced_dim = extra_reduced;
+        } else {
+            warn!(
+                "empty_with_projection called without projection metadata; \
+                returning ArrowSpace without projection_matrix"
+            );
+        }
+
+        debug!(
+            "ArrowSpace::empty_with_projection created ArrowSpace \
+            with nitems={}, nfeatures={}, reduced_dim={:?}",
+            aspace.nitems, aspace.nfeatures, aspace.reduced_dim
         );
+
         aspace
     }
 
