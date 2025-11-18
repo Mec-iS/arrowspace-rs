@@ -57,7 +57,7 @@ fn test_recluster_centroids_deterministic() {
 fn test_motif_subgraphs_parallel_correctness() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 50, 999);
+    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 100, 999);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 12, 8, 2.0, None)
         .with_seed(999)
@@ -98,7 +98,7 @@ fn test_motif_subgraphs_parallel_correctness() {
 fn test_centroid_hierarchy_parallel_determinism() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(150, 0.3, 5, 50, 888);
+    let rows = make_gaussian_cliques_multi(150, 0.3, 5, 100, 888);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 10, 6, 2.0, None)
         .with_seed(888)
@@ -274,7 +274,7 @@ fn test_concurrent_hierarchy_builds() {
 
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(100, 0.3, 4, 50, 555);
+    let rows = make_gaussian_cliques_multi(100, 0.3, 4, 100, 555);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 10, 6, 2.0, None)
         .with_seed(555)

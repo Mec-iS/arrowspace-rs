@@ -7,20 +7,16 @@ use std::collections::HashSet;
 use approx::{assert_relative_ne, relative_eq};
 use log::{debug, info, trace, warn};
 
-#[cfg(test)]
-mod test_data {
-    pub use crate::tests::test_data::{
-        make_energy_test_dataset, make_gaussian_cliques, make_gaussian_cliques_multi,
-        make_gaussian_hd, make_moons_hd,
-    };
-}
+use crate::tests::test_data::{
+    make_energy_test_dataset, make_gaussian_cliques_multi, make_gaussian_hd, make_moons_hd,
+};
 
 #[test]
 fn test_energy_search_basic() {
     crate::init();
     info!("Test: search_energy basic functionality");
 
-    let rows = test_data::make_gaussian_hd(100, 0.6);
+    let rows = make_gaussian_hd(100, 0.6);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
@@ -54,7 +50,7 @@ fn test_energy_search_single() {
     use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 
     // Generate larger test dataset (100 items × 50 features)
-    let rows = crate::tests::test_data::make_moons_hd(99, 0.2, 0.08, 50, 42);
+    let rows = make_moons_hd(99, 0.2, 0.08, 50, 42);
 
     // Build ArrowSpace with dimensional reduction
     let mut builder = ArrowSpaceBuilder::new()
@@ -96,7 +92,7 @@ fn test_energy_search_self_retrieval() {
     }
     info!("Test: search_energy self-retrieval");
 
-    let rows = test_data::make_gaussian_cliques_multi(300, 0.3, 5, 5, 42);
+    let rows = make_gaussian_cliques_multi(300, 0.3, 5, 100, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
@@ -173,7 +169,7 @@ fn test_energy_search_optimized() {
     }
 
     // Well-structured test data: 250 items, 100 features, 5 clusters
-    let rows = test_data::make_gaussian_cliques_multi(250, 0.3, 5, 5, 42);
+    let rows = make_gaussian_cliques_multi(250, 0.3, 5, 100, 42);
     let k = 5;
 
     let mut builder = ArrowSpaceBuilder::new()
@@ -207,7 +203,7 @@ fn test_energy_search_weight_tuning() {
     crate::init();
     info!("Test: search_energy weight parameter effects");
 
-    let rows = test_data::make_gaussian_hd(60, 0.5);
+    let rows = make_gaussian_hd(60, 0.5);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(5555)
@@ -239,7 +235,7 @@ fn test_energy_search_k_scaling() {
     crate::init();
     info!("Test: search_energy k-scaling behavior");
 
-    let rows = test_data::make_gaussian_hd(50, 0.5);
+    let rows = make_gaussian_hd(50, 0.5);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
@@ -267,7 +263,7 @@ fn test_energy_search_optical_compression() {
     crate::init();
     info!("Test: search_energy with optical compression");
 
-    let rows = test_data::make_moons_hd(100, 0.3, 0.08, 99, 42);
+    let rows = make_moons_hd(100, 0.3, 0.08, 99, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(111)
@@ -295,7 +291,7 @@ fn test_energy_search_lambda_proximity() {
     crate::init();
     info!("Test: search_energy lambda proximity ranking");
 
-    let rows = test_data::make_gaussian_hd(80, 0.5);
+    let rows = make_gaussian_hd(80, 0.5);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(333)
@@ -333,7 +329,7 @@ fn test_energy_search_score_monotonicity() {
     crate::init();
     info!("Test: search_energy score monotonicity");
 
-    let rows = test_data::make_moons_hd(50, 0.2, 0.1, 99, 42);
+    let rows = make_moons_hd(50, 0.2, 0.1, 99, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
@@ -364,7 +360,7 @@ fn test_energy_search_empty_k() {
     crate::init();
     info!("Test: search_energy with k=0");
 
-    let rows = test_data::make_gaussian_hd(30, 0.6);
+    let rows = make_gaussian_hd(30, 0.6);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(555)
@@ -387,7 +383,7 @@ fn test_energy_search_high_dimensional() {
     crate::init();
     info!("Test: search_energy high-dimensional data");
 
-    let rows = test_data::make_gaussian_hd(40, 0.5);
+    let rows = make_gaussian_hd(40, 0.5);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(666)
@@ -411,7 +407,7 @@ fn test_energy_vs_standard_search_overlap() {
     crate::init();
     info!("Test: energy-only vs standard search overlap");
 
-    let rows = test_data::make_gaussian_cliques_multi(100, 0.3, 5, 5, 42);
+    let rows = make_gaussian_cliques_multi(100, 0.3, 5, 100, 42);
     let k = 10;
     let query = rows[5].clone();
 
@@ -475,7 +471,7 @@ fn test_energy_vs_standard_lambda_distribution() {
     crate::init();
     info!("Test: energy vs standard lambda distributions");
 
-    let rows = test_data::make_moons_hd(80, 0.2, 0.08, 99, 42);
+    let rows = make_moons_hd(80, 0.2, 0.08, 99, 42);
 
     // Standard pipeline
     let builder_std = ArrowSpaceBuilder::new()
@@ -533,7 +529,7 @@ fn test_energy_vs_standard_graph_structure() {
     crate::init();
     info!("Test: energy vs standard graph structure comparison");
 
-    let rows = test_data::make_gaussian_hd(60, 0.5);
+    let rows = make_gaussian_hd(60, 0.5);
 
     // Standard cosine-based graph
     let builder_std = ArrowSpaceBuilder::new()
@@ -580,7 +576,7 @@ fn test_energy_vs_standard_precision_at_k() {
     crate::init();
     info!("Test: energy vs standard precision@k with ground truth");
 
-    let rows = test_data::make_energy_test_dataset(300, 100, 42);
+    let rows = make_energy_test_dataset(300, 100, 42);
     let query_idx = 34;
     let query = rows[query_idx].clone();
     let k = 10;
@@ -648,7 +644,7 @@ fn test_energy_vs_standard_recall_at_k() {
     crate::init();
     info!("Test: energy vs standard recall@k");
 
-    let rows = test_data::make_gaussian_cliques_multi(250, 0.3, 5, 5, 42);
+    let rows = make_gaussian_cliques_multi(250, 0.3, 5, 100, 42);
     let query = rows[0].clone();
     let k = 20;
 
@@ -721,7 +717,7 @@ fn test_energy_vs_standard_build_time() {
     }
     info!("Test: energy vs standard build time comparison");
 
-    let rows = test_data::make_moons_hd(100, 0.3, 0.08, 99, 42);
+    let rows = make_moons_hd(100, 0.3, 0.08, 99, 42);
 
     // Standard build
     let start_std = std::time::Instant::now();
@@ -756,7 +752,7 @@ fn test_energy_no_cosine_dependence() {
     crate::init();
     info!("Test: verify energy search prioritizes lambda distance over cosine");
 
-    let rows = test_data::make_energy_test_dataset(50, 200, 42);
+    let rows = make_energy_test_dataset(50, 200, 42);
     let query = rows[5].clone();
     let k = 10;
 
@@ -872,8 +868,10 @@ fn test_energy_vs_energy_extra_dims_reduction_recall_at_k() {
     info!("Test: energy vs energy (with vs without extra dims reduction) recall@k");
 
     // Data and query
-    let rows = test_data::make_gaussian_cliques(150, 0.3, 5, 5, 42);
-    let query = rows[0].clone();
+    // this only works with 100+ dims
+    let rows = make_gaussian_cliques_multi(150, 0.3, 5, 100, 42);
+    let query_idx = 0;
+    let query = rows[query_idx].clone();
     let k = 20;
 
     // Common lambda graph config and seed
@@ -911,8 +909,8 @@ fn test_energy_vs_energy_extra_dims_reduction_recall_at_k() {
     let results_extra = aspace_energy_extra.search_energy(&query, &gl_energy_extra, k);
 
     // Sanity: both should retrieve the query index itself
-    let found_base = results_base.iter().any(|&(idx, _)| idx == 0);
-    let found_extra = results_extra.iter().any(|&(idx, _)| idx == 0);
+    let found_base = results_base.iter().any(|&(idx, _)| idx == query_idx);
+    let found_extra = results_extra.iter().any(|&(idx, _)| idx == query_idx);
     assert!(
         found_base,
         "Base energy search could not find the query index"

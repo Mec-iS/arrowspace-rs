@@ -8,17 +8,14 @@ use crate::taumode::TauMode;
 use log::info;
 use smartcore::linalg::basic::arrays::Array;
 
-#[cfg(test)]
-mod test_data {
-    pub use crate::tests::test_data::{make_gaussian_hd, make_moons_hd};
-}
+use crate::tests::test_data::{make_gaussian_hd, make_moons_hd};
 
 #[test]
 fn test_energy_build_basic() {
     crate::tests::init();
     info!("Test: build_energy basic pipeline");
 
-    let rows = test_data::make_gaussian_hd(100, 0.2);
+    let rows = make_gaussian_hd(100, 0.2);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(12345)
@@ -44,7 +41,7 @@ fn test_energy_build_with_optical_compression() {
     crate::tests::init();
     info!("Test: build_energy with optical compression");
 
-    let rows = test_data::make_moons_hd(150, 0.2, 0.1, 100, 42);
+    let rows = make_moons_hd(150, 0.2, 0.1, 100, 42);
     let mut p = EnergyParams::default();
     p.optical_tokens = Some(30);
     p.trim_quantile = 0.15;
@@ -71,7 +68,7 @@ fn test_energy_build_diffusion_splits() {
     crate::tests::init();
     info!("Test: build_energy diffusion and sub-centroid splitting");
 
-    let rows = test_data::make_gaussian_hd(80, 0.3);
+    let rows = make_gaussian_hd(80, 0.3);
     let mut p = EnergyParams::default();
     p.steps = 6;
     p.split_quantile = 0.85;
@@ -99,7 +96,7 @@ fn test_energy_laplacian_properties() {
     crate::tests::init();
     info!("Test: energy Laplacian properties (connectivity, symmetry)");
 
-    let rows = test_data::make_moons_hd(60, 0.2, 0.1, 99, 42);
+    let rows = make_moons_hd(60, 0.2, 0.1, 99, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(7777)
@@ -127,7 +124,7 @@ fn test_energy_build_with_projection() {
     crate::tests::init();
     info!("Test: build_energy with JL projection");
 
-    let rows = test_data::make_gaussian_hd(70, 0.4);
+    let rows = make_gaussian_hd(70, 0.4);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(222)
@@ -154,7 +151,7 @@ fn test_energy_build_taumode_consistency() {
     crate::tests::init();
     info!("Test: build_energy taumode consistency");
 
-    let rows = test_data::make_moons_hd(50, 0.2, 0.08, 99, 42);
+    let rows = make_moons_hd(50, 0.2, 0.08, 99, 42);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_synthesis(TauMode::Mean)
@@ -182,7 +179,7 @@ fn test_energy_build_custom_params() {
     info!("Test: build_energy with custom EnergyParams");
     let p_neighbor_k = 10;
 
-    let rows = test_data::make_gaussian_hd(40, 0.1);
+    let rows = make_gaussian_hd(40, 0.1);
     let p = EnergyParams {
         optical_tokens: None,
         trim_quantile: 0.05,
@@ -221,7 +218,7 @@ fn test_energy_build_lambda_statistics() {
     crate::tests::init();
     info!("Test: build_energy lambda statistics");
 
-    let rows = test_data::make_gaussian_hd(100, 0.6);
+    let rows = make_gaussian_hd(100, 0.6);
 
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(444)
