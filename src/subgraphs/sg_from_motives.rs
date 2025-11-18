@@ -120,7 +120,7 @@ impl Subgraph {
 impl SubgraphsMotive for GraphLaplacian {
     fn spot_subg_motives(&self, aspace: &ArrowSpace, cfg: &SubgraphConfig) -> Vec<Subgraph> {
         info!(
-            "Spotting energy subgraphs: topl={}, mintri={}, minsize={}",
+            "Spotting subgraphs with motives: topl={}, mintri={}, minsize={}",
             cfg.motives.top_l, cfg.motives.min_triangles, cfg.min_size
         );
 
@@ -128,7 +128,7 @@ impl SubgraphsMotive for GraphLaplacian {
         let item_motifs: Vec<Vec<usize>> = self.spot_motives_energy(&aspace, &cfg.motives);
 
         info!(
-            "Energy motif detection returned {} item-space candidates",
+            "Motif detection returned {} item-space candidates",
             item_motifs.len()
         );
 
@@ -205,7 +205,7 @@ impl SubgraphsMotive for GraphLaplacian {
         }
 
         info!(
-            "Extracted {} energy subgraphs (min_size={}, rayleigh_max={:?})",
+            "Extracted {} motives subgraphs (min_size={}, rayleigh_max={:?})",
             subgraphs.len(),
             cfg.min_size,
             cfg.rayleigh_max
