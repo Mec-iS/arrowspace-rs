@@ -41,6 +41,7 @@
 //! compile while showing only the essential lines to readers.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::collections::{BinaryHeap, HashSet};
 use std::fmt::Debug;
 
@@ -50,6 +51,7 @@ use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use sprs::CsMat;
 
+use crate::builder::ConfigValue;
 use crate::graph::GraphLaplacian;
 use crate::reduction::ImplicitProjection;
 use crate::sorted_index::SortedLambdas;
@@ -474,6 +476,29 @@ impl ArrowSpace {
             subcentroid_lambdas: None,
             item_norms: None,
         }
+    }
+
+    /// Convenience method to generate a temporary `ArrowSpace` to reproject vectors
+    pub fn empty_with_projection(
+        proj_data: HashMap<String, ConfigValue>,
+        nrows: usize,
+        ncols: usize,
+    ) -> Self {
+        let mut aspace = Self::default();
+        aspace.nitems = nrows;
+        aspace.nfeatures = ncols;
+        aspace.projection_matrix = Some(ImplicitProjection {
+            original_dim: proj_data["pj_mtx_original_dim"].as_usize().unwrap(),
+            reduced_dim: proj_data["pj_mtx_reduced_dim"].as_usize().unwrap(),
+            seed: proj_data["pj_mtx_seed"].as_u64().unwrap(),
+        });
+        aspace.reduced_dim = proj_data["pj_mtx_reduced_dim"].as_usize();
+        aspace.extra_reduced_dim = proj_data["extra_reduced_dim"].as_bool().unwrap();
+        assert!(
+            aspace.extra_reduced_dim == false,
+            "Reconstructing with extra dim reduction is not implemented yet"
+        );
+        aspace
     }
 
     // drop stored in-memory data
