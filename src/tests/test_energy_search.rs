@@ -97,7 +97,7 @@ fn test_energy_search_self_retrieval() {
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
         .with_lambda_graph(0.5, 3, 10, 2.0, None)
-        .with_dims_reduction(true, Some(1.0))
+        .with_dims_reduction(true, Some(0.8))
         .with_inline_sampling(None);
 
     let p = EnergyParams::new(&builder);
@@ -175,7 +175,7 @@ fn test_energy_search_optimized() {
     let mut builder = ArrowSpaceBuilder::new()
         .with_seed(9999)
         .with_lambda_graph(0.5, k, 8, 2.0, None)
-        .with_dims_reduction(true, Some(0.1))
+        .with_dims_reduction(true, Some(0.8))
         .with_synthesis(TauMode::Median);
 
     // Target 15 items/sub_centroid = ~17 sub_centroids
