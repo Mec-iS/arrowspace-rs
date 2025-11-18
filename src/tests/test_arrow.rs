@@ -423,11 +423,21 @@ fn test_builder_cluster_radius_impact() {
 }
 
 #[test]
-fn empty_with_projection_happy_path() {
+fn test_empty_with_projection_path() {
+    crate::tests::init();
     let mut proj_data = HashMap::new();
-    proj_data.insert("pj_mtx_original_dim".to_string(), ConfigValue::Usize(384));
-    proj_data.insert("pj_mtx_reduced_dim".to_string(), ConfigValue::Usize(91));
-    proj_data.insert("pj_mtx_seed".to_string(), ConfigValue::U64(123456789));
+    proj_data.insert(
+        "pj_mtx_original_dim".to_string(),
+        ConfigValue::OptionUsize(Some(384)),
+    );
+    proj_data.insert(
+        "pj_mtx_reduced_dim".to_string(),
+        ConfigValue::OptionUsize(Some(91)),
+    );
+    proj_data.insert(
+        "pj_mtx_seed".to_string(),
+        ConfigValue::OptionU64(Some(123456789)),
+    );
     proj_data.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
 
     let nrows = 10_000;
@@ -460,7 +470,7 @@ fn empty_with_projection_happy_path() {
 
 #[test]
 #[should_panic(expected = "Reconstructing with extra dim reduction is not implemented yet")]
-fn empty_with_projection_panics_on_extra_reduced_dim_true() {
+fn test_empty_with_projection_panics_on_extra_reduced_dim_true() {
     let mut proj_data = HashMap::new();
     proj_data.insert("pj_mtx_original_dim".to_string(), ConfigValue::Usize(384));
     proj_data.insert("pj_mtx_reduced_dim".to_string(), ConfigValue::Usize(91));
@@ -472,4 +482,28 @@ fn empty_with_projection_panics_on_extra_reduced_dim_true() {
     let ncols = 384;
 
     let _ = ArrowSpace::empty_with_projection(proj_data, nrows, ncols);
+}
+
+#[test]
+fn test_empty_with_projection_none_path() {
+    let mut proj_data = HashMap::new();
+    proj_data.insert(
+        "pj_mtx_original_dim".to_string(),
+        ConfigValue::OptionUsize(None),
+    );
+    proj_data.insert(
+        "pj_mtx_reduced_dim".to_string(),
+        ConfigValue::OptionUsize(None),
+    );
+    proj_data.insert("pj_mtx_seed".to_string(), ConfigValue::OptionUsize(None));
+    proj_data.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
+
+    let nrows = 10_000;
+    let ncols = 384;
+
+    let aspace = ArrowSpace::empty_with_projection(proj_data, nrows, ncols);
+
+    assert_eq!(aspace.projection_matrix, None);
+    assert_eq!(aspace.reduced_dim, None);
+    assert_eq!(aspace.extra_reduced_dim, false);
 }

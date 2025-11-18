@@ -10,7 +10,7 @@ fn test_subgraph_from_parent() {
     crate::init();
 
     // 300 points, 10 cliques, tight clusters, 50 dimensions → expect ~10 motifs
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
     let (_aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 10, 6, 2.0, None)
         .with_seed(999)
@@ -40,7 +40,7 @@ fn test_subgraph_from_parent() {
 fn test_subgraph_rayleigh_computation() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
     let (_aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 10, 6, 2.0, None)
         .with_seed(999)
@@ -64,7 +64,7 @@ fn test_subgraph_rayleigh_computation() {
 fn test_spot_subgraphs_energy_basic() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 12, 8, 2.0, None)
         .with_seed(999)
@@ -132,7 +132,7 @@ fn test_spot_subgraphs_energy_basic() {
 fn test_spot_subgraphs_energy_with_item_mapping() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
     let builder = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 12, 8, 2.0, None)
         .with_seed(999);
@@ -210,7 +210,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
     crate::init();
 
     // 300 points, 10 cliques, tight clusters, 50 dimensions → expect ~10 motifs
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
 
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 14, 10, 2.0, None)
@@ -287,7 +287,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
 fn test_subgraph_energy_rayleigh_filter() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 50, 999);
+    let rows = make_gaussian_cliques_multi(300, 0.2, 10, 100, 999);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.4, 12, 8, 2.0, None)
         .with_seed(999)
@@ -334,7 +334,7 @@ fn test_subgraph_energy_rayleigh_filter() {
 fn test_subgraph_structure_clique_data() {
     crate::init();
 
-    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 50, 999);
+    let rows = make_gaussian_cliques_multi(200, 0.3, 6, 100, 999);
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(0.35, 14, 10, 2.0, None)
         .with_seed(999)

@@ -1293,6 +1293,13 @@ impl ConfigValue {
     pub fn as_usize(&self) -> Option<usize> {
         match self {
             ConfigValue::Usize(v) => Some(*v),
+            ConfigValue::OptionUsize(v) => {
+                if v.is_some() {
+                    Some(v.unwrap())
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1300,6 +1307,13 @@ impl ConfigValue {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             ConfigValue::F64(v) => Some(*v),
+            ConfigValue::OptionF64(v) => {
+                if v.is_some() {
+                    Some(v.unwrap())
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1307,6 +1321,13 @@ impl ConfigValue {
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             ConfigValue::U64(v) => Some(*v),
+            ConfigValue::OptionU64(v) => {
+                if v.is_some() {
+                    Some(v.unwrap())
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1364,15 +1385,19 @@ impl ArrowSpaceBuilder {
         if self.projection_matrix.is_some() {
             config.insert(
                 "pj_mtx_original_dim".to_string(),
-                ConfigValue::Usize(self.projection_matrix.as_ref().unwrap().original_dim),
+                ConfigValue::OptionUsize(Some(
+                    self.projection_matrix.as_ref().unwrap().original_dim,
+                )),
             );
             config.insert(
                 "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::Usize(self.projection_matrix.as_ref().unwrap().reduced_dim),
+                ConfigValue::OptionUsize(Some(
+                    self.projection_matrix.as_ref().unwrap().reduced_dim,
+                )),
             );
             config.insert(
                 "pj_mtx_seed".to_string(),
-                ConfigValue::U64(self.projection_matrix.as_ref().unwrap().seed),
+                ConfigValue::OptionU64(Some(self.projection_matrix.as_ref().unwrap().seed)),
             );
 
             config.insert(
