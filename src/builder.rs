@@ -5,7 +5,7 @@
 //! - EigenMaps (`build` and `build_for_persistence` with `Pipeline::Eigen`)
 //! - EnergyMaps (`build_energy` and `build_for_persistence` with `Pipeline::Energy`)
 
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smartcore::linalg::basic::arrays::{Array, Array2};
@@ -13,14 +13,18 @@ use smartcore::linalg::basic::matrix::DenseMatrix;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
-use crate::clustering::ClusteringHeuristic;
+use crate::clustering::{
+    ClusteredOutput, ClusteringHeuristic, run_incremental_clustering_with_sampling,
+};
 use crate::core::{ArrowSpace, TAUDEFAULT};
-use crate::eigenmaps::{ClusteredOutput, EigenMaps};
+use crate::eigenmaps::EigenMaps;
 use crate::energymaps::EnergyMaps;
 use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
-use crate::sampling::SamplerType;
+use crate::reduction::{ImplicitProjection, compute_jl_dimension};
+use crate::sampling::{InlineSampler, SamplerType};
 use crate::taumode::TauMode;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -64,6 +68,12 @@ pub struct ArrowSpaceBuilder {
     // activate sampling, default false
     pub sampling: Option<SamplerType>,
 
+    // activate dimensionality reduction and projection matrix
+    // Projection data: dims reduction data (needed to prepare the query vector)
+    pub(crate) projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
+    pub(crate) reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
+    pub(crate) extra_reduced_dim: bool,    // optional extra dimensionality reduction for energymaps
+
     // Synthetic index configuration (used `with_synthesis`)
     pub synthesis: TauMode, // (tau_mode)
 
@@ -104,6 +114,9 @@ impl Default for ArrowSpaceBuilder {
             sparsity_check: false,
             // sampling default
             sampling: Some(SamplerType::Simple(0.6)),
+            projection_matrix: None,
+            reduced_dim: None,
+            extra_reduced_dim: false,
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
@@ -119,7 +132,248 @@ impl Default for ArrowSpaceBuilder {
     }
 }
 
-impl ClusteringHeuristic for ArrowSpaceBuilder {}
+impl ClusteringHeuristic for ArrowSpaceBuilder {
+    fn start_clustering(&mut self, rows: Vec<Vec<f64>>) -> ClusteredOutput {
+        let n_items = rows.len();
+        let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
+
+        info!(
+            "EigenMaps::start_clustering: N={} items, F={} features",
+            n_items, n_features
+        );
+
+        // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
+        debug!("Creating ArrowSpace with taumode: {:?}", self.synthesis);
+        let mut aspace = ArrowSpace::new(rows.clone(), self.synthesis);
+
+        // Configure inline sampler matching builder policy
+        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
+            match self.sampling.clone() {
+                Some(SamplerType::Simple(r)) => {
+                    debug!("Using Simple sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
+                }
+                Some(SamplerType::DensityAdaptive(r)) => {
+                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
+                }
+                None => {
+                    debug!("No sampling configured, using full dataset");
+                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+                }
+            }
+        } else {
+            // For small datasets, keep everything
+            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+        };
+
+        // Auto-compute optimal clustering parameters via heuristic
+        info!("Computing optimal clustering parameters");
+        let (k_opt, radius, intrinsic_dim) =
+            self.compute_optimal_k(&rows, n_items, n_features, self.clustering_seed);
+        debug!(
+            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
+            k_opt, radius, intrinsic_dim
+        );
+
+        self.cluster_max_clusters = Some(k_opt);
+        self.cluster_radius = radius;
+
+        // Run incremental clustering with sampling
+        info!(
+            "Running incremental clustering: max_clusters={}, radius={:.6}",
+            k_opt, radius
+        );
+        let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
+            self, &rows, n_features, k_opt, radius, sampler,
+        );
+
+        let n_clusters = clustered_dm.shape().0;
+        info!(
+            "Clustering complete: {} centroids, {} items assigned",
+            n_clusters,
+            assignments.iter().filter(|x| x.is_some()).count()
+        );
+
+        // Store clustering metadata in ArrowSpace
+        aspace.n_clusters = n_clusters;
+        aspace.cluster_assignments = assignments;
+        aspace.cluster_sizes = sizes;
+        aspace.cluster_radius = radius;
+
+        // Optional JL projection for high-dimensional datasets
+        let (centroids, reduced_dim) = if self.use_dims_reduction && n_features > 64 {
+            let jl_dim = compute_jl_dimension(n_clusters, self.rp_eps);
+            let target_dim = jl_dim.min(n_features / 2);
+
+            if target_dim < n_features && target_dim > clustered_dm.shape().0 {
+                info!(
+                    "Applying JL projection: {} features → {} dimensions (ε={:.2})",
+                    n_features, target_dim, self.rp_eps
+                );
+                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
+
+                aspace.projection_matrix = Some(implicit_proj.clone());
+                aspace.reduced_dim = Some(target_dim);
+                self.projection_matrix = Some(implicit_proj);
+                self.reduced_dim = Some(target_dim);
+
+                let compression = n_features as f64 / target_dim as f64;
+                info!(
+                    "Projection complete: {:.1}x compression, stored as 8-byte seed",
+                    compression
+                );
+
+                (projected, target_dim)
+            } else {
+                debug!(
+                    "JL target dimension {} >= original {}, skipping projection",
+                    target_dim, n_features
+                );
+                (clustered_dm.clone(), n_features)
+            }
+        } else {
+            debug!("JL projection disabled or dimension too small");
+            (clustered_dm.clone(), n_features)
+        };
+
+        trace!("Clustering stage complete, returning ClusteredOutput");
+        ClusteredOutput {
+            aspace,
+            centroids,
+            reduced_dim,
+            n_items,
+            n_features,
+        }
+    }
+
+    /// `start_clustering` but for `DenseMatrix`
+    fn start_clustering_dense(
+        builder: &mut ArrowSpaceBuilder,
+        rows: DenseMatrix<f64>,
+    ) -> ClusteredOutput {
+        let n_items = rows.shape().0;
+        let n_features = rows.shape().1;
+
+        info!(
+            "EigenMaps::start_clustering: N={} items, F={} features",
+            n_items, n_features
+        );
+
+        // Prepare base ArrowSpace with the builder's taumode (will be used in compute_taumode)
+        debug!("Creating ArrowSpace with taumode: {:?}", builder.synthesis);
+        let mut aspace = ArrowSpace::new_from_dense(rows.clone(), builder.synthesis);
+
+        // Configure inline sampler matching builder policy
+        let sampler: Arc<Mutex<dyn InlineSampler>> = if aspace.nitems > 1000 {
+            match builder.sampling.clone() {
+                Some(SamplerType::Simple(r)) => {
+                    debug!("Using Simple sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_simple(r)))
+                }
+                Some(SamplerType::DensityAdaptive(r)) => {
+                    debug!("Using DensityAdaptive sampler with ratio {:.2}", r);
+                    Arc::new(Mutex::new(SamplerType::new_density_adaptive(r)))
+                }
+                None => {
+                    debug!("No sampling configured, using full dataset");
+                    Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+                }
+            }
+        } else {
+            // For small datasets, keep everything
+            Arc::new(Mutex::new(SamplerType::new_simple(1.0)))
+        };
+
+        // Auto-compute optimal clustering parameters via heuristic
+        info!("Computing optimal clustering parameters");
+        let compute: Vec<Vec<f64>> = (0..n_items)
+            .map(|i| rows.get_row(i).iterator(0).copied().collect())
+            .collect();
+        let (k_opt, radius, intrinsic_dim) = builder.compute_optimal_k(
+            &compute.clone(),
+            n_items,
+            n_features,
+            builder.clustering_seed,
+        );
+        debug!(
+            "Optimal clustering: K={}, radius={:.6}, intrinsic_dim={}",
+            k_opt, radius, intrinsic_dim
+        );
+
+        builder.cluster_max_clusters = Some(k_opt);
+        builder.cluster_radius = radius;
+
+        // Run incremental clustering with sampling
+        info!(
+            "Running incremental clustering: max_clusters={}, radius={:.6}",
+            k_opt, radius
+        );
+        let (clustered_dm, assignments, sizes) = run_incremental_clustering_with_sampling(
+            builder, &compute, n_features, k_opt, radius, sampler,
+        );
+
+        let n_clusters = clustered_dm.shape().0;
+        info!(
+            "Clustering complete: {} centroids, {} items assigned",
+            n_clusters,
+            assignments.iter().filter(|x| x.is_some()).count()
+        );
+
+        // Store clustering metadata in ArrowSpace
+        aspace.n_clusters = n_clusters;
+        aspace.cluster_assignments = assignments;
+        aspace.cluster_sizes = sizes;
+        aspace.cluster_radius = radius;
+
+        // Optional JL projection for high-dimensional datasets
+        let (centroids, reduced_dim) = if builder.use_dims_reduction && n_features > 64 {
+            let jl_dim = compute_jl_dimension(n_clusters, builder.rp_eps);
+            let target_dim = jl_dim.min(n_features / 2);
+
+            if target_dim < n_features && target_dim > clustered_dm.shape().0 {
+                info!(
+                    "Applying JL projection: {} features → {} dimensions (ε={:.2})",
+                    n_features, target_dim, builder.rp_eps
+                );
+                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
+
+                aspace.projection_matrix = Some(implicit_proj.clone());
+                aspace.reduced_dim = Some(target_dim);
+                builder.projection_matrix = Some(implicit_proj);
+                builder.reduced_dim = Some(target_dim);
+
+                let compression = n_features as f64 / target_dim as f64;
+                info!(
+                    "Projection complete: {:.1}x compression, stored as 8-byte seed",
+                    compression
+                );
+
+                (projected, target_dim)
+            } else {
+                debug!(
+                    "JL target dimension {} >= original {}, skipping projection",
+                    target_dim, n_features
+                );
+                (clustered_dm.clone(), n_features)
+            }
+        } else {
+            debug!("JL projection disabled or dimension too small");
+            (clustered_dm.clone(), n_features)
+        };
+
+        trace!("Clustering stage complete, returning ClusteredOutput");
+        ClusteredOutput {
+            aspace,
+            centroids,
+            reduced_dim,
+            n_items,
+            n_features,
+        }
+    }
+}
 
 impl ArrowSpaceBuilder {
     pub fn new() -> Self {
@@ -140,6 +394,9 @@ impl ArrowSpaceBuilder {
         result.normalise = self.normalise;
         result.sparsity_check = self.sparsity_check;
         result.sampling = self.sampling.clone();
+        result.projection_matrix = self.projection_matrix.clone();
+        result.reduced_dim = self.reduced_dim;
+        result.extra_reduced_dim = self.extra_reduced_dim;
         result.use_dims_reduction = self.use_dims_reduction;
         result.rp_eps = self.rp_eps;
         result.persistence = self.persistence.clone();
@@ -365,7 +622,7 @@ impl ArrowSpaceBuilder {
             n_items: _n_items,
             n_features: _n_features,
             ..
-        } = ArrowSpace::start_clustering(&mut self, rows.clone());
+        } = Self::start_clustering(&mut self, rows.clone());
 
         // Save clustered centroids if persistence is enabled
         #[cfg(feature = "storage")]
@@ -571,7 +828,7 @@ impl ArrowSpaceBuilder {
                     n_items: _n_items,
                     n_features: _n_features,
                     ..
-                } = ArrowSpace::start_clustering_dense(&mut self, rows.clone());
+                } = Self::start_clustering_dense(&mut self, rows.clone());
 
                 // ============================================================
                 // Stage 2: Build item-graph Laplacian
@@ -634,7 +891,7 @@ impl ArrowSpaceBuilder {
                     mut aspace,
                     mut centroids,
                     ..
-                } = ArrowSpace::start_clustering_dense(&mut self, rows);
+                } = Self::start_clustering_dense(&mut self, rows);
 
                 // check that projection has been applied or not
                 if aspace.projection_matrix.is_some() && aspace.nfeatures > 64 {
@@ -1015,6 +1272,7 @@ pub enum ConfigValue {
     Bool(bool),
     Usize(usize),
     F64(f64),
+    U64(u64),
     String(String),
     OptionF64(Option<f64>),
     OptionUsize(Option<usize>),
@@ -1042,6 +1300,13 @@ impl ConfigValue {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             ConfigValue::F64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            ConfigValue::U64(v) => Some(*v),
             _ => None,
         }
     }
@@ -1094,6 +1359,39 @@ impl ArrowSpaceBuilder {
             "sampling".to_string(),
             ConfigValue::OptionSamplerType(self.sampling.clone()),
         );
+
+        // projection matrix
+        if self.projection_matrix.is_some() {
+            config.insert(
+                "pj_mtx_original_dim".to_string(),
+                ConfigValue::Usize(self.projection_matrix.as_ref().unwrap().original_dim),
+            );
+            config.insert(
+                "pj_mtx_reduced_dim".to_string(),
+                ConfigValue::Usize(self.projection_matrix.as_ref().unwrap().reduced_dim),
+            );
+            config.insert(
+                "pj_mtx_seed".to_string(),
+                ConfigValue::U64(self.projection_matrix.as_ref().unwrap().seed),
+            );
+
+            config.insert(
+                "extra_reduced_dim".to_string(),
+                ConfigValue::Bool(self.extra_dims_reduction),
+            );
+        } else {
+            config.insert(
+                "pj_mtx_original_dim".to_string(),
+                ConfigValue::OptionUsize(None),
+            );
+            config.insert(
+                "pj_mtx_reduced_dim".to_string(),
+                ConfigValue::OptionUsize(None),
+            );
+            config.insert("pj_mtx_seed".to_string(), ConfigValue::OptionU64(None));
+            config.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
+        }
+
         config.insert(
             "cluster_max_clusters".to_string(),
             ConfigValue::OptionUsize(self.cluster_max_clusters),
@@ -1127,6 +1425,7 @@ impl fmt::Display for ConfigValue {
             ConfigValue::Bool(v) => write!(f, "{}", v),
             ConfigValue::Usize(v) => write!(f, "{}", v),
             ConfigValue::F64(v) => write!(f, "{}", v),
+            ConfigValue::U64(v) => write!(f, "{}", v),
             ConfigValue::String(v) => write!(f, "{}", v),
 
             // Optional primitive types

@@ -165,7 +165,7 @@ pub fn project_matrix(
     DenseMatrix::from_iterator(flat.into_iter(), n_rows, target_dim, 1)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImplicitProjection {
     pub(crate) original_dim: usize,
     pub(crate) reduced_dim: usize,

@@ -12,8 +12,8 @@ use smartcore::linalg::basic::arrays::{Array, Array2, MutArray};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
 use crate::builder::ArrowSpaceBuilder;
+use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
-use crate::eigenmaps::{ClusteredOutput, EigenMaps};
 use crate::graph::{GraphLaplacian, GraphParams};
 use crate::laplacian::build_laplacian_matrix;
 use crate::reduction::ImplicitProjection;
@@ -1136,7 +1136,7 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
             mut aspace,
             mut centroids,
             ..
-        } = ArrowSpace::start_clustering(self, rows);
+        } = self.start_clustering(rows);
 
         // check that projection has been applied or not
         if aspace.projection_matrix.is_some() && aspace.nfeatures > 64 {

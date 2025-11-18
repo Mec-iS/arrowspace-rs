@@ -2,9 +2,10 @@ use approx::relative_eq;
 use log::{debug, info};
 use smartcore::linalg::basic::arrays::Array;
 
+use crate::reduction::ImplicitProjection;
 use crate::tests::init;
 use crate::{
-    builder::ArrowSpaceBuilder,
+    builder::{ArrowSpaceBuilder, ConfigValue},
     sampling::SamplerType,
     tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
@@ -562,4 +563,116 @@ fn test_builder_unit_norm_diagonal_similarity() {
 
     // Now should be identical
     assert_eq!(aspace_norm.n_clusters, aspace_raw.n_clusters);
+}
+
+#[test]
+fn builder_config_typed_roundtrip_with_projection() {
+    let mut builder = ArrowSpaceBuilder::new();
+
+    // Set non-default values
+    builder.prebuilt_spectral = true;
+    builder.lambda_eps = 0.25;
+    builder.lambda_k = 7;
+    builder.lambda_topk = 42;
+    builder.lambda_p = 1.7;
+    builder.lambda_sigma = Some(0.9);
+    builder.normalise = true;
+    builder.sparsity_check = false;
+
+    // synthesis and sampling are enums; pick any non-default values
+    builder.synthesis = crate::taumode::TauMode::Median;
+    builder.sampling = Some(SamplerType::Simple(0.6));
+
+    // projection matrix present
+    builder.projection_matrix = Some(ImplicitProjection {
+        original_dim: 384,
+        reduced_dim: 91,
+        seed: 123456789,
+    });
+    builder.extra_dims_reduction = true;
+
+    builder.cluster_max_clusters = Some(128);
+    builder.cluster_radius = 0.33;
+    builder.clustering_seed = Some(999);
+    builder.deterministic_clustering = true;
+    builder.use_dims_reduction = true;
+    builder.rp_eps = 0.42;
+
+    let cfg = builder.builder_config_typed();
+
+    assert_eq!(cfg.get("prebuilt_spectral"), Some(&ConfigValue::Bool(true)));
+    assert_eq!(cfg.get("lambda_eps"), Some(&ConfigValue::F64(0.25)));
+    assert_eq!(cfg.get("lambda_k"), Some(&ConfigValue::Usize(7)));
+    assert_eq!(cfg.get("lambda_topk"), Some(&ConfigValue::Usize(42)));
+    assert_eq!(cfg.get("lambda_p"), Some(&ConfigValue::F64(1.7)));
+    assert_eq!(
+        cfg.get("lambda_sigma"),
+        Some(&ConfigValue::OptionF64(Some(0.9)))
+    );
+    assert_eq!(cfg.get("normalise"), Some(&ConfigValue::Bool(true)));
+    assert_eq!(cfg.get("sparsity_check"), Some(&ConfigValue::Bool(false)));
+
+    assert_eq!(
+        cfg.get("synthesis"),
+        Some(&ConfigValue::TauMode(crate::taumode::TauMode::Median))
+    );
+    assert_eq!(
+        cfg.get("sampling"),
+        Some(&ConfigValue::OptionSamplerType(Some(SamplerType::Simple(
+            0.6
+        ))))
+    );
+
+    // projection present branch
+    assert_eq!(
+        cfg.get("pj_mtx_original_dim"),
+        Some(&ConfigValue::Usize(384))
+    );
+    assert_eq!(cfg.get("pj_mtx_reduced_dim"), Some(&ConfigValue::Usize(91)));
+    assert_eq!(cfg.get("pj_mtx_seed"), Some(&ConfigValue::U64(123456789)));
+    assert_eq!(cfg.get("extra_reduced_dim"), Some(&ConfigValue::Bool(true)));
+
+    assert_eq!(
+        cfg.get("cluster_max_clusters"),
+        Some(&ConfigValue::OptionUsize(Some(128)))
+    );
+    assert_eq!(cfg.get("cluster_radius"), Some(&ConfigValue::F64(0.33)));
+    assert_eq!(
+        cfg.get("clustering_seed"),
+        Some(&ConfigValue::OptionU64(Some(999)))
+    );
+    assert_eq!(
+        cfg.get("deterministic_clustering"),
+        Some(&ConfigValue::Bool(true))
+    );
+    assert_eq!(
+        cfg.get("use_dims_reduction"),
+        Some(&ConfigValue::Bool(true))
+    );
+    assert_eq!(cfg.get("rp_eps"), Some(&ConfigValue::F64(0.42)));
+}
+
+#[test]
+fn builder_config_typed_projection_none_branch() {
+    let mut builder = ArrowSpaceBuilder::new();
+
+    // Ensure projection-related fields are in the "none" state
+    builder.projection_matrix = None;
+    builder.extra_dims_reduction = false;
+
+    let cfg = builder.builder_config_typed();
+
+    assert_eq!(
+        cfg.get("pj_mtx_original_dim"),
+        Some(&ConfigValue::OptionUsize(None))
+    );
+    assert_eq!(
+        cfg.get("pj_mtx_reduced_dim"),
+        Some(&ConfigValue::OptionUsize(None))
+    );
+    assert_eq!(cfg.get("pj_mtx_seed"), Some(&ConfigValue::OptionU64(None)));
+    assert_eq!(
+        cfg.get("extra_reduced_dim"),
+        Some(&ConfigValue::Bool(false))
+    );
 }
