@@ -542,6 +542,121 @@ impl ArrowSpace {
         aspace
     }
 
+    /// Recreates an ArrowSpace from a builder configuration HashMap.
+    ///
+    /// This method reconstructs a workable ArrowSpace with all properties set
+    /// from the builder configuration, but with an empty data matrix.
+    ///
+    /// Arguments:
+    /// * `builder_config` - HashMap containing builder configuration from `builder_config_typed()`
+    /// * `nrows` - Number of rows (items) for the empty space
+    /// * `ncols` - Number of columns (features) for the empty space
+    ///
+    /// Returns:
+    /// A fully configured ArrowSpace with empty data
+    pub fn from_builder_config(builder_config: HashMap<String, ConfigValue>) -> Self {
+        // Extract dimensions
+        let nitems = builder_config
+            .get("nitems")
+            .expect("nitems missing from config")
+            .as_usize()
+            .expect("nitems must be usize");
+
+        let nfeatures = builder_config
+            .get("nfeatures")
+            .expect("nfeatures missing from config")
+            .as_usize()
+            .expect("n_features must be usize");
+
+        debug!(
+            "ArrowSpace::from_builder_config called with nitems={}, nfeatures={}",
+            nitems, nfeatures
+        );
+
+        // Prepare projection data for empty_with_projection
+        let mut proj_data: HashMap<String, ConfigValue> = HashMap::with_capacity(4);
+
+        proj_data.insert(
+            "pj_mtx_original_dim".to_string(),
+            builder_config["pj_mtx_original_dim"].clone(),
+        );
+        proj_data.insert(
+            "pj_mtx_reduced_dim".to_string(),
+            builder_config["pj_mtx_reduced_dim"].clone(),
+        );
+        proj_data.insert(
+            "pj_mtx_seed".to_string(),
+            builder_config["pj_mtx_seed"].clone(),
+        );
+        proj_data.insert(
+            "extra_reduced_dim".to_string(),
+            builder_config["extra_reduced_dim"].clone(),
+        );
+
+        // Start with empty_with_projection to set up projection correctly
+        let mut aspace = Self::empty_with_projection(proj_data, nitems, nfeatures);
+        aspace.nitems = nitems;
+        aspace.nfeatures = nfeatures;
+
+        // Populate ArrowSpace properties from builder_config
+        // TauMode (synthesis)
+        if let Some(ConfigValue::TauMode(taumode)) = builder_config.get("synthesis") {
+            aspace.taumode = taumode.clone();
+            debug!("Set taumode: {:?}", aspace.taumode);
+        }
+
+        // Clustering properties
+        if let Some(ConfigValue::F64(radius)) = builder_config.get("cluster_radius") {
+            aspace.cluster_radius = *radius;
+            debug!("Set cluster_radius: {}", aspace.cluster_radius);
+        }
+
+        // Set n_clusters from cluster_max_clusters (may be None)
+        if let Some(ConfigValue::OptionUsize(max_clusters)) =
+            builder_config.get("cluster_max_clusters")
+        {
+            aspace.n_clusters = max_clusters.unwrap_or(0);
+            debug!(
+                "Set n_clusters from cluster_max_clusters: {}",
+                aspace.n_clusters
+            );
+        }
+
+        // Initialize lambda normalization properties (will be set when lambdas are computed)
+        aspace.min_lambdas = f64::NAN;
+        aspace.max_lambdas = f64::NAN;
+        aspace.range_lambdas = f64::NAN;
+
+        // Initialize clustering state (will be populated during actual clustering)
+        aspace.cluster_assignments = Vec::new();
+        aspace.cluster_sizes = Vec::new();
+
+        // Energy-specific properties (remain None until energy pipeline is run)
+        aspace.centroid_map = None;
+        aspace.sub_centroids = None;
+        aspace.subcentroid_lambdas = None;
+        aspace.item_norms = None;
+
+        // Initialize empty signals matrix (will be computed during build)
+        aspace.signals = sprs::CsMat::zero((0, 0));
+
+        // Initialize lambdas vector with zeros (will be computed during build)
+        aspace.lambdas = vec![0.0; nitems];
+        aspace.lambdas_sorted = SortedLambdas::new();
+
+        debug!(
+            "ArrowSpace::from_builder_config created ArrowSpace with \
+            nitems={}, nfeatures={}, reduced_dim={:?}, taumode={:?}, cluster_radius={}",
+            aspace.nitems,
+            aspace.nfeatures,
+            aspace.reduced_dim,
+            aspace.taumode,
+            aspace.cluster_radius
+        );
+
+        aspace
+    }
+
     // drop stored in-memory data
     // to be used after data has been persisted to file
     pub fn drop_data(&mut self) {

@@ -112,12 +112,12 @@ impl EnergyParams {
         // Adaptive optical compression
         // Priority 1: Use dataset size if available (2√N rule)
         // Priority 2: Use dimensionality heuristic (legacy)
-        let optical_tokens = if builder.n_items_original != 0 {
+        let optical_tokens = if builder.nitems != 0 {
             // Dataset-size-aware adaptive tokens (preferred)
-            let tokens = Self::compute_adaptive_tokens(builder.n_items_original);
+            let tokens = Self::compute_adaptive_tokens(builder.nitems);
             info!(
                 "Using dataset-aware optical_tokens={} for {} items (2√N rule)",
-                tokens, builder.n_items_original
+                tokens, builder.nitems
             );
             Some(tokens)
         } else if builder.use_dims_reduction {
@@ -1127,7 +1127,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                 "Spectral mode not compatible with build_energy, please do not enable for energy search"
             );
         }
-        self.n_items_original = rows.len();
+        self.nitems = rows.len();
+        self.nfeatures = rows[0].len();
 
         // ============================================================
         // Stage 1: Clustering with sampling and optional projection

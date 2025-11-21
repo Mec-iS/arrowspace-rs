@@ -49,7 +49,8 @@ impl FromStr for Pipeline {
 
 #[derive(Clone, PartialEq)]
 pub struct ArrowSpaceBuilder {
-    pub(crate) n_items_original: usize,
+    pub(crate) nitems: usize,
+    pub(crate) nfeatures: usize,
     pub prebuilt_spectral: bool, // true if spectral laplacian has been computed
 
     // Lambda-graph parameters (the canonical path)
@@ -97,7 +98,8 @@ impl Default for ArrowSpaceBuilder {
     fn default() -> Self {
         debug!("Creating ArrowSpaceBuilder with default parameters");
         Self {
-            n_items_original: 0,
+            nitems: 0,
+            nfeatures: 0,
             // arrows: ArrowSpace::default(),
             prebuilt_spectral: false,
 
@@ -566,8 +568,9 @@ impl ArrowSpaceBuilder {
     ///   with_synthesis was called, in which case synthetic lambdas are computed on that graph.
     pub fn build(mut self, rows: Vec<Vec<f64>>) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.len();
-        self.n_items_original = n_items;
+        self.nitems = n_items;
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
+        self.nfeatures = n_features;
         let start = std::time::Instant::now();
 
         // set baseline for topk
@@ -791,8 +794,9 @@ impl ArrowSpaceBuilder {
         energy_params: Option<EnergyParams>,
     ) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.shape().0;
-        self.n_items_original = n_items;
+        self.nitems = n_items;
         let n_features = rows.shape().1;
+        self.nfeatures = n_features;
         let start = std::time::Instant::now();
 
         // set baseline for topk
@@ -882,7 +886,8 @@ impl ArrowSpaceBuilder {
                         "Spectral mode not compatible with energy pipeline, please do not enable for energy search"
                     );
                 }
-                self.n_items_original = rows.shape().0;
+                self.nitems = rows.shape().0;
+                self.nfeatures = rows.shape().1;
 
                 // ============================================================
                 // Stage 1: Clustering with sampling and optional projection
@@ -1351,6 +1356,9 @@ impl ConfigValue {
 impl ArrowSpaceBuilder {
     pub fn builder_config_typed(&self) -> HashMap<String, ConfigValue> {
         let mut config = HashMap::new();
+
+        config.insert("nitems".to_string(), ConfigValue::Usize(self.nitems));
+        config.insert("nfeatures".to_string(), ConfigValue::Usize(self.nfeatures));
 
         config.insert(
             "prebuilt_spectral".to_string(),

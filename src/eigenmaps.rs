@@ -125,13 +125,7 @@ pub trait EigenMaps {
     ///
     /// # Panics
     /// Panics (in debug builds) if `compute_taumode` was not called before search.
-    fn search(
-        &mut self,
-        item: &[f64],
-        gl: &GraphLaplacian,
-        k: usize,
-        alpha: f64,
-    ) -> Vec<(usize, f64)>;
+    fn search(&self, item: &[f64], gl: &GraphLaplacian, k: usize, alpha: f64) -> Vec<(usize, f64)>;
 }
 
 impl EigenMaps for ArrowSpace {
@@ -232,13 +226,7 @@ impl EigenMaps for ArrowSpace {
         );
     }
 
-    fn search(
-        &mut self,
-        item: &[f64],
-        gl: &GraphLaplacian,
-        k: usize,
-        alpha: f64,
-    ) -> Vec<(usize, f64)> {
+    fn search(&self, item: &[f64], gl: &GraphLaplacian, k: usize, alpha: f64) -> Vec<(usize, f64)> {
         info!(
             "EigenMaps::search: k={}, alpha={:.2}, query_dim={}",
             k,
