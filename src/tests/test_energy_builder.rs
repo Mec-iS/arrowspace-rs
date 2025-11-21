@@ -5,7 +5,7 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
-use log::info;
+use log::{debug, info};
 use smartcore::linalg::basic::arrays::Array;
 
 use crate::tests::test_data::{make_gaussian_hd, make_moons_hd};
@@ -291,7 +291,7 @@ fn test_build_energy_dimensionality_reduction() {
         n_features
     );
 
-    println!("✓ Dimension reduction: {} → {}", 100, reduced_dim);
+    debug!("✓ Dimension reduction: {} → {}", 100, reduced_dim);
 
     // Test 2: Verify sub_centroids have reduced dimensions
     let sub_centroids = aspace
@@ -306,7 +306,7 @@ fn test_build_energy_dimensionality_reduction() {
         sub_features, reduced_dim
     );
 
-    println!(
+    debug!(
         "✓ Sub_centroids shape: {} × {}",
         n_subcentroids, sub_features
     );
@@ -320,7 +320,7 @@ fn test_build_energy_dimensionality_reduction() {
         graph_rows, graph_cols
     );
 
-    println!("✓ Graph shape: {}×{}", graph_rows, graph_cols);
+    debug!("✓ Graph shape: {}×{}", graph_rows, graph_cols);
 
     // Test 4: Verify lambdas computed for all items
     assert_eq!(
@@ -336,7 +336,7 @@ fn test_build_energy_dimensionality_reduction() {
         "All lambdas should be finite and non-negative"
     );
 
-    println!("✓ Lambdas computed: {} values", aspace.lambdas.len());
+    debug!("✓ Lambdas computed: {} values", aspace.lambdas.len());
 
     // Test 5: Verify centroid mapping exists and is valid
     let centroid_map = aspace
@@ -358,7 +358,7 @@ fn test_build_energy_dimensionality_reduction() {
         n_subcentroids
     );
 
-    println!(
+    debug!(
         "✓ Centroid mapping valid: {} items mapped",
         centroid_map.len()
     );
@@ -382,7 +382,7 @@ fn test_build_energy_dimensionality_reduction() {
         "All norms should be positive and finite"
     );
 
-    println!("✓ Item norms computed: {} values", item_norms.len());
+    debug!("✓ Item norms computed: {} values", item_norms.len());
 
     // Test 7: Test projection consistency
     let test_item = &rows[0];
@@ -396,13 +396,13 @@ fn test_build_energy_dimensionality_reduction() {
         reduced_dim
     );
 
-    println!("✓ Query projection: {} → {}", 100, projected.len());
+    debug!("✓ Query projection: {} → {}", 100, projected.len());
 
     // Test 8: No bounds errors during lambda computation
     // This implicitly passed if we got here without panicking
-    println!("✓ No index out of bounds errors during taumode computation");
+    debug!("✓ No index out of bounds errors during taumode computation");
 
-    println!("\n✅ All dimensionality reduction tests passed!");
+    debug!("\n✅ All dimensionality reduction tests passed!");
 }
 
 #[test]

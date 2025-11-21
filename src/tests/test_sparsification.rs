@@ -1,3 +1,5 @@
+use log::debug;
+
 #[test]
 fn test_sfgrass_basic() {
     let adj_rows = vec![
@@ -64,6 +66,6 @@ fn test_sfgrass_vs_no_sparsification() {
     let time_full = start.elapsed();
 
     // Should be faster
-    println!("SF-GRASS: {:?}, Full: {:?}", time_sparse, time_full);
+    debug!("SF-GRASS: {:?}, Full: {:?}", time_sparse, time_full);
     assert!(time_sparse.as_millis() < time_full.as_millis());
 }

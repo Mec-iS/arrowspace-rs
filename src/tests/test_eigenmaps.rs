@@ -19,18 +19,17 @@
 //! across both paths. Without seeding, clustering is nondeterministic due to parallel
 //! processing in incremental clustering.
 
-use approx::relative_ne;
-use log::info;
-
 use crate::builder::ArrowSpaceBuilder;
 use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
 use crate::eigenmaps::EigenMaps;
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
-
 use crate::tests::init;
 use crate::tests::test_data::make_gaussian_hd;
+
+use approx::{relative_eq, relative_ne};
+use log::{debug, info};
 
 /// Helper: Compare two ArrowSpace lambda vectors element-wise with tolerance.
 fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: bool) {
@@ -46,7 +45,7 @@ fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: b
             );
         }
         if relative_ne!(la, lb, epsilon = tol, max_relative = tol) {
-            println!("lambdas are not equal: {} {}", la, lb);
+            debug!("lambdas are not equal: {} {}", la, lb);
             panic!("{}[{}]: lambda mismatch", label, i)
         } else {
         };
@@ -341,7 +340,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
 
     let results_exp = aspace.search(&query, &gl_exp, k, tau);
 
-    assert_search_results_equal(&results_control, &results_exp, 1e-6, "mean_taumode search");
+    assert_search_results_equal(&results_control, &results_exp, 1e-10, "mean_taumode search");
 
     info!("✓ EigenMaps trait matches build() with Mean taumode");
 }
@@ -424,4 +423,32 @@ fn test_eigenmaps_stages_produce_valid_state() {
     );
 
     info!("✓ All stages produce valid intermediate state");
+}
+
+#[test]
+fn test_eigenmaps_with_dim_reduction() {
+    crate::init(); // Initialize logger
+
+    let rows = make_gaussian_hd(99, 0.6);
+    let query_idx = 10;
+    let query = &rows[query_idx];
+    let k = 5;
+
+    // Control: original build path
+    let builder_control = ArrowSpaceBuilder::new()
+        .with_lambda_graph(0.5, 3, 3, 2.0, None)
+        .with_synthesis(TauMode::Median)
+        .with_seed(12345) // Deterministic clustering
+        .with_inline_sampling(None) // Disable sampling for exact equivalence
+        .with_dims_reduction(true, Some(0.1));
+
+    let (aspace, gl) = builder_control.build(rows.clone());
+
+    let results = aspace.search(query, &gl, k, 0.62);
+
+    assert!(
+        results
+            .iter()
+            .any(|(i, r)| *i == query_idx && relative_eq!(*r, 1.0, epsilon = 1e-10))
+    );
 }

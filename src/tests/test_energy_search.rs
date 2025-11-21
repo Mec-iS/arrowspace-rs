@@ -31,7 +31,7 @@ fn test_energy_search_basic() {
     let results = aspace.search_energy(&query, &gl_energy, k);
 
     assert_eq!(results.len(), k);
-    println!("{:?}", results);
+    debug!("{:?}", results);
     assert!(
         results[0].1 <= results[k - 1].1,
         "Results should be sorted ascending"
@@ -68,7 +68,7 @@ fn test_energy_search_single() {
     let query_item = rows[test_idx].clone();
     let prepared = aspace.prepare_query_item(&query_item.clone(), &gl);
 
-    println!("prepared {:?}", prepared);
+    debug!("prepared {:?}", prepared);
 
     info!(
         "Original dim: {}, Reduced dim: {}",
@@ -342,7 +342,7 @@ fn test_energy_search_score_monotonicity() {
     let query = rows[5].clone();
     let results = aspace.search_energy(&query, &gl_energy, 20);
 
-    println!("{:?}", results);
+    debug!("{:?}", results);
 
     for i in 1..results.len() {
         assert!(

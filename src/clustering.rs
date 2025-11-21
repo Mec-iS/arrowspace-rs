@@ -9,7 +9,7 @@
 //!   Calinski-Harabasz analysis, and adaptive thresholding
 //! - Helper methods for distance computations and pilot k-means
 //! - Parallel implementations for performance-critical operations
-//! Incremental clustering with optimal K heuristics for `ArrowSpace`.
+//!   Incremental clustering with optimal K heuristics for `ArrowSpace`.
 //!
 //! **DETERMINISTIC**: All random operations use fixed seed 128 for reproducibility.
 

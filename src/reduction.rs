@@ -173,11 +173,16 @@ pub struct ImplicitProjection {
 }
 
 impl ImplicitProjection {
-    pub fn new(original_dim: usize, reduced_dim: usize) -> Self {
+    pub fn new(original_dim: usize, reduced_dim: usize, seed: Option<u64>) -> Self {
         Self {
             original_dim,
             reduced_dim,
-            seed: rand::random(),
+            seed: {
+                match seed {
+                    Some(v) => v,
+                    None => rand::random(),
+                }
+            },
         }
     }
 

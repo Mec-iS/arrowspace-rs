@@ -125,13 +125,7 @@ pub trait EigenMaps {
     ///
     /// # Panics
     /// Panics (in debug builds) if `compute_taumode` was not called before search.
-    fn search(
-        &mut self,
-        item: &[f64],
-        gl: &GraphLaplacian,
-        k: usize,
-        alpha: f64,
-    ) -> Vec<(usize, f64)>;
+    fn search(&self, item: &[f64], gl: &GraphLaplacian, k: usize, alpha: f64) -> Vec<(usize, f64)>;
 }
 
 impl EigenMaps for ArrowSpace {
@@ -232,13 +226,7 @@ impl EigenMaps for ArrowSpace {
         );
     }
 
-    fn search(
-        &mut self,
-        item: &[f64],
-        gl: &GraphLaplacian,
-        k: usize,
-        alpha: f64,
-    ) -> Vec<(usize, f64)> {
+    fn search(&self, item: &[f64], gl: &GraphLaplacian, k: usize, alpha: f64) -> Vec<(usize, f64)> {
         info!(
             "EigenMaps::search: k={}, alpha={:.2}, query_dim={}",
             k,
@@ -257,15 +245,7 @@ impl EigenMaps for ArrowSpace {
 
         trace!("Preparing query λ with projection and taumode policy");
         let q_lambda = self.prepare_query_item(item, gl);
-        let projected_query = self.project_query(item);
-
-        debug!(
-            "Query λ={:.6}, projected_dim={}",
-            q_lambda,
-            projected_query.len()
-        );
-
-        let q = ArrowItem::new(projected_query, q_lambda);
+        let q = ArrowItem::new(item.to_vec(), q_lambda);
 
         // λ-aware semantic ranking
         let results = self.search_lambda_aware(&q, k, alpha);

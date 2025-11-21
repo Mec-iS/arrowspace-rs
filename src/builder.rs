@@ -49,7 +49,8 @@ impl FromStr for Pipeline {
 
 #[derive(Clone, PartialEq)]
 pub struct ArrowSpaceBuilder {
-    pub(crate) n_items_original: usize,
+    pub(crate) nitems: usize,
+    pub(crate) nfeatures: usize,
     pub prebuilt_spectral: bool, // true if spectral laplacian has been computed
 
     // Lambda-graph parameters (the canonical path)
@@ -68,12 +69,6 @@ pub struct ArrowSpaceBuilder {
     // activate sampling, default false
     pub sampling: Option<SamplerType>,
 
-    // activate dimensionality reduction and projection matrix
-    // Projection data: dims reduction data (needed to prepare the query vector)
-    pub(crate) projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
-    pub(crate) reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
-    pub(crate) extra_reduced_dim: bool,    // optional extra dimensionality reduction for energymaps
-
     // Synthetic index configuration (used `with_synthesis`)
     pub synthesis: TauMode, // (tau_mode)
 
@@ -81,10 +76,11 @@ pub struct ArrowSpaceBuilder {
     pub(crate) cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
     pub(crate) cluster_radius: f64,
+    /// used for clustering and dimensionality reduction (if active)
     pub(crate) clustering_seed: Option<u64>,
     pub(crate) deterministic_clustering: bool,
 
-    // dimensionality reduction with random projection (dafault false)
+    /// dimensionality reduction with random projection (dafault false)
     pub(crate) use_dims_reduction: bool,
     pub(crate) extra_dims_reduction: bool,
     pub(crate) rp_eps: f64,
@@ -97,7 +93,8 @@ impl Default for ArrowSpaceBuilder {
     fn default() -> Self {
         debug!("Creating ArrowSpaceBuilder with default parameters");
         Self {
-            n_items_original: 0,
+            nitems: 0,
+            nfeatures: 0,
             // arrows: ArrowSpace::default(),
             prebuilt_spectral: false,
 
@@ -114,9 +111,6 @@ impl Default for ArrowSpaceBuilder {
             sparsity_check: false,
             // sampling default
             sampling: Some(SamplerType::Simple(0.6)),
-            projection_matrix: None,
-            reduced_dim: None,
-            extra_reduced_dim: false,
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
@@ -211,13 +205,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
                     n_features, target_dim, self.rp_eps
                 );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(n_features, target_dim, self.clustering_seed);
                 let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 aspace.projection_matrix = Some(implicit_proj.clone());
                 aspace.reduced_dim = Some(target_dim);
-                self.projection_matrix = Some(implicit_proj);
-                self.reduced_dim = Some(target_dim);
 
                 let compression = n_features as f64 / target_dim as f64;
                 info!(
@@ -337,13 +330,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
                     n_features, target_dim, builder.rp_eps
                 );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(n_features, target_dim, builder.clustering_seed);
                 let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 aspace.projection_matrix = Some(implicit_proj.clone());
                 aspace.reduced_dim = Some(target_dim);
-                builder.projection_matrix = Some(implicit_proj);
-                builder.reduced_dim = Some(target_dim);
 
                 let compression = n_features as f64 / target_dim as f64;
                 info!(
@@ -394,9 +386,6 @@ impl ArrowSpaceBuilder {
         result.normalise = self.normalise;
         result.sparsity_check = self.sparsity_check;
         result.sampling = self.sampling.clone();
-        result.projection_matrix = self.projection_matrix.clone();
-        result.reduced_dim = self.reduced_dim;
-        result.extra_reduced_dim = self.extra_reduced_dim;
         result.use_dims_reduction = self.use_dims_reduction;
         result.rp_eps = self.rp_eps;
         result.persistence = self.persistence.clone();
@@ -495,7 +484,7 @@ impl ArrowSpaceBuilder {
     /// Enable extra-dimensionality reduction after clustering (energymaps only, optional)
     pub fn with_extra_dims_reduction(mut self, enable: bool) -> Self {
         assert!(
-            self.use_dims_reduction == true,
+            self.use_dims_reduction,
             "extra dims reduction needs base reduction"
         );
         self.extra_dims_reduction = enable;
@@ -566,8 +555,9 @@ impl ArrowSpaceBuilder {
     ///   with_synthesis was called, in which case synthetic lambdas are computed on that graph.
     pub fn build(mut self, rows: Vec<Vec<f64>>) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.len();
-        self.n_items_original = n_items;
+        self.nitems = n_items;
         let n_features = rows.first().map(|r| r.len()).unwrap_or(0);
+        self.nfeatures = n_features;
         let start = std::time::Instant::now();
 
         // set baseline for topk
@@ -791,8 +781,9 @@ impl ArrowSpaceBuilder {
         energy_params: Option<EnergyParams>,
     ) -> (ArrowSpace, GraphLaplacian) {
         let n_items = rows.shape().0;
-        self.n_items_original = n_items;
+        self.nitems = n_items;
         let n_features = rows.shape().1;
+        self.nfeatures = n_features;
         let start = std::time::Instant::now();
 
         // set baseline for topk
@@ -870,19 +861,20 @@ impl ArrowSpaceBuilder {
             }
             Pipeline::Energy | Pipeline::Default => {
                 assert!(
-                    self.use_dims_reduction == true,
+                    self.use_dims_reduction,
                     "When using energy pipeline, dim reduction is needed"
                 );
                 assert!(
                     energy_params.is_some(),
                     "if using energy pipeline, energy_params should be some"
                 );
-                if self.prebuilt_spectral == true {
+                if self.prebuilt_spectral {
                     panic!(
                         "Spectral mode not compatible with energy pipeline, please do not enable for energy search"
                     );
                 }
-                self.n_items_original = rows.shape().0;
+                self.nitems = rows.shape().0;
+                self.nfeatures = rows.shape().1;
 
                 // ============================================================
                 // Stage 1: Clustering with sampling and optional projection
@@ -928,7 +920,7 @@ impl ArrowSpaceBuilder {
                 let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
                     &centroids,
                     &l0,
-                    &energy_params.as_ref().unwrap(),
+                    energy_params.as_ref().unwrap(),
                 );
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
@@ -953,7 +945,11 @@ impl ArrowSpaceBuilder {
                             current_features, target_dim, self.rp_eps
                         );
 
-                        let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                        let implicit_proj = ImplicitProjection::new(
+                            current_features,
+                            target_dim,
+                            self.clustering_seed,
+                        );
                         let projected = project_matrix(&sub_centroids, &implicit_proj);
 
                         info!(
@@ -982,7 +978,7 @@ impl ArrowSpaceBuilder {
 
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
                 let (gl_energy, _, _) =
-                    self.build_energy_laplacian(&sub_centroids, &energy_params.as_ref().unwrap());
+                    self.build_energy_laplacian(&sub_centroids, energy_params.as_ref().unwrap());
 
                 assert_eq!(
                     gl_energy.shape().1,
@@ -1002,7 +998,7 @@ impl ArrowSpaceBuilder {
                     ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
                 subcentroid_space.taumode = aspace.taumode;
                 subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
-                subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
+                subcentroid_space.reduced_dim = aspace.reduced_dim;
                 // safeguard to clear signals
                 subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
 
@@ -1218,7 +1214,7 @@ impl fmt::Display for ArrowSpaceBuilder {
     /// // Parse back to HashMap
     /// let config_map: HashMap<String, String> = parse_builder_config(&config_string);
     /// ```
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "prebuilt_spectral={}, \
@@ -1352,6 +1348,9 @@ impl ArrowSpaceBuilder {
     pub fn builder_config_typed(&self) -> HashMap<String, ConfigValue> {
         let mut config = HashMap::new();
 
+        config.insert("nitems".to_string(), ConfigValue::Usize(self.nitems));
+        config.insert("nfeatures".to_string(), ConfigValue::Usize(self.nfeatures));
+
         config.insert(
             "prebuilt_spectral".to_string(),
             ConfigValue::Bool(self.prebuilt_spectral),
@@ -1374,48 +1373,12 @@ impl ArrowSpaceBuilder {
         );
         config.insert(
             "synthesis".to_string(),
-            ConfigValue::TauMode(self.synthesis.clone()),
+            ConfigValue::TauMode(self.synthesis),
         );
         config.insert(
             "sampling".to_string(),
             ConfigValue::OptionSamplerType(self.sampling.clone()),
         );
-
-        // projection matrix
-        if self.projection_matrix.is_some() {
-            config.insert(
-                "pj_mtx_original_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().original_dim,
-                )),
-            );
-            config.insert(
-                "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().reduced_dim,
-                )),
-            );
-            config.insert(
-                "pj_mtx_seed".to_string(),
-                ConfigValue::OptionU64(Some(self.projection_matrix.as_ref().unwrap().seed)),
-            );
-
-            config.insert(
-                "extra_reduced_dim".to_string(),
-                ConfigValue::Bool(self.extra_dims_reduction),
-            );
-        } else {
-            config.insert(
-                "pj_mtx_original_dim".to_string(),
-                ConfigValue::OptionUsize(None),
-            );
-            config.insert(
-                "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::OptionUsize(None),
-            );
-            config.insert("pj_mtx_seed".to_string(), ConfigValue::OptionU64(None));
-            config.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
-        }
 
         config.insert(
             "cluster_max_clusters".to_string(),
@@ -1444,7 +1407,7 @@ impl ArrowSpaceBuilder {
 }
 
 impl fmt::Display for ConfigValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             // Primitive types
             ConfigValue::Bool(v) => write!(f, "{}", v),
