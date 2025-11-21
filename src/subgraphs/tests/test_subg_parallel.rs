@@ -5,6 +5,7 @@ use crate::subgraphs::{
 };
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
+use log::debug;
 use smartcore::linalg::basic::arrays::Array;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use std::collections::HashSet;

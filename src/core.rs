@@ -626,7 +626,7 @@ impl ArrowSpace {
         let lambdas = vec![0.0; nitems];
         let lambdas_sorted = SortedLambdas::new();
 
-        let mut aspace = ArrowSpace {
+        let aspace = ArrowSpace {
             nfeatures,
             nitems,
             data,

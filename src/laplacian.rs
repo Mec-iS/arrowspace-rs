@@ -167,7 +167,7 @@ pub fn build_laplacian_matrix(
             None => n,
         },
         graph_params: params.clone(),
-        energy: energy,
+        energy,
     };
 
     info!(

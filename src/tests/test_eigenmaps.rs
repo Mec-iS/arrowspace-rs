@@ -433,7 +433,6 @@ fn test_eigenmaps_with_dim_reduction() {
     let query_idx = 10;
     let query = &rows[query_idx];
     let k = 5;
-    let tau = 0.7;
 
     // Control: original build path
     let builder_control = ArrowSpaceBuilder::new()

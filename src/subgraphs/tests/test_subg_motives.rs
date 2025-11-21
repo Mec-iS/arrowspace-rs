@@ -3,6 +3,7 @@ use crate::motives::MotiveConfig;
 use crate::subgraphs::{Subgraph, SubgraphConfig, SubgraphsMotive};
 use crate::tests::test_data::make_gaussian_cliques_multi;
 
+use log::debug;
 use smartcore::linalg::basic::arrays::Array;
 
 #[test]

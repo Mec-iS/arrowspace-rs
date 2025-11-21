@@ -484,7 +484,7 @@ impl ArrowSpaceBuilder {
     /// Enable extra-dimensionality reduction after clustering (energymaps only, optional)
     pub fn with_extra_dims_reduction(mut self, enable: bool) -> Self {
         assert!(
-            self.use_dims_reduction == true,
+            self.use_dims_reduction,
             "extra dims reduction needs base reduction"
         );
         self.extra_dims_reduction = enable;
@@ -861,14 +861,14 @@ impl ArrowSpaceBuilder {
             }
             Pipeline::Energy | Pipeline::Default => {
                 assert!(
-                    self.use_dims_reduction == true,
+                    self.use_dims_reduction,
                     "When using energy pipeline, dim reduction is needed"
                 );
                 assert!(
                     energy_params.is_some(),
                     "if using energy pipeline, energy_params should be some"
                 );
-                if self.prebuilt_spectral == true {
+                if self.prebuilt_spectral {
                     panic!(
                         "Spectral mode not compatible with energy pipeline, please do not enable for energy search"
                     );
@@ -920,7 +920,7 @@ impl ArrowSpaceBuilder {
                 let sub_centroids: DenseMatrix<f64> = ArrowSpace::diffuse_and_split_subcentroids(
                     &centroids,
                     &l0,
-                    &energy_params.as_ref().unwrap(),
+                    energy_params.as_ref().unwrap(),
                 );
 
                 assert_eq!(sub_centroids.shape().1, centroids.shape().1);
@@ -978,7 +978,7 @@ impl ArrowSpaceBuilder {
 
                 // Step 6: Build Laplacian on sub_centroids using energy dispersion
                 let (gl_energy, _, _) =
-                    self.build_energy_laplacian(&sub_centroids, &energy_params.as_ref().unwrap());
+                    self.build_energy_laplacian(&sub_centroids, energy_params.as_ref().unwrap());
 
                 assert_eq!(
                     gl_energy.shape().1,
@@ -998,7 +998,7 @@ impl ArrowSpaceBuilder {
                     ArrowSpace::subcentroids_from_dense_matrix(sub_centroids.clone());
                 subcentroid_space.taumode = aspace.taumode;
                 subcentroid_space.projection_matrix = aspace.projection_matrix.clone();
-                subcentroid_space.reduced_dim = aspace.reduced_dim.clone();
+                subcentroid_space.reduced_dim = aspace.reduced_dim;
                 // safeguard to clear signals
                 subcentroid_space.signals = sprs::CsMat::empty(sprs::CSR, 0);
 
@@ -1214,7 +1214,7 @@ impl fmt::Display for ArrowSpaceBuilder {
     /// // Parse back to HashMap
     /// let config_map: HashMap<String, String> = parse_builder_config(&config_string);
     /// ```
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "prebuilt_spectral={}, \
@@ -1373,7 +1373,7 @@ impl ArrowSpaceBuilder {
         );
         config.insert(
             "synthesis".to_string(),
-            ConfigValue::TauMode(self.synthesis.clone()),
+            ConfigValue::TauMode(self.synthesis),
         );
         config.insert(
             "sampling".to_string(),
@@ -1407,7 +1407,7 @@ impl ArrowSpaceBuilder {
 }
 
 impl fmt::Display for ConfigValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             // Primitive types
             ConfigValue::Bool(v) => write!(f, "{}", v),

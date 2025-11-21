@@ -1,11 +1,12 @@
+use crate::builder::ArrowSpaceBuilder;
+use crate::subgraphs::sg_from_centroids::recluster_centroids;
+use crate::subgraphs::{CentroidGraphParams, SubgraphsCentroid};
+use crate::tests::test_data::make_gaussian_hd;
+
 use smartcore::linalg::basic::arrays::Array;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 
-use crate::builder::ArrowSpaceBuilder;
-use crate::tests::test_data::make_gaussian_hd;
-
-use crate::subgraphs::sg_from_centroids::recluster_centroids;
-use crate::subgraphs::{CentroidGraphParams, SubgraphsCentroid};
+use log::debug;
 
 #[test]
 fn test_centroid_subgraphs_basic() {
