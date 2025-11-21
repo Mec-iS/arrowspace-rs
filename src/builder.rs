@@ -69,12 +69,6 @@ pub struct ArrowSpaceBuilder {
     // activate sampling, default false
     pub sampling: Option<SamplerType>,
 
-    // activate dimensionality reduction and projection matrix
-    // Projection data: dims reduction data (needed to prepare the query vector)
-    pub(crate) projection_matrix: Option<ImplicitProjection>, // F × r (if projection was used)
-    pub(crate) reduced_dim: Option<usize>, // r (reduced dimension, None if no projection)
-    pub(crate) extra_reduced_dim: bool,    // optional extra dimensionality reduction for energymaps
-
     // Synthetic index configuration (used `with_synthesis`)
     pub synthesis: TauMode, // (tau_mode)
 
@@ -82,10 +76,11 @@ pub struct ArrowSpaceBuilder {
     pub(crate) cluster_max_clusters: Option<usize>,
     /// Squared L2 threshold for new cluster creation (default 1.0)
     pub(crate) cluster_radius: f64,
+    /// used for clustering and dimensionality reduction (if active)
     pub(crate) clustering_seed: Option<u64>,
     pub(crate) deterministic_clustering: bool,
 
-    // dimensionality reduction with random projection (dafault false)
+    /// dimensionality reduction with random projection (dafault false)
     pub(crate) use_dims_reduction: bool,
     pub(crate) extra_dims_reduction: bool,
     pub(crate) rp_eps: f64,
@@ -116,9 +111,6 @@ impl Default for ArrowSpaceBuilder {
             sparsity_check: false,
             // sampling default
             sampling: Some(SamplerType::Simple(0.6)),
-            projection_matrix: None,
-            reduced_dim: None,
-            extra_reduced_dim: false,
             // Clustering defaults
             cluster_max_clusters: None, // will be set to nfeatures at build time
             cluster_radius: 1.0,
@@ -213,13 +205,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
                     n_features, target_dim, self.rp_eps
                 );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(n_features, target_dim, self.clustering_seed);
                 let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 aspace.projection_matrix = Some(implicit_proj.clone());
                 aspace.reduced_dim = Some(target_dim);
-                self.projection_matrix = Some(implicit_proj);
-                self.reduced_dim = Some(target_dim);
 
                 let compression = n_features as f64 / target_dim as f64;
                 info!(
@@ -339,13 +330,12 @@ impl ClusteringHeuristic for ArrowSpaceBuilder {
                     "Applying JL projection: {} features → {} dimensions (ε={:.2})",
                     n_features, target_dim, builder.rp_eps
                 );
-                let implicit_proj = ImplicitProjection::new(n_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(n_features, target_dim, builder.clustering_seed);
                 let projected = crate::reduction::project_matrix(&clustered_dm, &implicit_proj);
 
                 aspace.projection_matrix = Some(implicit_proj.clone());
                 aspace.reduced_dim = Some(target_dim);
-                builder.projection_matrix = Some(implicit_proj);
-                builder.reduced_dim = Some(target_dim);
 
                 let compression = n_features as f64 / target_dim as f64;
                 info!(
@@ -396,9 +386,6 @@ impl ArrowSpaceBuilder {
         result.normalise = self.normalise;
         result.sparsity_check = self.sparsity_check;
         result.sampling = self.sampling.clone();
-        result.projection_matrix = self.projection_matrix.clone();
-        result.reduced_dim = self.reduced_dim;
-        result.extra_reduced_dim = self.extra_reduced_dim;
         result.use_dims_reduction = self.use_dims_reduction;
         result.rp_eps = self.rp_eps;
         result.persistence = self.persistence.clone();
@@ -958,7 +945,11 @@ impl ArrowSpaceBuilder {
                             current_features, target_dim, self.rp_eps
                         );
 
-                        let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                        let implicit_proj = ImplicitProjection::new(
+                            current_features,
+                            target_dim,
+                            self.clustering_seed,
+                        );
                         let projected = project_matrix(&sub_centroids, &implicit_proj);
 
                         info!(
@@ -1388,42 +1379,6 @@ impl ArrowSpaceBuilder {
             "sampling".to_string(),
             ConfigValue::OptionSamplerType(self.sampling.clone()),
         );
-
-        // projection matrix
-        if self.projection_matrix.is_some() {
-            config.insert(
-                "pj_mtx_original_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().original_dim,
-                )),
-            );
-            config.insert(
-                "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::OptionUsize(Some(
-                    self.projection_matrix.as_ref().unwrap().reduced_dim,
-                )),
-            );
-            config.insert(
-                "pj_mtx_seed".to_string(),
-                ConfigValue::OptionU64(Some(self.projection_matrix.as_ref().unwrap().seed)),
-            );
-
-            config.insert(
-                "extra_reduced_dim".to_string(),
-                ConfigValue::Bool(self.extra_dims_reduction),
-            );
-        } else {
-            config.insert(
-                "pj_mtx_original_dim".to_string(),
-                ConfigValue::OptionUsize(None),
-            );
-            config.insert(
-                "pj_mtx_reduced_dim".to_string(),
-                ConfigValue::OptionUsize(None),
-            );
-            config.insert("pj_mtx_seed".to_string(), ConfigValue::OptionU64(None));
-            config.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
-        }
 
         config.insert(
             "cluster_max_clusters".to_string(),

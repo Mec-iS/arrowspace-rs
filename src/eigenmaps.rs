@@ -245,15 +245,19 @@ impl EigenMaps for ArrowSpace {
 
         trace!("Preparing query λ with projection and taumode policy");
         let q_lambda = self.prepare_query_item(item, gl);
-        let projected_query = self.project_query(item);
+        // assert_eq!(
+        //     projected_query.len(),
+        //     self.projection_matrix.as_ref().unwrap().reduced_dim,
+        //     "Projected dimension should match expected reduced_dim"
+        // );
 
-        debug!(
-            "Query λ={:.6}, projected_dim={}",
-            q_lambda,
-            projected_query.len()
-        );
+        // debug!(
+        //     "Query λ={:.6}, projected_dim={}",
+        //     q_lambda,
+        //     projected_query.len()
+        // );
 
-        let q = ArrowItem::new(projected_query, q_lambda);
+        let q = ArrowItem::new(item.to_vec(), q_lambda);
 
         // λ-aware semantic ranking
         let results = self.search_lambda_aware(&q, k, alpha);

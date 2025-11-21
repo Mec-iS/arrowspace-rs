@@ -542,118 +542,125 @@ impl ArrowSpace {
         aspace
     }
 
-    /// Recreates an ArrowSpace from a builder configuration HashMap.
+    /// Recreates an ArrowSpace from a aspace configuration HashMap.
     ///
     /// This method reconstructs a workable ArrowSpace with all properties set
     /// from the builder configuration, but with an empty data matrix.
     ///
-    /// Arguments:
-    /// * `builder_config` - HashMap containing builder configuration from `builder_config_typed()`
-    /// * `nrows` - Number of rows (items) for the empty space
-    /// * `ncols` - Number of columns (features) for the empty space
-    ///
     /// Returns:
     /// A fully configured ArrowSpace with empty data
-    pub fn from_builder_config(builder_config: HashMap<String, ConfigValue>) -> Self {
-        // Extract dimensions
-        let nitems = builder_config
+    pub fn from_config(config: HashMap<String, ConfigValue>) -> Self {
+        let nitems = config
             .get("nitems")
-            .expect("nitems missing from config")
-            .as_usize()
-            .expect("nitems must be usize");
-
-        let nfeatures = builder_config
+            .and_then(|v| v.as_usize())
+            .expect("from_config: missing nitems");
+        let nfeatures = config
             .get("nfeatures")
-            .expect("nfeatures missing from config")
-            .as_usize()
-            .expect("n_features must be usize");
+            .and_then(|v| v.as_usize())
+            .expect("from_config: missing nfeatures");
 
         debug!(
-            "ArrowSpace::from_builder_config called with nitems={}, nfeatures={}",
+            "ArrowSpace::from_config called (nitems={}, nfeatures={})",
             nitems, nfeatures
         );
 
-        // Prepare projection data for empty_with_projection
-        let mut proj_data: HashMap<String, ConfigValue> = HashMap::with_capacity(4);
-
-        proj_data.insert(
-            "pj_mtx_original_dim".to_string(),
-            builder_config["pj_mtx_original_dim"].clone(),
-        );
-        proj_data.insert(
-            "pj_mtx_reduced_dim".to_string(),
-            builder_config["pj_mtx_reduced_dim"].clone(),
-        );
-        proj_data.insert(
-            "pj_mtx_seed".to_string(),
-            builder_config["pj_mtx_seed"].clone(),
-        );
-        proj_data.insert(
-            "extra_reduced_dim".to_string(),
-            builder_config["extra_reduced_dim"].clone(),
-        );
-
-        // Start with empty_with_projection to set up projection correctly
-        let mut aspace = Self::empty_with_projection(proj_data, nitems, nfeatures);
-        aspace.nitems = nitems;
-        aspace.nfeatures = nfeatures;
-
-        // Populate ArrowSpace properties from builder_config
-        // TauMode (synthesis)
-        if let Some(ConfigValue::TauMode(taumode)) = builder_config.get("synthesis") {
-            aspace.taumode = taumode.clone();
-            debug!("Set taumode: {:?}", aspace.taumode);
-        }
-
-        // Clustering properties
-        if let Some(ConfigValue::F64(radius)) = builder_config.get("cluster_radius") {
-            aspace.cluster_radius = *radius;
-            debug!("Set cluster_radius: {}", aspace.cluster_radius);
-        }
-
-        // Set n_clusters from cluster_max_clusters (may be None)
-        if let Some(ConfigValue::OptionUsize(max_clusters)) =
-            builder_config.get("cluster_max_clusters")
-        {
-            aspace.n_clusters = max_clusters.unwrap_or(0);
-            debug!(
-                "Set n_clusters from cluster_max_clusters: {}",
-                aspace.n_clusters
+        // --- Projection matrix ---
+        let projection_matrix = if let (
+            Some(ConfigValue::OptionUsize(Some(original_dim))),
+            Some(ConfigValue::OptionUsize(Some(reduced_dim))),
+            Some(ConfigValue::OptionU64(Some(seed))),
+        ) = (
+            config.get("pj_mtx_original_dim"),
+            config.get("pj_mtx_reduced_dim"),
+            config.get("pj_mtx_seed"),
+        ) {
+            info!(
+                "ArrowSpace::from_config: projection matrix used: original_dim={}, reduced_dim={}",
+                original_dim, reduced_dim
             );
-        }
+            Some(ImplicitProjection {
+                original_dim: *original_dim,
+                reduced_dim: *reduced_dim,
+                seed: *seed,
+            })
+        } else {
+            debug!("ArrowSpace::from_config: projection matrix not used");
+            None
+        };
+        let reduced_dim = match config.get("pj_mtx_reduced_dim") {
+            Some(ConfigValue::OptionUsize(Some(d))) => Some(*d),
+            _ => None,
+        };
+        let extra_reduced_dim = config
+            .get("extra_reduced_dim")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
-        // Initialize lambda normalization properties (will be set when lambdas are computed)
-        aspace.min_lambdas = f64::NAN;
-        aspace.max_lambdas = f64::NAN;
-        aspace.range_lambdas = f64::NAN;
+        // --- Tau mode (synthesis) ---
+        let taumode = config
+            .get("taumode")
+            .and_then(|v| match v {
+                ConfigValue::TauMode(t) => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
 
-        // Initialize clustering state (will be populated during actual clustering)
-        aspace.cluster_assignments = Vec::new();
-        aspace.cluster_sizes = Vec::new();
+        // --- Clustering ---
+        let n_clusters = config
+            .get("n_clusters")
+            .and_then(|v| v.as_usize())
+            .unwrap_or(0);
+        let cluster_radius = config
+            .get("cluster_radius")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
 
-        // Energy-specific properties (remain None until energy pipeline is run)
-        aspace.centroid_map = None;
-        aspace.sub_centroids = None;
-        aspace.subcentroid_lambdas = None;
-        aspace.item_norms = None;
+        info!(
+            "ArrowSpace::from_config: n_clusters={}, cluster_radius={}",
+            n_clusters, cluster_radius
+        );
 
-        // Initialize empty signals matrix (will be computed during build)
-        aspace.signals = sprs::CsMat::zero((0, 0));
+        // --- Empty data and auxiliary fields ---
+        let data = DenseMatrix::new(0, 0, Vec::new(), true).unwrap();
+        let signals = sprs::CsMat::zero((0, 0));
+        let lambdas = vec![0.0; nitems];
+        let lambdas_sorted = SortedLambdas::new();
 
-        // Initialize lambdas vector with zeros (will be computed during build)
-        aspace.lambdas = vec![0.0; nitems];
-        aspace.lambdas_sorted = SortedLambdas::new();
+        let mut aspace = ArrowSpace {
+            nfeatures,
+            nitems,
+            data,
+            signals,
+            lambdas,
+            lambdas_sorted,
+            // Normalization fields
+            min_lambdas: f64::NAN,
+            max_lambdas: f64::NAN,
+            range_lambdas: f64::NAN,
+            taumode,
+            n_clusters,
+            cluster_assignments: Vec::new(),
+            cluster_sizes: Vec::new(),
+            cluster_radius,
+            // Projection
+            projection_matrix,
+            reduced_dim,
+            extra_reduced_dim,
+            // Energy-maps related fields
+            centroid_map: None,
+            sub_centroids: None,
+            subcentroid_lambdas: None,
+            item_norms: None,
+        };
 
         debug!(
-            "ArrowSpace::from_builder_config created ArrowSpace with \
-            nitems={}, nfeatures={}, reduced_dim={:?}, taumode={:?}, cluster_radius={}",
+            "ArrowSpace::from_config created ArrowSpace: nitems={}, nfeatures={}, n_clusters={}, reduced_dim={:?}, extra_reduced_dim={}",
             aspace.nitems,
             aspace.nfeatures,
+            aspace.n_clusters,
             aspace.reduced_dim,
-            aspace.taumode,
-            aspace.cluster_radius
+            aspace.extra_reduced_dim
         );
-
         aspace
     }
 
@@ -1428,6 +1435,69 @@ impl ArrowSpace {
             "Lambda update: old range [{:.6}, {:.6}] -> new range [{:.6}, {:.6}]",
             old_stats.0, old_stats.1, new_stats.0, new_stats.1
         );
+    }
+
+    /// Convert all ArrowSpace configuration into a typed hashmap.
+    ///
+    /// This extracts all parameters needed to rebuild an ArrowSpace with identical
+    /// behavior: tau mode, projection settings, and dimension metadata.
+    pub fn arrowspace_config_typed(&self) -> HashMap<String, ConfigValue> {
+        let mut config = HashMap::new();
+
+        config.insert("nitems".to_string(), ConfigValue::Usize(self.nitems));
+        config.insert("nfeatures".to_string(), ConfigValue::Usize(self.nfeatures));
+
+        // projection matrix
+        if self.projection_matrix.is_some() {
+            config.insert(
+                "pj_mtx_original_dim".to_string(),
+                ConfigValue::OptionUsize(Some(
+                    self.projection_matrix.as_ref().unwrap().original_dim,
+                )),
+            );
+            config.insert(
+                "pj_mtx_reduced_dim".to_string(),
+                ConfigValue::OptionUsize(Some(
+                    self.projection_matrix.as_ref().unwrap().reduced_dim,
+                )),
+            );
+            config.insert(
+                "pj_mtx_seed".to_string(),
+                ConfigValue::OptionU64(Some(self.projection_matrix.as_ref().unwrap().seed)),
+            );
+
+            config.insert(
+                "extra_reduced_dim".to_string(),
+                ConfigValue::Bool(self.extra_reduced_dim),
+            );
+        } else {
+            config.insert(
+                "pj_mtx_original_dim".to_string(),
+                ConfigValue::OptionUsize(None),
+            );
+            config.insert(
+                "pj_mtx_reduced_dim".to_string(),
+                ConfigValue::OptionUsize(None),
+            );
+            config.insert("pj_mtx_seed".to_string(), ConfigValue::OptionU64(None));
+            config.insert("extra_reduced_dim".to_string(), ConfigValue::Bool(false));
+        }
+
+        config.insert(
+            "taumode".to_string(),
+            ConfigValue::TauMode(self.taumode.clone()),
+        );
+
+        config.insert(
+            "n_clusters".to_string(),
+            ConfigValue::Usize(self.n_clusters),
+        );
+        config.insert(
+            "cluster_radius".to_string(),
+            ConfigValue::F64(self.cluster_radius),
+        );
+
+        config
     }
 }
 

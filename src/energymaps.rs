@@ -335,7 +335,7 @@ impl EnergyMaps for ArrowSpace {
             "Creating implicit projection F={} → 2D for spatial binning",
             f
         );
-        let proj = Arc::new(ImplicitProjection::new(f, 2)); // [PARALLEL] wrap for sharing
+        let proj = Arc::new(ImplicitProjection::new(f, 2, None)); // [PARALLEL] wrap for sharing
 
         // [PARALLEL] Project all centroids in parallel
         let xy: Vec<f64> = (0..x)
@@ -1193,7 +1193,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     current_features, target_dim, self.rp_eps
                 );
 
-                let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(current_features, target_dim, self.clustering_seed);
                 let projected = project_matrix(&sub_centroids, &implicit_proj);
                 aspace.extra_reduced_dim = true;
                 self.extra_dims_reduction = true;

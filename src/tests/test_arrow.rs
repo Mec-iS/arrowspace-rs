@@ -3,7 +3,7 @@ use crate::{
     graph::GraphLaplacian,
     sampling::SamplerType,
     taumode::TauMode,
-    tests::test_data::{make_gaussian_blob, make_moons_hd},
+    tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
 use std::collections::HashMap;
 
@@ -506,4 +506,91 @@ fn test_empty_with_projection_none_path() {
     assert_eq!(aspace.projection_matrix, None);
     assert_eq!(aspace.reduced_dim, None);
     assert_eq!(aspace.extra_reduced_dim, false);
+}
+
+#[test]
+fn test_arrowspace_config_typed_without_projection() {
+    let items = make_gaussian_blob(99, 0.5);
+    let (aspace, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
+        .build(items);
+
+    // Extract config
+    let config = aspace.arrowspace_config_typed();
+
+    // Verify basic dimensions
+    assert_eq!(config.get("nitems").unwrap().as_usize().unwrap(), 99);
+    assert_eq!(config.get("nfeatures").unwrap().as_usize().unwrap(), 10);
+
+    // Verify no projection
+    assert_eq!(config.get("pj_mtx_original_dim").unwrap().as_usize(), None);
+    assert_eq!(config.get("pj_mtx_reduced_dim").unwrap().as_usize(), None);
+    assert_eq!(config.get("pj_mtx_seed").unwrap().as_u64(), None);
+    assert_eq!(
+        config.get("extra_reduced_dim").unwrap().as_bool().unwrap(),
+        false
+    );
+
+    // Verify tau mode is present
+    assert!(config.contains_key("taumode"));
+
+    // Verify clustering params
+    assert!(config.contains_key("n_clusters"));
+    assert!(config.contains_key("cluster_radius"));
+}
+
+#[test]
+fn test_arrowspace_config_typed_with_projection() {
+    let items = make_gaussian_hd(99, 0.5);
+    let (aspace, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
+        .with_dims_reduction(true, Some(0.25))
+        .build(items);
+
+    println!(">>>>>>>>>> {:?}", aspace.projection_matrix);
+
+    // Extract config
+    let config = aspace.arrowspace_config_typed();
+
+    // Verify basic dimensions
+    assert_eq!(config.get("nitems").unwrap().as_usize().unwrap(), 99);
+    assert_eq!(config.get("nfeatures").unwrap().as_usize().unwrap(), 100);
+
+    // Verify projection parameters are present and correct
+    assert_eq!(
+        config
+            .get("pj_mtx_original_dim")
+            .unwrap()
+            .as_usize()
+            .unwrap(),
+        100
+    );
+    assert_eq!(
+        config
+            .get("pj_mtx_reduced_dim")
+            .unwrap()
+            .as_usize()
+            .unwrap(),
+        50
+    );
+    assert_eq!(config.get("pj_mtx_seed").unwrap().as_u64().unwrap(), 42);
+
+    // extra_reduced_dim should be false for Eigen mode
+    assert_eq!(
+        config.get("extra_reduced_dim").unwrap().as_bool().unwrap(),
+        false
+    );
+
+    // Verify tau mode
+    let taumode = config.get("taumode").unwrap();
+    match taumode {
+        ConfigValue::TauMode(_) => {} // Pass if it's a TauMode variant
+        _ => panic!("Expected TauMode variant"),
+    }
+
+    // Verify clustering params exist
+    assert!(config.get("n_clusters").is_some());
+    assert!(config.get("cluster_radius").is_some());
 }
