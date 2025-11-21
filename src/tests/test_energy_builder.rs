@@ -5,7 +5,7 @@ use crate::builder::ArrowSpaceBuilder;
 use crate::energymaps::{EnergyMapsBuilder, EnergyParams};
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
-use log::info;
+use log::{debug, info};
 use smartcore::linalg::basic::arrays::Array;
 
 use crate::tests::test_data::{make_gaussian_hd, make_moons_hd};

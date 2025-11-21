@@ -1,7 +1,7 @@
 use crate::{
     builder::ArrowSpaceBuilder,
     energymaps::{EnergyMaps, EnergyMapsBuilder, EnergyParams},
-    taumode::{TauMode, TAU_FLOOR},
+    taumode::{TAU_FLOOR, TauMode},
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
@@ -9,7 +9,7 @@ use approx::relative_eq;
 use ordered_float::Float;
 use smartcore::linalg::basic::arrays::Array;
 
-use log::info;
+use log::{debug, info};
 
 #[test]
 fn test_select_tau_fixed() {

@@ -1,3 +1,6 @@
+use crate::builder::ConfigValue;
+use crate::core::ArrowSpace;
+use crate::reduction::ImplicitProjection;
 use crate::{
     builder::ArrowSpaceBuilder,
     graph::GraphLaplacian,
@@ -5,11 +8,9 @@ use crate::{
     taumode::TauMode,
     tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
-use std::collections::HashMap;
 
-use crate::builder::ConfigValue;
-use crate::core::ArrowSpace;
-use crate::reduction::ImplicitProjection;
+use log::debug;
+use std::collections::HashMap;
 
 /// Helper to compare two GraphLaplacian matrices for equality
 fn laplacian_eq(a: &GraphLaplacian, b: &GraphLaplacian, eps: f64) -> bool {

@@ -3,6 +3,8 @@ use crate::{
     tests::test_data::{make_gaussian_blob, make_moons_hd},
 };
 
+use log::debug;
+
 #[test]
 fn test_builder_basic_clustering_with_synthetic_data() {
     // Test basic clustering functionality with high-dimensional moons data

@@ -1,6 +1,8 @@
 use crate::graph::GraphLaplacian;
 use crate::{builder::ArrowSpaceBuilder, tests::test_data::make_moons_hd};
+
 use approx::assert_relative_eq;
+use log::debug;
 
 /// Helper to compare two GraphLaplacian matrices for equality
 #[allow(dead_code)]

@@ -1,3 +1,5 @@
+use log::debug;
+
 #[test]
 fn test_sfgrass_basic() {
     let adj_rows = vec![

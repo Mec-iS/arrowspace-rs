@@ -14,6 +14,8 @@ use crate::{
     tests::test_data::make_gaussian_blob,
 };
 
+use log::debug;
+
 // -------------------- Helper function tests --------------------
 
 #[test]

@@ -19,18 +19,17 @@
 //! across both paths. Without seeding, clustering is nondeterministic due to parallel
 //! processing in incremental clustering.
 
-use approx::{relative_eq, relative_ne};
-use log::info;
-
 use crate::builder::ArrowSpaceBuilder;
 use crate::clustering::{ClusteredOutput, ClusteringHeuristic};
 use crate::core::ArrowSpace;
 use crate::eigenmaps::EigenMaps;
 use crate::graph::GraphLaplacian;
 use crate::taumode::TauMode;
-
 use crate::tests::init;
 use crate::tests::test_data::make_gaussian_hd;
+
+use approx::{relative_eq, relative_ne};
+use log::{debug, info};
 
 /// Helper: Compare two ArrowSpace lambda vectors element-wise with tolerance.
 fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: bool) {
