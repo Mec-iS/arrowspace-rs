@@ -64,7 +64,7 @@ fn test_centroid_subgraphs_basic() {
         assert_eq!(mf_cols, f_sg);
     }
 
-    println!("Extracted {} centroid subgraphs", subgraphs.len());
+    debug!("Extracted {} centroid subgraphs", subgraphs.len());
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn test_centroid_subgraphs_two_levels() {
         assert!(f_sg > 0);
     }
 
-    println!(
+    debug!(
         "Built hierarchy with {} levels, {} total subgraphs",
         hierarchy.levels.len(),
         all_subgraphs.len()
@@ -329,7 +329,7 @@ fn test_centroid_subgraphs_three_levels() {
         assert_eq!(mf_cols, f_sg);
     }
 
-    println!(
+    debug!(
         "Built 3-level hierarchy with {} total subgraphs",
         all_subgraphs.len()
     );
@@ -380,7 +380,7 @@ fn test_centroid_subgraphs_flat_vs_hierarchy() {
         "Subgraph count should match hierarchy count"
     );
 
-    println!(
+    debug!(
         "Both APIs returned {} subgraphs consistently",
         flat_subgraphs.len()
     );

@@ -54,7 +54,7 @@ fn test_builder_graph_params_preservation() {
         "normalise flag must match"
     );
 
-    println!("✓ Graph parameters correctly preserved");
+    debug!("✓ Graph parameters correctly preserved");
 }
 
 #[test]
@@ -118,12 +118,12 @@ fn test_cosine_similarity_scale_invariance() {
     let cosine_original = compute_cosine_similarity(item1, item2);
     let cosine_scaled = compute_cosine_similarity(&item1_scaled, &item2_scaled);
 
-    println!("Original cosine similarity: {:.6}", cosine_original);
-    println!("Scaled cosine similarity: {:.6}", cosine_scaled);
+    debug!("Original cosine similarity: {:.6}", cosine_original);
+    debug!("Scaled cosine similarity: {:.6}", cosine_scaled);
 
     // Cosine similarity should be identical (scale invariant)
     assert_relative_eq!(cosine_original, cosine_scaled, epsilon = 1e-10);
-    println!("✓ Cosine similarity is scale invariant");
+    debug!("✓ Cosine similarity is scale invariant");
 }
 
 #[test]
@@ -147,16 +147,16 @@ fn test_hybrid_similarity_scale_sensitivity() {
 
     let hybrid_scaled = compute_hybrid_similarity(&item1_scaled, &item2_scaled, alpha, beta);
 
-    println!("Original hybrid similarity: {:.6}", hybrid_original);
-    println!("Scaled hybrid similarity: {:.6}", hybrid_scaled);
-    println!("Difference: {:.6}", (hybrid_original - hybrid_scaled).abs());
+    debug!("Original hybrid similarity: {:.6}", hybrid_original);
+    debug!("Scaled hybrid similarity: {:.6}", hybrid_scaled);
+    debug!("Difference: {:.6}", (hybrid_original - hybrid_scaled).abs());
 
     // Hybrid similarity should be different (scale sensitive)
     assert!(
         (hybrid_original - hybrid_scaled).abs() > 1e-6,
         "Hybrid similarity should be scale sensitive"
     );
-    println!("✓ Hybrid similarity is scale sensitive");
+    debug!("✓ Hybrid similarity is scale sensitive");
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn test_builder_normalized_vs_unnormalized_clustering() {
         })
         .collect();
 
-    println!("=== NORMALIZED vs UNNORMALIZED CLUSTERING ===");
+    debug!("=== NORMALIZED vs UNNORMALIZED CLUSTERING ===");
 
     // Verify pairwise cosine similarities are identical
     let mut cosine_diffs = Vec::new();
@@ -207,7 +207,7 @@ fn test_builder_normalized_vs_unnormalized_clustering() {
         max_cosine_diff
     );
 
-    println!(
+    debug!(
         "✓ Cosine similarities verified identical (max diff: {:.2e})",
         max_cosine_diff
     );
@@ -246,12 +246,12 @@ fn test_builder_lambda_comparison_normalized_vs_unnormalized() {
     let lambdas_norm = aspace_norm.lambdas();
     let lambdas_unnorm = aspace_unnorm.lambdas();
 
-    println!("=== LAMBDA SPECTRAL ANALYSIS ===");
-    println!(
+    debug!("=== LAMBDA SPECTRAL ANALYSIS ===");
+    debug!(
         "Normalized lambdas (first 5): {:?}",
         &lambdas_norm[..5.min(lambdas_norm.len())]
     );
-    println!(
+    debug!(
         "Unnormalized lambdas (first 5): {:?}",
         &lambdas_unnorm[..5.min(lambdas_unnorm.len())]
     );
@@ -266,8 +266,8 @@ fn test_builder_lambda_comparison_normalized_vs_unnormalized() {
         }
     }
 
-    println!("Lambda differences: {}/{}", significant_diffs, min_len);
-    println!("✓ Cosine-based vs τ-mode spectral properties compared");
+    debug!("Lambda differences: {}/{}", significant_diffs, min_len);
+    debug!("✓ Cosine-based vs τ-mode spectral properties compared");
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn test_magnitude_penalty_computation() {
         penalty_diff
     );
 
-    println!(
+    debug!(
         "✓ Magnitude penalty: same_scale={:.6}, diff_scale={:.6}",
         penalty_same, penalty_diff
     );
@@ -326,8 +326,8 @@ fn test_hybrid_similarity_components() {
     // Test different scale combinations
     let scales = vec![0.1, 0.5, 1.0, 2.0, 10.0];
 
-    println!("=== HYBRID SIMILARITY COMPONENT ANALYSIS ===");
-    println!(
+    debug!("=== HYBRID SIMILARITY COMPONENT ANALYSIS ===");
+    debug!(
         "{:>8} {:>8} {:>12} {:>12} {:>12} {:>12}",
         "Scale1", "Scale2", "Cosine", "MagPenalty", "Hybrid", "Difference"
     );
@@ -353,7 +353,7 @@ fn test_hybrid_similarity_components() {
 
             let hybrid_manual = 0.6 * cosine + 0.4 * mag_penalty;
 
-            println!(
+            debug!(
                 "{:8.1} {:8.1} {:12.6} {:12.6} {:12.6} {:12.8}",
                 scale1,
                 scale2,
@@ -371,7 +371,7 @@ fn test_hybrid_similarity_components() {
         }
     }
 
-    println!("✓ Hybrid similarity components computed correctly");
-    println!("✓ Cosine component remains scale-invariant");
-    println!("✓ Magnitude penalty varies with scale differences");
+    debug!("✓ Hybrid similarity components computed correctly");
+    debug!("✓ Cosine component remains scale-invariant");
+    debug!("✓ Magnitude penalty varies with scale differences");
 }

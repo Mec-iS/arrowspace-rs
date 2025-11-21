@@ -46,7 +46,7 @@ fn assert_lambdas_equal(a: &[f64], b: &[f64], tol: f64, label: &str, spectral: b
             );
         }
         if relative_ne!(la, lb, epsilon = tol, max_relative = tol) {
-            println!("lambdas are not equal: {} {}", la, lb);
+            debug!("lambdas are not equal: {} {}", la, lb);
             panic!("{}[{}]: lambda mismatch", label, i)
         } else {
         };

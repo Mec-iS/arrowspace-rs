@@ -14,7 +14,7 @@ fn test_builder_basic_clustering_with_synthetic_data() {
         42,   // Reproducible seed
     );
 
-    println!(
+    debug!(
         "Generated {} items with {} features",
         items.len(),
         items[0].len()
@@ -27,7 +27,7 @@ fn test_builder_basic_clustering_with_synthetic_data() {
         .build(items.clone());
 
     // Verify basic properties
-    println!("Graph has {} nodes", gl.nnodes);
+    debug!("Graph has {} nodes", gl.nnodes);
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn test_builder_laplacian_diagonal_properties() {
         );
     }
 
-    println!(
+    debug!(
         "✓ All {} diagonal entries are non-negative and finite",
         aspace.n_clusters
     );
@@ -117,7 +117,7 @@ fn test_builder_minimum_items() {
     );
     assert_eq!(gl.nnodes, items.len());
 
-    println!(
+    debug!(
         "Minimum items test: {} clusters from {} items",
         aspace.n_clusters, 20
     );
@@ -161,7 +161,7 @@ fn test_builder_scale_invariance_with_normalization() {
         "Graph node counts should match under scaling"
     );
 
-    println!(
+    debug!(
         "✓ Scale invariance verified: original={} clusters, scaled={} clusters",
         aspace1.n_clusters, aspace2.n_clusters
     );
@@ -235,7 +235,7 @@ fn test_builder_laplacian_symmetry() {
         }
     }
 
-    println!(
+    debug!(
         "✓ Verified symmetry for {} edge pairs (total {} edges)",
         symmetric_pairs, total_edges
     );
@@ -268,7 +268,7 @@ fn test_builder_parameter_preservation() {
         "normalise flag must match"
     );
 
-    println!("✓ All graph parameters correctly preserved");
+    debug!("✓ All graph parameters correctly preserved");
 }
 
 #[test]
@@ -304,7 +304,7 @@ fn test_builder_with_different_dimensions() {
             dims
         );
 
-        println!(
+        debug!(
             "{}: {} clusters, {} features, {} nodes",
             desc, aspace.n_clusters, aspace.nfeatures, gl.nnodes
         );
@@ -345,7 +345,7 @@ fn test_builder_spectral_laplacian_shape() {
         expected_dim
     );
 
-    println!(
+    debug!(
         "✓ Spectral Laplacian shape: {:?}",
         aspace_spectral.signals.shape()
     );
@@ -376,7 +376,7 @@ fn test_builder_lambda_values_are_nonnegative() {
     let min_lambda = lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let max_lambda = lambdas.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
 
-    println!(
+    debug!(
         "✓ All {} lambdas are non-negative: min={:.6}, max={:.6}",
         lambdas.len(),
         min_lambda,
@@ -403,7 +403,7 @@ fn test_builder_with_high_noise() {
         aspace.n_clusters
     );
 
-    println!(
+    debug!(
         "✓ Found {} clusters (conservative estimate for noisy data)",
         aspace.n_clusters
     );
@@ -426,8 +426,8 @@ fn test_builder_normalization_effects() {
         .with_normalisation(false)
         .build(items);
 
-    println!("Normalized: {} clusters", aspace_norm.n_clusters);
-    println!("Raw (τ-mode): {} clusters", aspace_raw.n_clusters);
+    debug!("Normalized: {} clusters", aspace_norm.n_clusters);
+    debug!("Raw (τ-mode): {} clusters", aspace_raw.n_clusters);
 
     // Parameters should be correctly set
     assert_eq!(gl_norm.graph_params.normalise, true);
@@ -437,5 +437,5 @@ fn test_builder_normalization_effects() {
     assert!(aspace_norm.n_clusters > 0);
     assert!(aspace_raw.n_clusters > 0);
 
-    println!("✓ Both normalization modes produce valid clusterings");
+    debug!("✓ Both normalization modes produce valid clusterings");
 }

@@ -86,7 +86,7 @@ fn test_spot_subgraphs_energy_basic() {
     let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
-        println!("No subgraphs extracted (may need different params)");
+        debug!("No subgraphs extracted (may need different params)");
         return;
     }
 
@@ -125,7 +125,7 @@ fn test_spot_subgraphs_energy_basic() {
         }
     }
 
-    println!("Extracted {} subgraphs from energy mode", subgraphs.len());
+    debug!("Extracted {} subgraphs from energy mode", subgraphs.len());
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn test_spot_subgraphs_energy_with_item_mapping() {
     let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
-        println!("No energy subgraphs extracted");
+        debug!("No energy subgraphs extracted");
         return;
     }
 
@@ -199,7 +199,7 @@ fn test_spot_subgraphs_energy_with_item_mapping() {
         }
     }
 
-    println!(
+    debug!(
         "Extracted {} subgraphs from energy mode with item mappings",
         subgraphs.len()
     );
@@ -233,7 +233,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
     let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.len() < 2 {
-        println!(
+        debug!(
             "Extracted only {} subgraph(s); clique structure may yield fewer distinct motifs",
             subgraphs.len()
         );
@@ -255,7 +255,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
             .collect();
 
         if !overlapping_centroids.is_empty() {
-            println!(
+            debug!(
                 "Found {} centroids appearing in multiple motifs (overlapping structure)",
                 overlapping_centroids.len()
             );
@@ -276,7 +276,7 @@ fn test_spot_subgraphs_energy_multi_motifs() {
             assert!(sg.item_indices.is_some());
         }
 
-        println!(
+        debug!(
             "Extracted {} energy subgraphs with multi-motif validation",
             subgraphs.len()
         );
@@ -323,7 +323,7 @@ fn test_subgraph_energy_rayleigh_filter() {
         "Relaxed Rayleigh filter should yield at least as many subgraphs as strict filter"
     );
 
-    println!(
+    debug!(
         "Strict filter: {} subgraphs, Relaxed filter: {} subgraphs",
         subgraphs_strict.len(),
         subgraphs_relaxed.len()
@@ -356,7 +356,7 @@ fn test_subgraph_structure_clique_data() {
     let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
-        println!("No subgraphs extracted with these strict parameters");
+        debug!("No subgraphs extracted with these strict parameters");
         return;
     }
 
@@ -364,7 +364,7 @@ fn test_subgraph_structure_clique_data() {
     for (i, sg) in subgraphs.iter().enumerate() {
         let (f_dim, x_centroids) = sg.laplacian.init_data.shape();
 
-        println!(
+        debug!(
             "Subgraph {}: {} centroids, {} features, {} items",
             i,
             x_centroids,

@@ -89,9 +89,9 @@ fn test_kmeans_lloyd_gaussian_blobs() {
         assert!(count >= 10, "Cluster {} too small: {}", label, count);
     }
 
-    println!("✓ K-means produced valid clustering:");
+    debug!("✓ K-means produced valid clustering:");
     for (label, count) in &label_counts {
-        println!("  Cluster {}: {} points", label, count);
+        debug!("  Cluster {}: {} points", label, count);
     }
 }
 
@@ -116,7 +116,7 @@ fn test_intrinsic_dimension_line() {
     let builder = ArrowSpaceBuilder::new();
     let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 3, 42);
 
-    println!("Estimated ID for 1D line: {}", id);
+    debug!("Estimated ID for 1D line: {}", id);
     assert!(id >= 1 && id <= 3, "Expected ID near 1, got {}", id);
 }
 
@@ -132,7 +132,7 @@ fn test_intrinsic_dimension_plane() {
     let builder = ArrowSpaceBuilder::new();
     let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 3, 42);
 
-    println!("Estimated ID for 2D plane: {}", id);
+    debug!("Estimated ID for 2D plane: {}", id);
     assert!(id >= 1 && id <= 3, "Expected ID near 2, got {}", id);
 }
 
@@ -152,7 +152,7 @@ fn test_intrinsic_dimension_full_space() {
     let builder = ArrowSpaceBuilder::new();
     let id = builder.estimate_intrinsic_dimension(&rows, rows.len(), 5, 42);
 
-    println!("Estimated ID for 5D full space: {}", id);
+    debug!("Estimated ID for 5D full space: {}", id);
     assert!(id >= 2 && id <= 5, "Expected ID near 5, got {}", id);
 }
 
@@ -172,7 +172,7 @@ fn test_step1_bounds_small_dataset() {
     let builder = ArrowSpaceBuilder::new();
     let (k_min, k_max, _id) = builder.step1_bounds(&rows, 10, 1, 42);
 
-    println!("step 1 bounds (N=10, F=1): [{}, {}]", k_min, k_max);
+    debug!("step 1 bounds (N=10, F=1): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2, "k_min should be at least 2");
     assert!(k_max >= k_min, "k_max should be >= k_min");
     assert!(k_max <= 10, "k_max should not exceed N");
@@ -184,7 +184,7 @@ fn test_step1_bounds_large_n_small_f() {
     let builder = ArrowSpaceBuilder::new();
     let (k_min, k_max, _id) = builder.step1_bounds(&rows, 1000, 5, 42);
 
-    println!("step 1 bounds (N=1000, F=5): [{}, {}]", k_min, k_max);
+    debug!("step 1 bounds (N=1000, F=5): [{}, {}]", k_min, k_max);
     assert!(k_min <= k_max);
     assert!(k_max <= 1000 / 10, "k_max should respect N/10 constraint");
 }
@@ -195,7 +195,7 @@ fn test_step1_bounds_high_dimensional() {
     let builder = ArrowSpaceBuilder::new();
     let (k_min, k_max, _id) = builder.step1_bounds(&rows, 50, 100, 42);
 
-    println!("step 1 bounds (N=50, F=100): [{}, {}]", k_min, k_max);
+    debug!("step 1 bounds (N=50, F=100): [{}, {}]", k_min, k_max);
     assert!(k_min >= 2);
     assert!(k_max <= 25, "k_max should not exceed N/2");
 }
@@ -225,7 +225,7 @@ fn test_calinski_harabasz_well_separated() {
     let builder = ArrowSpaceBuilder::new();
     let k_suggested = builder.step2_calinski_harabasz(&rows, 2, 10, 42);
 
-    println!(
+    debug!(
         "Calinski-Harabasz suggested K: {} (expected 2)",
         k_suggested
     );
@@ -264,7 +264,7 @@ fn test_calinski_harabasz_three_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let k_suggested = builder.step2_calinski_harabasz(&rows, 2, 10, 42);
 
-    println!(
+    debug!(
         "Calinski-Harabasz suggested K: {} (expected 3)",
         k_suggested
     );
@@ -286,7 +286,7 @@ fn test_calinski_harabasz_single_cluster() {
     let builder = ArrowSpaceBuilder::new();
     let k_suggested = builder.step2_calinski_harabasz(&rows, 2, 10, 42);
 
-    println!("Calinski-Harabasz K for single cluster: {}", k_suggested);
+    debug!("Calinski-Harabasz K for single cluster: {}", k_suggested);
     assert!(k_suggested >= 2, "Should return at least k_min");
 }
 
@@ -304,7 +304,7 @@ fn test_threshold_from_pilot_two_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let radius = builder.compute_threshold_from_pilot(&rows, 2, 42);
 
-    println!("Threshold radius for two tight clusters: {:.6}", radius);
+    debug!("Threshold radius for two tight clusters: {:.6}", radius);
 
     // Points are IDENTICAL within each cluster (variance = 0), so fallback uses
     // inter-centroid distance: sqrt((10-0)^2 + (10-0)^2) = 14.14
@@ -327,7 +327,7 @@ fn test_threshold_from_pilot_large_variance() {
     let builder = ArrowSpaceBuilder::new();
     let radius = builder.compute_threshold_from_pilot(&rows, 3, 42);
 
-    println!("Threshold radius for spread cluster: {:.6}", radius);
+    debug!("Threshold radius for spread cluster: {:.6}", radius);
     assert!(
         radius > 1.0,
         "Expected larger threshold for spread data, got {}",
@@ -355,7 +355,7 @@ fn test_threshold_zero_variance_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let radius = builder.compute_threshold_from_pilot(&rows, 2, 42);
 
-    println!("Threshold for zero-variance clusters: {:.6}", radius);
+    debug!("Threshold for zero-variance clusters: {:.6}", radius);
     assert!(
         radius > 0.0,
         "Should use inter-centroid fallback for zero variance"
@@ -372,7 +372,7 @@ fn test_threshold_all_points_identical() {
     let builder = ArrowSpaceBuilder::new();
     let radius = builder.compute_threshold_from_pilot(&rows, 3, 42);
 
-    println!("Threshold for identical points: {:.6}", radius);
+    debug!("Threshold for identical points: {:.6}", radius);
     assert!(
         radius >= 1e-6,
         "Should return minimum threshold for degenerate data"
@@ -392,7 +392,7 @@ fn test_threshold_very_tight_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let radius = builder.compute_threshold_from_pilot(&rows, 2, 42);
 
-    println!("Threshold for very tight clusters: {:.6}", radius);
+    debug!("Threshold for very tight clusters: {:.6}", radius);
     assert!(
         radius > 0.01,
         "Should use inter-centroid distance, not tiny intra-cluster variance"
@@ -434,7 +434,7 @@ fn test_optimal_k_heuristic_synthetic_three_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 3, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6}, ID={} for 3-cluster synthetic",
         k, radius, id
     );
@@ -472,7 +472,7 @@ fn test_optimal_k_heuristic_spherical_clusters() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6}, ID={} for 4 spherical clusters",
         k, radius, id
     );
@@ -504,7 +504,7 @@ fn test_optimal_k_heuristic_high_dimensional_random() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 8, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6}, ID={} for 8D random",
         k, radius, id
     );
@@ -526,7 +526,7 @@ fn test_optimal_k_heuristic_small_n() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
 
-    println!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
+    debug!("Optimal K={}, radius={:.6}, ID={} for N=4", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
     assert!(k <= 4, "K should not exceed N");
     assert!(radius > 0.0);
@@ -538,7 +538,7 @@ fn test_optimal_k_heuristic_degenerate_identical() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, Some(42));
 
-    println!("Optimal K={}, radius={:.6} for identical points", k, radius);
+    debug!("Optimal K={}, radius={:.6} for identical points", k, radius);
     assert!(k >= 2, "K should be at least 2 even for degenerate data");
     assert!(radius >= 0.0);
 }
@@ -553,7 +553,7 @@ fn test_optimal_k_heuristic_single_feature() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, 100, 1, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6}, ID={} for 1D uniform",
         k, radius, id
     );
@@ -570,7 +570,7 @@ fn test_optimal_k_minimum_viable_dataset() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, 2, 2, Some(42));
 
-    println!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
+    debug!("Optimal K={}, radius={:.6}, ID={} for N=2", k, radius, id);
     assert!(k >= 2, "K should be at least 2");
     assert!(radius >= 0.0);
 }
@@ -581,7 +581,7 @@ fn test_optimal_k_very_high_dimensional() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, 20, 1000, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6}, ID={} for N=20, F=1000",
         k, radius, id
     );
@@ -600,7 +600,7 @@ fn test_optimal_k_mixed_scale_features() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, _id) = builder.compute_optimal_k(&rows, 100, 2, Some(42));
 
-    println!(
+    debug!(
         "Optimal K={}, radius={:.6} for mixed-scale features",
         k, radius
     );
@@ -677,7 +677,7 @@ fn test_clustering_heuristic_trait_interface() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, 4, 2, Some(42));
 
-    println!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
+    debug!("Trait interface: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2);
     assert!(radius > 0.0, "Radius should be positive, got {}", radius);
     assert!(id <= 2);
@@ -705,7 +705,7 @@ fn test_optimal_k_performance_large_dataset() {
     let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 4, Some(42));
     let elapsed = start.elapsed();
 
-    println!(
+    debug!(
         "Large dataset (N=10000, F=4): K={}, radius={:.6}, ID={}, time={:?}",
         k, radius, id, elapsed
     );
@@ -750,7 +750,7 @@ fn test_readme_example() {
     let builder = ArrowSpaceBuilder::new();
     let (k, radius, id) = builder.compute_optimal_k(&rows, rows.len(), 2, Some(42));
 
-    println!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
+    debug!("README example: K={}, radius={:.6}, ID={}", k, radius, id);
     assert!(k >= 2, "Should detect at least 2 clusters");
     assert!(radius > 0.0);
 }

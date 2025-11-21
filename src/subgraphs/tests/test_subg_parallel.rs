@@ -207,8 +207,8 @@ fn test_recluster_centroids_means_correctness() {
         actual_c1_1
     );
 
-    println!("Cluster 0 mean: ({:.6}, {:.6})", actual_c0_0, actual_c0_1);
-    println!("Cluster 1 mean: ({:.6}, {:.6})", actual_c1_0, actual_c1_1);
+    debug!("Cluster 0 mean: ({:.6}, {:.6})", actual_c0_0, actual_c0_1);
+    debug!("Cluster 1 mean: ({:.6}, {:.6})", actual_c1_0, actual_c1_1);
 }
 
 /// Test that parallel motif processing doesn't lose or duplicate motifs
@@ -238,7 +238,7 @@ fn test_motif_subgraphs_no_loss_or_duplication() {
     let subgraphs = gl.spot_subg_motives(&aspace, &cfg);
 
     if subgraphs.is_empty() {
-        println!("No subgraphs extracted; skipping duplication check");
+        debug!("No subgraphs extracted; skipping duplication check");
         return;
     }
 
@@ -359,7 +359,7 @@ fn test_parallel_stress_large_dataset() {
         assert!(f_dim > 0);
     }
 
-    println!(
+    debug!(
         "Stress test passed: extracted {} subgraphs from 500-item dataset",
         subgraphs.len()
     );

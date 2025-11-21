@@ -264,8 +264,8 @@ fn test_simple_random_vs_density_adaptive() {
         ));
     }
 
-    println!("Simple random kept: {:.1}%", simple_ratio * 100.0);
-    println!("Density adaptive kept: {:.1}%", density_ratio * 100.0);
+    debug!("Simple random kept: {:.1}%", simple_ratio * 100.0);
+    debug!("Density adaptive kept: {:.1}%", density_ratio * 100.0);
 }
 
 #[test]

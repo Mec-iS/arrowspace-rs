@@ -35,7 +35,7 @@ fn test_select_tau_fixed() {
         TAU_FLOOR
     );
 
-    println!("✓ Fixed tau mode validated");
+    debug!("✓ Fixed tau mode validated");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn test_select_tau_mean() {
     let empty: Vec<f64> = vec![];
     assert_eq!(TauMode::select_tau(&empty, TauMode::Mean), TAU_FLOOR);
 
-    println!("✓ Mean tau mode validated");
+    debug!("✓ Mean tau mode validated");
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn test_select_tau_median() {
     let empty: Vec<f64> = vec![];
     assert_eq!(TauMode::select_tau(&empty, TauMode::Median), TAU_FLOOR);
 
-    println!("✓ Median tau mode validated");
+    debug!("✓ Median tau mode validated");
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_select_tau_percentile() {
         TAU_FLOOR
     );
 
-    println!("✓ Percentile tau mode validated");
+    debug!("✓ Percentile tau mode validated");
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn test_select_tau_floor_enforcement() {
     let zero = vec![0.0];
     assert_eq!(TauMode::select_tau(&zero, TauMode::Mean), TAU_FLOOR);
 
-    println!("✓ TAU_FLOOR enforcement validated");
+    debug!("✓ TAU_FLOOR enforcement validated");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn test_builder_compute_lambdas_basic() {
 
     let lambdas = aspace.lambdas();
 
-    println!(
+    debug!(
         "Computed {} lambdas for {} clusters",
         lambdas.len(),
         aspace.n_clusters
@@ -195,7 +195,7 @@ fn test_builder_compute_lambdas_basic() {
         "All lambdas should be <= 1.0"
     );
 
-    println!(
+    debug!(
         "✓ Lambda computation validated: min={:.6}, max={:.6}",
         lambdas.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
         lambdas.iter().fold(0.0, |a, &b| a.max(b))
@@ -236,7 +236,7 @@ fn test_builder_lambdas_different_tau_modes() {
         );
 
         let lambda_mean = lambdas.iter().sum::<f64>() / lambdas.len() as f64;
-        println!(
+        debug!(
             "TauMode {:?}: mean={:.6}, count={}",
             tau_mode,
             lambda_mean,
@@ -264,7 +264,7 @@ fn test_builder_lambdas_different_tau_modes() {
         modes_differ,
         "Different tau modes should produce different lambda values"
     );
-    println!("✓ Different tau modes produce distinct lambda distributions");
+    debug!("✓ Different tau modes produce distinct lambda distributions");
 }
 
 #[test]
@@ -309,10 +309,10 @@ fn test_builder_lambdas_invariants() {
         assert!(lambda_max >= lambda_min, "Max should be >= min");
     }
 
-    println!("✓ Lambda invariants validated:");
-    println!("  Clusters: {}", aspace.n_clusters);
-    println!("  Mean: {:.6}", lambda_mean);
-    println!("  Std: {:.6}", lambda_variance.sqrt());
+    debug!("✓ Lambda invariants validated:");
+    debug!("  Clusters: {}", aspace.n_clusters);
+    debug!("  Mean: {:.6}", lambda_mean);
+    debug!("  Std: {:.6}", lambda_variance.sqrt());
 }
 
 #[test]
@@ -322,8 +322,8 @@ fn test_tau_floor_constant() {
     assert!(TAU_FLOOR < 1e-6, "TAU_FLOOR should be small");
     assert!(TAU_FLOOR.is_finite(), "TAU_FLOOR should be finite");
 
-    println!("TAU_FLOOR = {:.2e}", TAU_FLOOR);
-    println!("✓ TAU_FLOOR constant validated");
+    debug!("TAU_FLOOR = {:.2e}", TAU_FLOOR);
+    debug!("✓ TAU_FLOOR constant validated");
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn test_builder_lambdas_consistency_properties() {
     // across multiple builds, since clustering and projection involve randomness
     let items = make_moons_hd(80, 0.15, 0.4, 11, 789);
 
-    println!("=== LAMBDA CONSISTENCY TEST (Non-Deterministic Build) ===");
+    debug!("=== LAMBDA CONSISTENCY TEST (Non-Deterministic Build) ===");
 
     let (aspace1, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.3, 5, 2, 2.0, None)
@@ -351,12 +351,12 @@ fn test_builder_lambdas_consistency_properties() {
     let lambdas1 = aspace1.lambdas();
     let lambdas2 = aspace2.lambdas();
 
-    println!(
+    debug!(
         "Build 1: {} clusters, {} lambdas",
         aspace1.n_clusters,
         lambdas1.len()
     );
-    println!(
+    debug!(
         "Build 2: {} clusters, {} lambdas",
         aspace2.n_clusters,
         lambdas2.len()
@@ -382,11 +382,11 @@ fn test_builder_lambdas_consistency_properties() {
     let (mean1, var1, min1, max1) = compute_stats(lambdas1);
     let (mean2, var2, min2, max2) = compute_stats(lambdas2);
 
-    println!(
+    debug!(
         "Build 1 stats: mean={:.6}, var={:.6}, min={:.6}, max={:.6}",
         mean1, var1, min1, max1
     );
-    println!(
+    debug!(
         "Build 2 stats: mean={:.6}, var={:.6}, min={:.6}, max={:.6}",
         mean2, var2, min2, max2
     );
@@ -424,8 +424,8 @@ fn test_builder_lambdas_consistency_properties() {
         mean_ratio
     );
 
-    println!("✓ Lambda computation produces consistent statistical properties");
-    println!("  (Values are non-deterministic due to random clustering/projection)");
+    debug!("✓ Lambda computation produces consistent statistical properties");
+    debug!("  (Values are non-deterministic due to random clustering/projection)");
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
     // the projected space is random, so lambdas will differ
     let items = make_moons_hd(80, 0.15, 0.4, 120, 555);
 
-    println!("=== LAMBDA NON-DETERMINISM TEST (Random Projection) ===");
+    debug!("=== LAMBDA NON-DETERMINISM TEST (Random Projection) ===");
 
     let (aspace1, _) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.1, 5, 2, 2.0, None)
@@ -459,11 +459,11 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
     let lambdas1 = aspace1.lambdas();
     let lambdas2 = aspace2.lambdas();
 
-    println!(
+    debug!(
         "Build 1: {} clusters, reduced_dim={:?}",
         aspace1.n_clusters, aspace1.reduced_dim
     );
-    println!(
+    debug!(
         "Build 2: {} clusters, reduced_dim={:?}",
         aspace2.n_clusters, aspace2.reduced_dim
     );
@@ -481,7 +481,7 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
     for i in 0..min_len {
         if (lambdas1[i] - lambdas2[i]).abs() > 1e-9 {
             values_differ = true;
-            println!(
+            debug!(
                 "Lambda difference at cluster {}: {:.12} != {:.12}",
                 i, lambdas1[i], lambdas2[i]
             );
@@ -489,11 +489,11 @@ fn test_builder_lambdas_nondeterministic_with_projection() {
         }
     }
 
-    println!(
+    debug!(
         r#"Random projection should cause lambda values to differ between builds: value differ {values_differ}"#
     );
 
-    println!("✓ Lambda computation IS non-deterministic with random projection enabled");
+    debug!("✓ Lambda computation IS non-deterministic with random projection enabled");
 }
 
 #[test]
@@ -564,7 +564,7 @@ fn test_taumode_consistency_with_projection() {
         indexed_lambda
     );
 
-    println!("✓ TauMode is deterministic with dimensional reduction");
+    debug!("✓ TauMode is deterministic with dimensional reduction");
 }
 
 #[test]
@@ -637,7 +637,7 @@ fn test_taumode_energy_consistency_with_projection() {
         indexed_lambda
     );
 
-    println!("✓ TauMode is deterministic with dimensional reduction");
+    debug!("✓ TauMode is deterministic with dimensional reduction");
 }
 
 #[test]
@@ -668,7 +668,7 @@ fn test_rayleigh_quotient_scale_invariance() {
         lambda2
     );
 
-    println!("✓ Synthetic lambda (and thus Rayleigh quotient) is scale-invariant");
+    debug!("✓ Synthetic lambda (and thus Rayleigh quotient) is scale-invariant");
 }
 
 #[test]
@@ -676,7 +676,7 @@ fn test_builder_lambdas_with_larger_dataset() {
     // Comprehensive test with realistic high-dimensional data
     let items = make_gaussian_blob(999, 0.75);
 
-    println!(
+    debug!(
         "Dataset: {} items, {} dimensions",
         items.len(),
         items[0].len()
@@ -690,8 +690,8 @@ fn test_builder_lambdas_with_larger_dataset() {
         .with_sparsity_check(false)
         .build(items.clone());
 
-    println!("Built index with {} clusters", aspace.n_clusters);
-    println!("Graph has {} nodes", gl.nnodes);
+    debug!("Built index with {} clusters", aspace.n_clusters);
+    debug!("Graph has {} nodes", gl.nnodes);
 
     let lambdas = aspace.lambdas();
 
@@ -705,14 +705,14 @@ fn test_builder_lambdas_with_larger_dataset() {
         .sum::<f64>()
         / lambdas.len() as f64;
 
-    println!("\n=== LAMBDA STATISTICS ===");
-    println!("Count: {}", lambdas.len());
-    println!("Min: {:.6}", lambda_min);
-    println!("Max: {:.6}", lambda_max);
-    println!("Mean: {:.6}", lambda_mean);
-    println!("Variance: {:.6}", lambda_variance);
-    println!("Std Dev: {:.6}", lambda_variance.sqrt());
-    println!("Range: {:.6}", lambda_max - lambda_min);
+    debug!("\n=== LAMBDA STATISTICS ===");
+    debug!("Count: {}", lambdas.len());
+    debug!("Min: {:.6}", lambda_min);
+    debug!("Max: {:.6}", lambda_max);
+    debug!("Mean: {:.6}", lambda_mean);
+    debug!("Variance: {:.6}", lambda_variance);
+    debug!("Std Dev: {:.6}", lambda_variance.sqrt());
+    debug!("Range: {:.6}", lambda_max - lambda_min);
 
     // Validation
     assert_eq!(lambdas.len(), aspace.nitems, "One lambda per cluster");
@@ -721,7 +721,7 @@ fn test_builder_lambdas_with_larger_dataset() {
         lambdas.iter().all(|&l| (0.0..=1.0).contains(&l)),
         "All lambdas in [0,1]"
     );
-    println!(
+    debug!(
         "If it was a non-random dataset, it should always have had variance across clusters: lambda_variance > 0.0 {}",
         lambda_variance > 0.0,
     );
@@ -731,7 +731,7 @@ fn test_builder_lambdas_with_larger_dataset() {
     );
 
     // Test different tau modes on same data
-    println!("\n=== TAU MODE COMPARISON ===");
+    debug!("\n=== TAU MODE COMPARISON ===");
     let tau_modes = vec![
         TauMode::Fixed(0.45),
         TauMode::Fixed(0.5),
@@ -752,7 +752,7 @@ fn test_builder_lambdas_with_larger_dataset() {
         let tau_lambdas = test_aspace.lambdas();
         let tau_mean = tau_lambdas.iter().sum::<f64>() / tau_lambdas.len() as f64;
 
-        println!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
+        debug!("TauMode {:?} - Mean lambda: {:.6}", tau_mode, tau_mean);
 
         // Validate each tau mode
         assert!(tau_lambdas.iter().all(|&l| l.is_finite()), "Finite lambdas");
@@ -762,9 +762,9 @@ fn test_builder_lambdas_with_larger_dataset() {
         );
     }
 
-    println!("\n✓ Realistic data lambda computation validated");
-    println!("✓ All mathematical properties satisfied");
-    println!("✓ Multiple tau modes tested successfully");
+    debug!("\n✓ Realistic data lambda computation validated");
+    debug!("✓ All mathematical properties satisfied");
+    debug!("✓ Multiple tau modes tested successfully");
 }
 
 #[test]
