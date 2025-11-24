@@ -1447,6 +1447,19 @@ impl ArrowSpace {
         config.insert("nitems".to_string(), ConfigValue::Usize(self.nitems));
         config.insert("nfeatures".to_string(), ConfigValue::Usize(self.nfeatures));
 
+        config.insert(
+            "min_lambdas".to_string(),
+            ConfigValue::F64(self.min_lambdas),
+        );
+        config.insert(
+            "max_lambdas".to_string(),
+            ConfigValue::F64(self.max_lambdas),
+        );
+        config.insert(
+            "range_lambdas".to_string(),
+            ConfigValue::F64(self.range_lambdas),
+        );
+
         // projection matrix
         if self.projection_matrix.is_some() {
             config.insert(
