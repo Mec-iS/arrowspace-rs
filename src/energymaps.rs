@@ -112,12 +112,12 @@ impl EnergyParams {
         // Adaptive optical compression
         // Priority 1: Use dataset size if available (2√N rule)
         // Priority 2: Use dimensionality heuristic (legacy)
-        let optical_tokens = if builder.n_items_original != 0 {
+        let optical_tokens = if builder.nitems != 0 {
             // Dataset-size-aware adaptive tokens (preferred)
-            let tokens = Self::compute_adaptive_tokens(builder.n_items_original);
+            let tokens = Self::compute_adaptive_tokens(builder.nitems);
             info!(
                 "Using dataset-aware optical_tokens={} for {} items (2√N rule)",
-                tokens, builder.n_items_original
+                tokens, builder.nitems
             );
             Some(tokens)
         } else if builder.use_dims_reduction {
@@ -335,7 +335,7 @@ impl EnergyMaps for ArrowSpace {
             "Creating implicit projection F={} → 2D for spatial binning",
             f
         );
-        let proj = Arc::new(ImplicitProjection::new(f, 2)); // [PARALLEL] wrap for sharing
+        let proj = Arc::new(ImplicitProjection::new(f, 2, None)); // [PARALLEL] wrap for sharing
 
         // [PARALLEL] Project all centroids in parallel
         let xy: Vec<f64> = (0..x)
@@ -1127,7 +1127,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                 "Spectral mode not compatible with build_energy, please do not enable for energy search"
             );
         }
-        self.n_items_original = rows.len();
+        self.nitems = rows.len();
+        self.nfeatures = rows[0].len();
 
         // ============================================================
         // Stage 1: Clustering with sampling and optional projection
@@ -1192,7 +1193,8 @@ impl EnergyMapsBuilder for ArrowSpaceBuilder {
                     current_features, target_dim, self.rp_eps
                 );
 
-                let implicit_proj = ImplicitProjection::new(current_features, target_dim);
+                let implicit_proj =
+                    ImplicitProjection::new(current_features, target_dim, self.clustering_seed);
                 let projected = project_matrix(&sub_centroids, &implicit_proj);
                 aspace.extra_reduced_dim = true;
                 self.extra_dims_reduction = true;

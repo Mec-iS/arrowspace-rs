@@ -81,7 +81,7 @@ fn test_laplacian_mathematical_properties() {
                 asymmetry_violations += 1;
                 if asymmetry_violations <= 5 {
                     // Show first 5 violations only
-                    println!(
+                    debug!(
                         "Asymmetry at ({}, {}): L_ij={:.2e}, L_ji={:.2e}, diff={:.2e}",
                         i, j, l_ij, l_ji, diff
                     );
@@ -145,7 +145,7 @@ fn test_laplacian_mathematical_properties() {
         "CSR data length should match nnz"
     );
 
-    println!(
+    debug!(
         "✓ Laplacian mathematical properties verified for {}×{} sparse matrix with {} non-zeros",
         n,
         n,
@@ -411,11 +411,11 @@ fn test_numerical_stability() {
         );
     }
 
-    println!(
+    debug!(
         "✓ Numerical stability verified: checked {} stored entries, all finite",
         finite_entries
     );
-    println!(
+    debug!(
         "  Matrix sparsity: {}/{} entries stored ({:.1}%)",
         laplacian.matrix.nnz(),
         9, // 3x3
@@ -640,8 +640,8 @@ fn test_optimized_sparse_matrix_laplacian() {
         expected_max_nnz
     );
 
-    println!("✓ Sparse matrix Laplacian test passed");
-    println!(
+    debug!("✓ Sparse matrix Laplacian test passed");
+    debug!(
         "  Matrix: {}×{} with {} non-zeros ({:.1}% sparse)",
         4,
         4,
@@ -761,13 +761,13 @@ fn test_with_adjacency_output() {
     }
 
     // Verify sparsity characteristics
-    println!(
+    debug!(
         "✓ Adjacency matrix: {}×{} with {} non-zeros",
         adjacency.shape().0,
         adjacency.shape().1,
         adjacency.nnz()
     );
-    println!(
+    debug!(
         "✓ Laplacian matrix: {}×{} with {} non-zeros",
         laplacian.matrix.shape().0,
         laplacian.matrix.shape().1,

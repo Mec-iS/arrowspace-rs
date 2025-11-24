@@ -1,4 +1,4 @@
-use crate::reduction::{compute_jl_dimension, project_matrix, ImplicitProjection};
+use crate::reduction::{ImplicitProjection, compute_jl_dimension, project_matrix};
 use smartcore::linalg::basic::{
     arrays::{Array, Array2},
     matrix::DenseMatrix,
@@ -10,7 +10,7 @@ use smartcore::linalg::basic::{
 
 #[test]
 fn test_implicit_projection_creates() {
-    let proj = ImplicitProjection::new(100, 10);
+    let proj = ImplicitProjection::new(100, 10, Some(42));
     assert_eq!(proj.original_dim, 100);
     assert_eq!(proj.reduced_dim, 10);
     assert!(proj.seed > 0);
@@ -18,7 +18,7 @@ fn test_implicit_projection_creates() {
 
 #[test]
 fn test_implicit_projection_dimensions() {
-    let proj = ImplicitProjection::new(50, 8);
+    let proj = ImplicitProjection::new(50, 8, Some(42));
     let query = vec![0.5; 50];
 
     let projected = proj.project(&query);
@@ -30,7 +30,7 @@ fn test_implicit_projection_dimensions() {
 #[test]
 fn test_implicit_projection_deterministic() {
     // Same seed should produce same projection
-    let proj = ImplicitProjection::new(30, 5);
+    let proj = ImplicitProjection::new(30, 5, Some(42));
     let query = vec![1.0; 30];
 
     let result1 = proj.project(&query);
@@ -42,8 +42,8 @@ fn test_implicit_projection_deterministic() {
 #[test]
 fn test_implicit_projection_different_seeds() {
     // Different instances should have different seeds
-    let proj1 = ImplicitProjection::new(20, 5);
-    let proj2 = ImplicitProjection::new(20, 5);
+    let proj1 = ImplicitProjection::new(20, 5, None);
+    let proj2 = ImplicitProjection::new(20, 5, None);
 
     // Seeds should be different (probabilistically)
     assert_ne!(proj1.seed, proj2.seed);
@@ -58,7 +58,7 @@ fn test_implicit_projection_different_seeds() {
 
 #[test]
 fn test_implicit_projection_zero_vector() {
-    let proj = ImplicitProjection::new(40, 10);
+    let proj = ImplicitProjection::new(40, 10, Some(42));
     let query = vec![0.0; 40];
 
     let projected = proj.project(&query);
@@ -70,7 +70,7 @@ fn test_implicit_projection_zero_vector() {
 
 #[test]
 fn test_implicit_projection_linearity() {
-    let proj = ImplicitProjection::new(25, 6);
+    let proj = ImplicitProjection::new(25, 6, Some(42));
 
     let query = vec![1.0; 25];
     let scaled_query: Vec<f64> = query.iter().map(|x| x * 2.0).collect();
@@ -94,7 +94,7 @@ fn test_implicit_projection_linearity() {
 
 #[test]
 fn test_implicit_projection_preserves_scale() {
-    let proj = ImplicitProjection::new(50, 15);
+    let proj = ImplicitProjection::new(50, 15, Some(42));
     let query = vec![1.0; 50];
 
     let projected = proj.project(&query);
@@ -110,7 +110,7 @@ fn test_implicit_projection_preserves_scale() {
 
 #[test]
 fn test_implicit_projection_non_trivial() {
-    let proj = ImplicitProjection::new(30, 8);
+    let proj = ImplicitProjection::new(30, 8, Some(42));
     let query = vec![1.0; 30];
 
     let projected = proj.project(&query);
@@ -128,7 +128,7 @@ fn test_implicit_projection_non_trivial() {
 fn test_project_matrix_dimensions() {
     let data = vec![1.0; 60]; // 3 rows × 20 cols
     let matrix = DenseMatrix::from_iterator(data.into_iter(), 3, 20, 1);
-    let proj = ImplicitProjection::new(20, 5);
+    let proj = ImplicitProjection::new(20, 5, Some(42));
 
     let projected = project_matrix(&matrix, &proj);
 
@@ -139,7 +139,7 @@ fn test_project_matrix_dimensions() {
 fn test_project_matrix_preserves_rows() {
     let data = vec![0.5; 100]; // 10 rows × 10 cols
     let matrix = DenseMatrix::from_iterator(data.into_iter(), 10, 10, 1);
-    let proj = ImplicitProjection::new(10, 3);
+    let proj = ImplicitProjection::new(10, 3, Some(42));
 
     let projected = project_matrix(&matrix, &proj);
 
@@ -151,7 +151,7 @@ fn test_project_matrix_preserves_rows() {
 fn test_project_matrix_zero_matrix() {
     let data = vec![0.0; 80]; // 4 rows × 20 cols
     let matrix = DenseMatrix::from_iterator(data.into_iter(), 4, 20, 0);
-    let proj = ImplicitProjection::new(20, 6);
+    let proj = ImplicitProjection::new(20, 6, Some(42));
 
     let projected = project_matrix(&matrix, &proj);
 
@@ -167,7 +167,7 @@ fn test_project_matrix_zero_matrix() {
 fn test_project_matrix_different_rows_different_projections() {
     let data = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let matrix = DenseMatrix::from_iterator(data.into_iter(), 3, 4, 0);
-    let proj = ImplicitProjection::new(4, 2);
+    let proj = ImplicitProjection::new(4, 2, Some(42));
 
     let projected = project_matrix(&matrix, &proj);
 
@@ -301,7 +301,7 @@ fn test_full_pipeline_implicit_projection() {
     let matrix = DenseMatrix::from_iterator(data.into_iter(), n_samples, orig_dim, 0);
 
     // Create projection
-    let proj = ImplicitProjection::new(orig_dim, reduced_dim);
+    let proj = ImplicitProjection::new(orig_dim, reduced_dim, Some(42));
 
     // Project matrix
     let projected = project_matrix(&matrix, &proj);
@@ -319,7 +319,7 @@ fn test_full_pipeline_implicit_projection() {
 #[test]
 fn test_memory_efficiency() {
     // ImplicitProjection should be tiny (just 24 bytes)
-    let proj = ImplicitProjection::new(1000, 100);
+    let proj = ImplicitProjection::new(1000, 100, Some(42));
 
     // Verify it can project without storing the matrix
     let query = vec![1.0; 1000];

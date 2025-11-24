@@ -28,29 +28,15 @@ jobs:
             ~/.cargo
             ./target
           key: ${{ runner.os }}-cargo-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.platform.target }}-
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.platform.target }}
-          profile: minimal
-          default: true
-      - name: Install test runner for wasm
-        if: matrix.platform.target == 'wasm32-unknown-unknown'
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          targets: ${{ matrix.platform.target }}
       - name: Stable Build with all features
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --all-features --target ${{ matrix.platform.target }}
+        run: cargo build --all-features --target ${{ matrix.platform.target }}
       - name: Stable Build without features
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --target ${{ matrix.platform.target }}
+        run: cargo build --target ${{ matrix.platform.target }}
       - name: Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features
+        run: cargo test --all-features

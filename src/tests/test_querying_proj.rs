@@ -31,7 +31,7 @@ fn test_query_without_projection() {
     // Build clustered index without dimensionality reduction
     let (data, queries) = create_test_data(99, 18);
 
-    println!(
+    debug!(
         "Building index with {} items, {} dims",
         data.len(),
         data[0].len()
@@ -44,11 +44,11 @@ fn test_query_without_projection() {
         .with_sparsity_check(false)
         .build(data);
 
-    println!("Built index with {} clusters", aspace.n_clusters);
+    debug!("Built index with {} clusters", aspace.n_clusters);
 
     // Prepare query (no projection needed)
     let query_lambda = aspace.prepare_query_item(&queries[0], &gl);
-    println!("{:?}", query_lambda);
+    debug!("{:?}", query_lambda);
     assert!(query_lambda.is_finite(), "Query lambda should be finite");
 
     let query_item = ArrowItem::new(queries[0].clone(), query_lambda);
@@ -65,7 +65,7 @@ fn test_query_without_projection() {
         );
     }
 
-    println!(
+    debug!(
         "✓ Query without projection: found {} results",
         results.len()
     );
@@ -76,7 +76,7 @@ fn test_query_with_projection_enabled() {
     // Test query projection in high-dimensional clustered space
     let (data, queries) = create_test_data(99, 18);
 
-    println!("Testing projection with {}D data", data[0].len());
+    debug!("Testing projection with {}D data", data[0].len());
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(1.0, 6, 2, 2.0, None)
@@ -96,7 +96,7 @@ fn test_query_with_projection_enabled() {
     );
 
     let reduced_dim = aspace.reduced_dim.unwrap();
-    println!(
+    debug!(
         "Projection: {} → {} dimensions ({:.1}x compression)",
         aspace.nfeatures,
         reduced_dim,
@@ -132,7 +132,7 @@ fn test_query_with_projection_enabled() {
         );
     }
 
-    println!(
+    debug!(
         "✓ Query with projection: {} → {} dims, found {} results",
         aspace.nfeatures,
         reduced_dim,
@@ -168,7 +168,7 @@ fn test_prepare_query_item_consistency() {
         "Lambda computation should be deterministic"
     );
 
-    println!("✓ Consistent lambda: {:.6}", lambda1);
+    debug!("✓ Consistent lambda: {:.6}", lambda1);
 }
 
 #[test]
@@ -197,11 +197,11 @@ fn test_search_lambda_aware_alpha_effect() {
     assert_eq!(results_high_alpha.len(), 5);
     assert_eq!(results_low_alpha.len(), 5);
 
-    println!(
+    debug!(
         "High alpha top result: idx={}, score={:.4}",
         results_high_alpha[0].0, results_high_alpha[0].1
     );
-    println!(
+    debug!(
         "Low alpha top result: idx={}, score={:.4}",
         results_low_alpha[0].0, results_low_alpha[0].1
     );
@@ -217,7 +217,7 @@ fn test_search_lambda_aware_alpha_effect() {
         semantic_sim
     );
 
-    println!("✓ Alpha effect verified: semantic_sim={:.4}", semantic_sim);
+    debug!("✓ Alpha effect verified: semantic_sim={:.4}", semantic_sim);
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn test_search_lambda_aware_hybrid() {
         assert!(score.is_finite(), "Score should be finite");
     }
 
-    println!(
+    debug!(
         "✓ Hybrid search: regular={} results, hybrid={} results",
         results_regular.len(),
         results_hybrid.len()
@@ -305,12 +305,12 @@ fn test_range_search_with_query_lambda() {
     let query_lambda = aspace.prepare_query_item(&query, &gl);
     let query_item = ArrowItem::new(query, query_lambda);
 
-    println!("query lambda {:?}", query_lambda);
+    debug!("query lambda {:?}", query_lambda);
 
     // Find all clusters within radius 0.5
     let results = aspace.range_search(&query_item, &gl, 0.1);
 
-    println!("{:?}", aspace.lambdas);
+    debug!("{:?}", aspace.lambdas);
 
     // Should find at least some clusters
     assert!(!results.is_empty(), "Range search should find some results");
@@ -326,7 +326,7 @@ fn test_range_search_with_query_lambda() {
         assert!(dist.is_finite(), "Distance should be finite");
     }
 
-    println!(
+    debug!(
         "✓ Range search found {} clusters within radius 0.5",
         results.len()
     );
@@ -383,7 +383,7 @@ fn test_search_returns_top_k_exactly() {
     let query_item = ArrowItem::new(query, query_lambda);
 
     let num_clusters = aspace.n_clusters;
-    println!("Testing k-NN with {} total clusters", num_clusters);
+    debug!("Testing k-NN with {} total clusters", num_clusters);
 
     // Test various k values
     for k in [1, 3, 5, 10] {
@@ -397,7 +397,7 @@ fn test_search_returns_top_k_exactly() {
         );
     }
 
-    println!("✓ k-NN returns correct number of results");
+    debug!("✓ k-NN returns correct number of results");
 }
 
 #[test]
@@ -407,7 +407,7 @@ fn test_projection_preserves_relative_distances() {
     let (data, _) = create_test_data(99, 18);
     let query: Vec<f64> = data[10].clone().to_vec();
 
-    println!("Testing JL projection with 200D data");
+    debug!("Testing JL projection with 200D data");
 
     let (aspace, gl) = ArrowSpaceBuilder::default()
         .with_lambda_graph(0.5, 6, 2, 2.0, None)
@@ -423,7 +423,7 @@ fn test_projection_preserves_relative_distances() {
     );
     let reduced_dim = aspace.reduced_dim.unwrap();
 
-    println!(
+    debug!(
         "Projection: {} → {} dimensions ({:.1}x compression)",
         aspace.nfeatures,
         reduced_dim,
@@ -475,11 +475,11 @@ fn test_projection_preserves_relative_distances() {
         .sum::<f64>()
         .sqrt();
 
-    println!(
+    debug!(
         "Original space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
         dist_12_orig, dist_13_orig
     );
-    println!(
+    debug!(
         "Projected space: dist(q1,q2)={:.4}, dist(q1,q3)={:.4}",
         dist_12_proj, dist_13_proj
     );
@@ -499,7 +499,7 @@ fn test_projection_preserves_relative_distances() {
     let ratio_12 = dist_12_proj / dist_12_orig;
     let ratio_13 = dist_13_proj / dist_13_orig;
 
-    println!(
+    debug!(
         "Distance preservation ratios: q1-q2={:.3}, q1-q3={:.3}",
         ratio_12, ratio_13
     );
@@ -524,11 +524,11 @@ fn test_projection_preserves_relative_distances() {
     assert!(lambda2.is_finite() && lambda2 >= 0.0);
     assert!(lambda3.is_finite() && lambda3 >= 0.0);
 
-    println!(
+    debug!(
         "Query lambdas: q1={:.6}, q2={:.6}, q3={:.6}",
         lambda1, lambda2, lambda3
     );
-    println!("✓ Projection preserves relative distances and enables lambda computation");
+    debug!("✓ Projection preserves relative distances and enables lambda computation");
 }
 
 #[test]
@@ -548,7 +548,7 @@ fn test_project_query_no_projection() {
     assert_eq!(projected.len(), query.len());
     assert_eq!(projected, query);
 
-    println!("✓ Query passes through unchanged when projection disabled");
+    debug!("✓ Query passes through unchanged when projection disabled");
 }
 
 #[test]
@@ -573,7 +573,7 @@ fn test_project_query_consistency() {
     assert_eq!(projected1, projected2, "Projection should be deterministic");
     assert_eq!(projected2, projected3, "Projection should be deterministic");
 
-    println!("✓ Projection is deterministic");
+    debug!("✓ Projection is deterministic");
 }
 
 #[test]
@@ -606,7 +606,7 @@ fn test_project_query_linearity() {
         );
     }
 
-    println!("✓ Projection is linear");
+    debug!("✓ Projection is linear");
 }
 
 #[test]
@@ -629,7 +629,7 @@ fn test_project_query_zero_vector() {
         assert!(val.abs() < 1e-8, "Expected near-zero, got {:.6}", val);
     }
 
-    println!("✓ Zero vector projects to zero");
+    debug!("✓ Zero vector projects to zero");
 }
 
 #[test]
@@ -653,7 +653,7 @@ fn test_project_query_preserves_scale_approximately() {
     // JL preserves norms approximately - ratio should be within reasonable bounds
     let ratio = proj_norm / orig_norm;
 
-    println!(
+    debug!(
         "Norm preservation: original={:.4}, projected={:.4}, ratio={:.3}",
         orig_norm, proj_norm, ratio
     );
@@ -664,7 +664,7 @@ fn test_project_query_preserves_scale_approximately() {
         ratio
     );
 
-    println!("✓ Projection preserves scale approximately");
+    debug!("✓ Projection preserves scale approximately");
 }
 
 #[test]
@@ -692,7 +692,7 @@ fn test_project_query_different_queries_differ() {
     assert_ne!(proj2, proj3);
     assert_ne!(proj1, proj3);
 
-    println!("✓ Different queries produce different projections");
+    debug!("✓ Different queries produce different projections");
 }
 
 #[test]
@@ -722,5 +722,5 @@ fn test_project_query_preserves_dot_product_sign() {
         dot
     );
 
-    println!("✓ Projection preserves opposite directions (dot product sign)");
+    debug!("✓ Projection preserves opposite directions (dot product sign)");
 }

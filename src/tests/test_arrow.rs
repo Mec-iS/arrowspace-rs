@@ -1,15 +1,16 @@
+use crate::builder::ConfigValue;
+use crate::core::ArrowSpace;
+use crate::reduction::ImplicitProjection;
 use crate::{
     builder::ArrowSpaceBuilder,
     graph::GraphLaplacian,
     sampling::SamplerType,
     taumode::TauMode,
-    tests::test_data::{make_gaussian_blob, make_moons_hd},
+    tests::test_data::{make_gaussian_blob, make_gaussian_hd, make_moons_hd},
 };
-use std::collections::HashMap;
 
-use crate::builder::ConfigValue;
-use crate::core::ArrowSpace;
-use crate::reduction::ImplicitProjection;
+use log::debug;
+use std::collections::HashMap;
 
 /// Helper to compare two GraphLaplacian matrices for equality
 fn laplacian_eq(a: &GraphLaplacian, b: &GraphLaplacian, eps: f64) -> bool {
@@ -71,11 +72,11 @@ fn test_builder_direction_vs_magnitude_sensitivity() {
     let lambdas_norm = aspace_norm.lambdas();
     let lambdas_tau = aspace_tau.lambdas();
 
-    println!(
+    debug!(
         "Normalized lambdas (first 3): {:?}",
         &lambdas_norm[..3.min(lambdas_norm.len())]
     );
-    println!(
+    debug!(
         "Tau lambdas (first 3): {:?}",
         &lambdas_tau[..3.min(lambdas_tau.len())]
     );
@@ -107,7 +108,7 @@ fn test_builder_clustering_produces_valid_assignments() {
         .with_normalisation(true)
         .build(items.clone());
 
-    println!("Assignments: {:?}", aspace.cluster_assignments);
+    debug!("Assignments: {:?}", aspace.cluster_assignments);
 
     // Verify all items are assigned
     let assigned_count = aspace
@@ -140,11 +141,11 @@ fn test_builder_spectral_laplacian_computation() {
         .with_inline_sampling(None)
         .build(items.clone());
 
-    println!(
+    debug!(
         "No spectral - signals shape: {:?}",
         aspace_no_spectral.signals.shape()
     );
-    println!(
+    debug!(
         "With spectral - signals shape: {:?}",
         aspace_spectral.signals.shape()
     );
@@ -185,8 +186,8 @@ fn test_builder_lambda_computation_with_different_tau_modes() {
     let lambdas_median = aspace_median.lambdas();
     let lambdas_fixed = aspace_fixed.lambdas();
 
-    println!("Median tau lambdas: {:?}", lambdas_median);
-    println!("Max tau lambdas: {:?}", lambdas_fixed);
+    debug!("Median tau lambdas: {:?}", lambdas_median);
+    debug!("Max tau lambdas: {:?}", lambdas_fixed);
 
     // Lambdas should differ between tau modes
     let mut differences = 0;
@@ -231,15 +232,15 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
         .with_inline_sampling(None)
         .build(items_unnormalized);
 
-    println!("=== SPECTRAL ANALYSIS ===");
+    debug!("=== SPECTRAL ANALYSIS ===");
     let lambdas_norm = aspace_norm.lambdas();
     let lambdas_unnorm = aspace_unnorm.lambdas();
 
-    println!(
+    debug!(
         "Normalized lambdas: {:?}",
         &lambdas_norm[..3.min(lambdas_norm.len())]
     );
-    println!(
+    debug!(
         "Unnormalized lambdas: {:?}",
         &lambdas_unnorm[..3.min(lambdas_unnorm.len())]
     );
@@ -248,8 +249,8 @@ fn test_builder_with_normalized_vs_unnormalized_items() {
     let d_norm = diag_vec(&gl_norm);
     let d_unnorm = diag_vec(&gl_unnorm);
 
-    println!("Normalized diagonals: {:?}", &d_norm[..3.min(d_norm.len())]);
-    println!(
+    debug!("Normalized diagonals: {:?}", &d_norm[..3.min(d_norm.len())]);
+    debug!(
         "Unnormalized diagonals: {:?}",
         &d_unnorm[..3.min(d_unnorm.len())]
     );
@@ -294,8 +295,8 @@ fn test_builder_dimensionality_reduction() {
         .with_sparsity_check(false)
         .build(items);
 
-    println!("Original dimension: {}", aspace_full.nfeatures);
-    println!("Reduced dimension: {:?}", aspace_reduced.reduced_dim);
+    debug!("Original dimension: {}", aspace_full.nfeatures);
+    debug!("Reduced dimension: {:?}", aspace_reduced.reduced_dim);
 
     if let Some(reduced_dim) = aspace_reduced.reduced_dim {
         assert!(
@@ -322,8 +323,8 @@ fn test_builder_lambda_statistics() {
         768, // Fixed seed for reproducibility
     );
 
-    println!("=== LAMBDA STATISTICS TEST ===");
-    println!(
+    debug!("=== LAMBDA STATISTICS TEST ===");
+    debug!(
         "Generated {} items with {} features",
         items.len(),
         items[0].len()
@@ -342,7 +343,7 @@ fn test_builder_lambda_statistics() {
         .with_sparsity_check(false)
         .build(items);
 
-    println!("Graph has {} nodes", gl.nnodes);
+    debug!("Graph has {} nodes", gl.nnodes);
 
     // Extract lambda statistics
     let lambdas = aspace.lambdas();
@@ -355,15 +356,15 @@ fn test_builder_lambda_statistics() {
     let variance = lambdas.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / lambdas.len() as f64;
     let std_dev = variance.sqrt();
 
-    println!("=== LAMBDA DISTRIBUTION ===");
-    println!("Min:     {:.6}", min);
-    println!("Max:     {:.6}", max);
-    println!("Mean:    {:.6}", mean);
-    println!("Std Dev: {:.6}", std_dev);
-    println!("Range:   {:.6}", max - min);
+    debug!("=== LAMBDA DISTRIBUTION ===");
+    debug!("Min:     {:.6}", min);
+    debug!("Max:     {:.6}", max);
+    debug!("Mean:    {:.6}", mean);
+    debug!("Std Dev: {:.6}", std_dev);
+    debug!("Range:   {:.6}", max - min);
 
     // Show first few lambdas for inspection
-    println!("First 5 lambdas: {:?}", &lambdas[..5.min(lambdas.len())]);
+    debug!("First 5 lambdas: {:?}", &lambdas[..5.min(lambdas.len())]);
 
     // All lambdas should be non-negative (spectral property)
     assert!(
@@ -400,7 +401,7 @@ fn test_builder_lambda_statistics() {
         std_dev
     );
 
-    println!("✓ Lambda statistics show expected variance from noisy moon dataset");
+    debug!("✓ Lambda statistics show expected variance from noisy moon dataset");
 }
 
 #[test]
@@ -506,4 +507,89 @@ fn test_empty_with_projection_none_path() {
     assert_eq!(aspace.projection_matrix, None);
     assert_eq!(aspace.reduced_dim, None);
     assert_eq!(aspace.extra_reduced_dim, false);
+}
+
+#[test]
+fn test_arrowspace_config_typed_without_projection() {
+    let items = make_gaussian_blob(99, 0.5);
+    let (aspace, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
+        .build(items);
+
+    // Extract config
+    let config = aspace.arrowspace_config_typed();
+
+    // Verify basic dimensions
+    assert_eq!(config.get("nitems").unwrap().as_usize().unwrap(), 99);
+    assert_eq!(config.get("nfeatures").unwrap().as_usize().unwrap(), 10);
+
+    // Verify no projection
+    assert_eq!(config.get("pj_mtx_original_dim").unwrap().as_usize(), None);
+    assert_eq!(config.get("pj_mtx_reduced_dim").unwrap().as_usize(), None);
+    assert_eq!(config.get("pj_mtx_seed").unwrap().as_u64(), None);
+    assert_eq!(
+        config.get("extra_reduced_dim").unwrap().as_bool().unwrap(),
+        false
+    );
+
+    // Verify tau mode is present
+    assert!(config.contains_key("taumode"));
+
+    // Verify clustering params
+    assert!(config.contains_key("n_clusters"));
+    assert!(config.contains_key("cluster_radius"));
+}
+
+#[test]
+fn test_arrowspace_config_typed_with_projection() {
+    let items = make_gaussian_hd(99, 0.5);
+    let (aspace, _) = ArrowSpaceBuilder::default()
+        .with_lambda_graph(0.3, 3, 2, 2.0, None)
+        .with_seed(42)
+        .with_dims_reduction(true, Some(0.25))
+        .build(items);
+
+    // Extract config
+    let config = aspace.arrowspace_config_typed();
+
+    // Verify basic dimensions
+    assert_eq!(config.get("nitems").unwrap().as_usize().unwrap(), 99);
+    assert_eq!(config.get("nfeatures").unwrap().as_usize().unwrap(), 100);
+
+    // Verify projection parameters are present and correct
+    assert_eq!(
+        config
+            .get("pj_mtx_original_dim")
+            .unwrap()
+            .as_usize()
+            .unwrap(),
+        100
+    );
+    assert_eq!(
+        config
+            .get("pj_mtx_reduced_dim")
+            .unwrap()
+            .as_usize()
+            .unwrap(),
+        50
+    );
+    assert_eq!(config.get("pj_mtx_seed").unwrap().as_u64().unwrap(), 42);
+
+    // extra_reduced_dim should be false for Eigen mode
+    assert_eq!(
+        config.get("extra_reduced_dim").unwrap().as_bool().unwrap(),
+        false
+    );
+
+    // Verify tau mode
+    let taumode = config.get("taumode").unwrap();
+    match taumode {
+        ConfigValue::TauMode(_) => {} // Pass if it's a TauMode variant
+        _ => panic!("Expected TauMode variant"),
+    }
+
+    // Verify clustering params exist
+    assert!(config.get("n_clusters").is_some());
+    assert!(config.get("cluster_radius").is_some());
 }
