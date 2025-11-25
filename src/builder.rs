@@ -1282,7 +1282,7 @@ impl ConfigValue {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             ConfigValue::Bool(v) => Some(*v),
-            _ => None,
+            _ => panic!("called as_bool but it is not"),
         }
     }
 
@@ -1296,21 +1296,22 @@ impl ConfigValue {
                     None
                 }
             }
-            _ => None,
+            _ => panic!("called as_usize but it is not"),
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            ConfigValue::F64(v) => Some(*v),
-            ConfigValue::OptionF64(v) => {
-                if v.is_some() {
-                    Some(v.unwrap())
-                } else {
-                    None
-                }
-            }
-            _ => None,
+            ConfigValue::F64(v) => match v {
+                val if val.is_nan() => Some(-1.0),
+                val => Some(*val),
+            },
+            ConfigValue::OptionF64(v) => match v {
+                Some(val) if val.is_nan() => Some(-1.0),
+                Some(val) => Some(*val),
+                None => None,
+            },
+            _ => panic!("called as_f64 but it is not"),
         }
     }
 
@@ -1324,7 +1325,7 @@ impl ConfigValue {
                     None
                 }
             }
-            _ => None,
+            _ => panic!("called as_u64 but it is not"),
         }
     }
 
@@ -1399,6 +1400,10 @@ impl ArrowSpaceBuilder {
         config.insert(
             "use_dims_reduction".to_string(),
             ConfigValue::Bool(self.use_dims_reduction),
+        );
+        config.insert(
+            "extra_dims_reduction".to_string(),
+            ConfigValue::Bool(self.extra_dims_reduction),
         );
         config.insert("rp_eps".to_string(), ConfigValue::F64(self.rp_eps));
 
