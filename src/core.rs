@@ -416,9 +416,9 @@ impl Default for ArrowSpace {
             lambdas: Vec::new(),
             lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             // enable synthetic λ with Median τ by default
             taumode: TAUDEFAULT,
             // Clustering defaults
@@ -457,9 +457,9 @@ impl ArrowSpace {
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             taumode,
             // Clustering defaults
             n_clusters: 0,
@@ -634,9 +634,9 @@ impl ArrowSpace {
             lambdas,
             lambdas_sorted,
             // Normalization fields
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             taumode,
             n_clusters,
             cluster_assignments: Vec::new(),
@@ -689,9 +689,9 @@ impl ArrowSpace {
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             taumode,
             // Clustering defaults
             n_clusters: 0,
@@ -763,9 +763,9 @@ impl ArrowSpace {
             lambdas: vec![0.0; n_items],        // will be computed later
             lambdas_sorted: SortedLambdas::new(),
             // lambdas normalisation
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             taumode: TAUDEFAULT,
             // Clustering defaults
             n_clusters: 0,
@@ -807,9 +807,9 @@ impl ArrowSpace {
             signals: sprs::CsMat::zero((0, 0)),
             lambdas: vec![0.0; nitems],
             lambdas_sorted: SortedLambdas::new(),
-            min_lambdas: f64::NAN,
-            max_lambdas: f64::NAN,
-            range_lambdas: f64::NAN,
+            min_lambdas: -1.0,
+            max_lambdas: -1.0,
+            range_lambdas: -1.0,
             taumode: TAUDEFAULT,
             n_clusters: 0,
             cluster_assignments: Vec::new(),
@@ -843,14 +843,14 @@ impl ArrowSpace {
         );
 
         if let Some(ref proj) = self.projection_matrix {
-            debug!(
+            trace!(
                 "Projecting query: {} → {} dimensions using seed-based projection",
                 self.nfeatures,
                 self.reduced_dim.unwrap()
             );
             proj.project(query)
         } else {
-            debug!("No projection applied, returning original query");
+            trace!("No projection applied, returning original query");
             query.to_vec()
         }
     }
@@ -894,7 +894,7 @@ impl ArrowSpace {
 
             let lambda = sc_lambdas[best_idx];
 
-            debug!(
+            trace!(
                 "Query mapped to subcentroid {}/{} with λ={:.6} (dist={:.4})",
                 best_idx,
                 subcentroids.shape().0,
@@ -1447,6 +1447,19 @@ impl ArrowSpace {
         config.insert("nitems".to_string(), ConfigValue::Usize(self.nitems));
         config.insert("nfeatures".to_string(), ConfigValue::Usize(self.nfeatures));
 
+        config.insert(
+            "min_lambdas".to_string(),
+            ConfigValue::F64(self.min_lambdas),
+        );
+        config.insert(
+            "max_lambdas".to_string(),
+            ConfigValue::F64(self.max_lambdas),
+        );
+        config.insert(
+            "range_lambdas".to_string(),
+            ConfigValue::F64(self.range_lambdas),
+        );
+
         // projection matrix
         if self.projection_matrix.is_some() {
             config.insert(
@@ -1495,6 +1508,19 @@ impl ArrowSpace {
         config.insert(
             "cluster_radius".to_string(),
             ConfigValue::F64(self.cluster_radius),
+        );
+
+        config.insert(
+            "min_lambdas".to_string(),
+            ConfigValue::F64(self.min_lambdas),
+        );
+        config.insert(
+            "max_lambdas".to_string(),
+            ConfigValue::F64(self.max_lambdas),
+        );
+        config.insert(
+            "range_lambdas".to_string(),
+            ConfigValue::F64(self.range_lambdas),
         );
 
         config
