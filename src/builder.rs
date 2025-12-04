@@ -86,7 +86,7 @@ pub struct ArrowSpaceBuilder {
     pub(crate) rp_eps: f64,
 
     // persistence directory
-    persistence: Option<(String, std::path::PathBuf)>,
+    pub(crate) persistence: Option<(String, std::path::PathBuf)>,
 }
 
 impl Default for ArrowSpaceBuilder {
@@ -371,6 +371,15 @@ impl ArrowSpaceBuilder {
     pub fn new() -> Self {
         info!("Initializing new ArrowSpaceBuilder");
         Self::default()
+    }
+
+    /// access basic and persistence info
+    pub fn get_persistence(&self) -> (String, std::path::PathBuf, usize, usize) {
+        if self.persistence.is_none() {
+            panic!("to set persistence it is needed to build_with_persistence");
+        }
+        let (str_, path) = self.persistence.as_ref().unwrap();
+        (str_.clone(), path.clone(), self.nitems, self.nfeatures)
     }
 
     /// copy all the static parameters to generate a similar builder from the original
@@ -1045,9 +1054,11 @@ impl ArrowSpaceBuilder {
                 let epsilon: f64 = 1e-11;
 
                 // Parallel assignment using taumode distance
+                info!("Computing parallel taumode assignments");
                 let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
                     .into_par_iter()
                     .map(|i| {
+                        info!("taumode {}/{}", i, aspace.nitems);
                         let item = aspace.get_item(i);
 
                         // project only if unprojected
@@ -1159,6 +1170,7 @@ impl ArrowSpaceBuilder {
                 };
 
                 // Store in aspace
+                info!("Setting results of computation");
                 aspace.centroid_map = Some(centroid_map);
                 aspace.lambdas = item_lambdas;
                 aspace.item_norms = Some(item_norms);
