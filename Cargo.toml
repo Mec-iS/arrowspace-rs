@@ -1,8 +1,8 @@
 [package]
 name = "arrowspace"
-version = "0.24.5"
+version = "0.24.6"
 edition = "2024"
-description = "Spectral vector search with taumode (λτ) indexing"
+description = "Graph-based vector search with taumode (λτ) indexing"
 authors = ["Lorenzo <tunedconsulting@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Mec-iS/arrowspace-rs"
