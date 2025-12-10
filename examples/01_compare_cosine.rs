@@ -6,7 +6,6 @@ use smartcore::linalg::basic::arrays::Array;
 #[path = "./common/lib.rs"]
 mod common;
 
-
 const VECTORS_DATA: &str = r#"
 P0001; 0.82,0.11,0.43,0.28,0.64,0.32,0.55,0.48,0.19,0.73,0.07,0.36,0.58,0.23,0.44,0.31,0.52,0.16,0.61,0.40,0.27,0.49,0.35,0.29
 P0002; 0.79,0.12,0.45,0.29,0.61,0.33,0.54,0.47,0.21,0.70,0.08,0.37,0.56,0.22,0.46,0.30,0.51,0.18,0.60,0.39,0.26,0.48,0.36,0.30
@@ -77,7 +76,7 @@ P0064; 0.28,0.62,0.08,0.25,0.11,0.84,0.03,0.98,0.72,0.19,0.59,0.87,0.05,0.29,0.0
 fn main() {
     // uncomment this and set RUST_LOG=debug for debug
     // arrowspace::init();
-    
+
     // Parse items as rows (N×24): each row is one protein with 24 features
     let (ids, db): (Vec<String>, Vec<Vec<f64>>) = common::parse_vectors_string(VECTORS_DATA);
     let n_items = db.len();
@@ -115,7 +114,7 @@ fn main() {
     let topk = k;
     let p = 2.0;
     let sigma_override = Some(1e-3 * 0.75);
-    
+
     let (aspace, gl) = ArrowSpaceBuilder::new()
         .with_lambda_graph(eps, graph_k, topk, p, sigma_override)
         .with_normalisation(false)
@@ -127,7 +126,7 @@ fn main() {
 
     // Prepare query as ArrowItem
     // Note: query lambda is set to 0.0 initially; it will be computed for hybrid search
-    let mut query_item = ArrowItem::new(query.clone(), 0.0);
+    let mut query_item = ArrowItem::new(query.as_ref(), 0.0);
     query_item.lambda = aspace.prepare_query_item(&query_item.item, &gl);
 
     println!("\n=============================================");
@@ -141,7 +140,10 @@ fn main() {
     let alpha = 1.0;
     let results_cosine = aspace.search_lambda_aware(&query_item, k + 1, alpha);
 
-    println!("ArrowSpace search_lambda_aware (alpha={}) top-{}+1:", alpha, k);
+    println!(
+        "ArrowSpace search_lambda_aware (alpha={}) top-{}+1:",
+        alpha, k
+    );
     for (rank, (i, s)) in results_cosine.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
@@ -165,7 +167,10 @@ fn main() {
     let alpha = 0.9;
     let results_lambda = aspace.search_lambda_aware(&query_item, k + 5, alpha);
 
-    println!("ArrowSpace search_lambda_aware (alpha={}) top-{}+5:", alpha, k);
+    println!(
+        "ArrowSpace search_lambda_aware (alpha={}) top-{}+5:",
+        alpha, k
+    );
     for (rank, (i, s)) in results_lambda.iter().enumerate() {
         println!("  {}. idx={} ({}) score={:.6}", rank + 1, i, ids[*i], s);
     }
@@ -184,12 +189,16 @@ fn main() {
     // ----------------------------
     println!("\n--- Test 3: Alpha Sweep (1.0 → 0.0) ---");
     println!("This shows how results transition from pure cosine to pure lambda-based");
-    
+
     for alpha in [0.8, 0.7, 0.6, 0.55, 0.4].iter() {
         let results = aspace.search_lambda_aware(&query_item, topk, *alpha);
 
-        println!("\nAlpha={:.1} ({}% cosine, {}% lambda):", 
-                 alpha, (alpha * 100.0) as i32, ((1.0 - alpha) * 100.0) as i32);
+        println!(
+            "\nAlpha={:.1} ({}% cosine, {}% lambda):",
+            alpha,
+            (alpha * 100.0) as i32,
+            ((1.0 - alpha) * 100.0) as i32
+        );
         for (rank, (i, s)) in results.iter().enumerate() {
             println!("  {}. idx={:2} ({:6}) score={:.6}", rank + 1, i, ids[*i], s);
         }
@@ -200,16 +209,16 @@ fn main() {
     // ----------------------------
     println!("\n--- Test 4: Verification Against Manual Implementation ---");
     let alpha = 0.7;
-    
+
     // Using search_lambda_aware
     let auto_results = aspace.search_lambda_aware(&query_item, k, alpha);
-    
+
     // Manual implementation for comparison
     let mut manual_results: Vec<(usize, f64)> = (0..n_items)
         .map(|i| {
             let item = aspace.get_item(i);
             let lambda = aspace.lambdas()[i];
-            let item_row = ArrowItem::new(item.item.clone(), lambda);
+            let item_row = ArrowItem::new(item.item.as_ref(), lambda);
             let score = query_item.lambda_similarity(&item_row, alpha);
             (i, score)
         })
@@ -247,7 +256,7 @@ fn main() {
     use std::time::Instant;
 
     let iterations = 100;
-    
+
     // Benchmark search_lambda_aware (parallel)
     let start = Instant::now();
     for _ in 0..iterations {
@@ -262,7 +271,7 @@ fn main() {
             .map(|i| {
                 let item = aspace.get_item(i);
                 let lambda = aspace.lambdas()[i];
-                let item_row = ArrowItem::new(item.item.clone(), lambda);
+                let item_row = ArrowItem::new(item.item.as_ref(), lambda);
                 (i, query_item.lambda_similarity(&item_row, 0.7))
             })
             .collect();
