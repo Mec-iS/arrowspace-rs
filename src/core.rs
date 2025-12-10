@@ -74,7 +74,7 @@ use log::{debug, info, trace, warn};
 /// ```
 /// use arrowspace::core::ArrowItem;
 ///
-/// let mut a = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.5);
+/// let mut a = ArrowItem::new(vec![1.0, 2.0, 3.0].as_ref(), 0.5);
 /// let b = vec![1.0, 0.0, 1.0];
 ///
 /// let cos = a.cosine_similarity(&b);
@@ -108,7 +108,7 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let r = ArrowItem::new(vec![0.0, 1.0], 0.3);
+    /// let r = ArrowItem::new(vec![0.0, 1.0].as_ref(), 0.3);
     /// assert_eq!(r.len(), 2);
     /// ```
     #[inline]
@@ -153,8 +153,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.5);
-    /// let b = ArrowItem::new(vec![1.0, 0.0], 0.6);
+    /// let a = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.5);
+    /// let b = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.6);
     /// let s = a.lambda_similarity(&b, 0.7);
     /// assert!(s <= 1.0 && s >= 0.0);
     /// ```
@@ -188,8 +188,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.0);
-    /// let b = ArrowItem::new(vec![4.0, 5.0, 6.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 2.0, 3.0].as_ref(), 0.0);
+    /// let b = ArrowItem::new(vec![4.0, 5.0, 6.0].as_ref(), 0.0);
     /// assert_eq!(a.dot(&b), 32.0);
     /// ```
     #[inline]
@@ -225,7 +225,7 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.0);
     /// let b = vec![0.0, 1.0];
     /// assert!((a.cosine_similarity(&b) - 0.0).abs() < 1e-12);
     /// ```
@@ -252,8 +252,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 1.0], 0.0);
-    /// let b = ArrowItem::new(vec![4.0, 5.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 1.0].as_ref(), 0.0);
+    /// let b = ArrowItem::new(vec![4.0, 5.0].as_ref(), 0.0);
     /// assert!((a.euclidean_distance(&b) - 5.0).abs() < 1e-12);
     /// ```
     #[inline]
