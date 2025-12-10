@@ -112,13 +112,16 @@ impl ArrowItem {
     /// assert_eq!(r.len(), 2);
     /// ```
     #[inline]
-    pub fn new(item: Vec<f64>, lambda: f64) -> Self {
+    pub fn new(item: &[f64], lambda: f64) -> Self {
         trace!(
             "Creating ArrowItem with {} dimensions, lambda: {:.6}",
             item.len(),
             lambda
         );
-        Self { item, lambda }
+        Self {
+            item: item.to_vec(),
+            lambda,
+        }
     }
 
     /// Returns the length (dimensionality) of the row.
@@ -230,7 +233,7 @@ impl ArrowItem {
     pub fn cosine_similarity(&self, other: &[f64]) -> f64 {
         let denom = ArrowItem::norm(&self.item) * ArrowItem::norm(other);
         let result = if denom > 0.0 {
-            self.dot(&ArrowItem::new(other.to_vec(), 0.0)) / denom
+            self.dot(&ArrowItem::new(other, 0.0)) / denom
         } else {
             warn!("Zero vector encountered in cosine similarity computation");
             0.0
@@ -976,7 +979,12 @@ impl ArrowSpace {
         trace!("Extracting item {} with lambda {:.6}", i, self.lambdas[i]);
 
         ArrowItem::new(
-            self.data.get_row(i).iterator(0).copied().collect(),
+            self.data
+                .get_row(i)
+                .iterator(0)
+                .copied()
+                .collect::<Vec<f64>>()
+                .as_ref(),
             self.lambdas[i],
         )
     }
@@ -1388,7 +1396,10 @@ impl ArrowSpace {
         debug!("Query vector dimension: {}", query.len());
 
         let query: ArrowItem = if relative_eq!(query.lambda, 0.0, epsilon = 1e-9) {
-            ArrowItem::new(query.item.clone(), self.prepare_query_item(&query.item, gl))
+            ArrowItem::new(
+                query.item.as_ref(),
+                self.prepare_query_item(&query.item, gl),
+            )
         } else {
             query.clone()
         };
