@@ -656,8 +656,18 @@ fn test_rayleigh_quotient_scale_invariance() {
 
     // Extract E_raw by computing with tau and back-calculating
     let tau = 0.5; // arbitrary tau for testing
-    let lambda1 = TauMode::compute_synthetic_lambda(&vector, &aspace, &gl.matrix, tau);
-    let lambda2 = TauMode::compute_synthetic_lambda(&scaled_vector, &aspace, &gl.matrix, tau);
+    let lambda1 = TauMode::compute_synthetic_lambda(
+        &vector,
+        aspace.projection_matrix.clone(),
+        &gl.matrix,
+        tau,
+    );
+    let lambda2 = TauMode::compute_synthetic_lambda(
+        &scaled_vector,
+        aspace.projection_matrix.clone(),
+        &gl.matrix,
+        tau,
+    );
 
     // For scale invariance test, the synthetic lambda should also be scale-invariant
     // because both E_raw and G are scale-invariant

@@ -907,7 +907,12 @@ impl ArrowSpace {
 
         // Eigen mode
         let tau = TauMode::select_tau(&query, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda(&query, &self, &gl.matrix, tau);
+        let raw_lambda = TauMode::compute_synthetic_lambda(
+            &query,
+            self.projection_matrix.clone(),
+            &gl.matrix,
+            tau,
+        );
 
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
