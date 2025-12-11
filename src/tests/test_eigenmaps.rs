@@ -444,6 +444,12 @@ fn test_eigenmaps_with_dim_reduction() {
 
     let (aspace, gl) = builder_control.build(rows.clone());
 
+    assert_eq!(
+        aspace.lambdas()[query_idx],
+        aspace.prepare_query_item(query, &gl),
+        "original query lambda and prepared query lambda should be equal"
+    );
+
     let results = aspace.search(query, &gl, k, 0.62);
 
     assert!(
