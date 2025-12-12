@@ -3,7 +3,7 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
 };
 use parquet::{
-    arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter},
+    arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
     basic::Compression,
     file::properties::WriterProperties,
 };
@@ -109,7 +109,7 @@ impl ArrowSpaceMetadata {
     }
 
     /// Extract synthesis TauMode
-    pub fn synthesis(&self) -> Option<&crate::taumode::TauMode> {
+    pub fn synthesis(&self) -> Option<crate::taumode::TauMode> {
         self.get_config("synthesis").and_then(|v| v.as_tau_mode())
     }
 

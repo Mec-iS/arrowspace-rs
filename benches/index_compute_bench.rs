@@ -160,7 +160,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let ids_base: Vec<usize> = base_scores.iter().map(|x| x.0).collect();
 
         // arrow cosine-equivalent (alpha=1,beta=0)
-        let qrow = ArrowItem::new(query.clone(), 0.0);
+        let qrow = ArrowItem::new(query.as_ref(), 0.0);
         let mut arr_scores: Vec<(usize, f64)> = (0..db.len())
             .map(|i| {
                 let item_i = aspace.get_item(i);
@@ -204,7 +204,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             setup_single,
             |(db, query, k, aspace)| {
-                let qrow = ArrowItem::new(query, 0.0);
+                let qrow = ArrowItem::new(query.as_ref(), 0.0);
                 let mut scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
@@ -223,7 +223,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             setup_single,
             |(db, query, k, aspace)| {
-                let qrow = ArrowItem::new(query, 0.0);
+                let qrow = ArrowItem::new(query.as_ref(), 0.0);
                 let mut scores: Vec<(usize, f64)> = (0..db.len())
                     .map(|i| {
                         let item_i = aspace.get_item(i);
@@ -272,7 +272,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     |(db, queries, k, aspace)| {
                         let mut acc = 0.0;
                         for query in queries {
-                            let qrow = ArrowItem::new(query, 0.0);
+                            let qrow = ArrowItem::new(query.as_ref(), 0.0);
                             let mut scores: Vec<(usize, f64)> = (0..db.len())
                                 .map(|i| {
                                     let item_i = aspace.get_item(i);
@@ -298,7 +298,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     |(db, queries, k, aspace)| {
                         let mut acc = 0.0;
                         for query in queries {
-                            let qrow = ArrowItem::new(query, 0.0);
+                            let qrow = ArrowItem::new(query.as_ref(), 0.0);
                             let mut scores: Vec<(usize, f64)> = (0..db.len())
                                 .map(|i| {
                                     let item_i = aspace.get_item(i);

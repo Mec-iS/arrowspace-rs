@@ -6,8 +6,8 @@
 //! Key formula: S_r = τ·E_bounded + (1-τ)·G_clamped
 //! where E is Rayleigh quotient energy and G is edge dispersion measure.
 
-use crate::core::ArrowSpace;
 use crate::graph::GraphLaplacian;
+use crate::{core::ArrowSpace, reduction::ImplicitProjection};
 use log::{debug, info, trace};
 use rayon::prelude::*;
 use sprs::CsMat;
@@ -176,7 +176,12 @@ impl TauMode {
                 let tau = Self::select_tau(&item.item, taumode);
 
                 // Adaptive selection: sequential for small, parallel for large
-                let lambda = Self::compute_synthetic_lambda(&item.item, &aspace, graph, tau);
+                let lambda = Self::compute_synthetic_lambda(
+                    &item.item,
+                    aspace.projection_matrix.clone(),
+                    graph,
+                    tau,
+                );
 
                 // Log progress for large datasets
                 if n_items > 10000 && item_idx % (n_items / 10) == 0 {
@@ -255,7 +260,7 @@ impl TauMode {
     /// Synthetic lambda S = τ·E/(E+τ) + (1-τ)·G
     pub fn compute_synthetic_lambda(
         item_vector: &[f64],
-        aspace: &ArrowSpace,
+        projection_matrix: Option<ImplicitProjection>,
         graph: &CsMat<f64>,
         tau: f64,
     ) -> f64 {
@@ -269,12 +274,12 @@ impl TauMode {
         }
 
         // project only if unprojected
-        let projected_item = if aspace.projection_matrix.is_some()
-            && item_vector.len() == aspace.projection_matrix.as_ref().unwrap().original_dim
+        let projected_item = if projection_matrix.is_some()
+            && item_vector.len() == projection_matrix.as_ref().unwrap().original_dim
         {
-            aspace.project_query(&item_vector)
-        } else if aspace.projection_matrix.is_none()
-            || item_vector.len() == aspace.projection_matrix.as_ref().unwrap().reduced_dim
+            projection_matrix.unwrap().project(&item_vector)
+        } else if projection_matrix.is_none()
+            || item_vector.len() == projection_matrix.as_ref().unwrap().reduced_dim
         {
             item_vector.to_owned()
         } else {
@@ -285,9 +290,9 @@ impl TauMode {
                    projection matrix original dims: {} \
                    projection matrix reduced dims: {}",
                 item_vector.len(),
-                aspace.projection_matrix.as_ref().is_some(),
-                aspace.projection_matrix.as_ref().unwrap().original_dim,
-                aspace.projection_matrix.as_ref().unwrap().reduced_dim
+                projection_matrix.as_ref().is_some(),
+                projection_matrix.as_ref().unwrap().original_dim,
+                projection_matrix.as_ref().unwrap().reduced_dim
             )
         };
 

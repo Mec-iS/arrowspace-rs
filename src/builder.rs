@@ -376,7 +376,7 @@ impl ArrowSpaceBuilder {
     /// access basic and persistence info
     pub fn get_persistence(&self) -> (String, std::path::PathBuf, usize, usize) {
         if self.persistence.is_none() {
-            panic!("to set persistence it is needed to build_with_persistence");
+            panic!("to get_persistence it is needed to builder.with_persistence");
         }
         let (str_, path) = self.persistence.as_ref().unwrap();
         (str_.clone(), path.clone(), self.nitems, self.nfeatures)
@@ -1058,7 +1058,7 @@ impl ArrowSpaceBuilder {
                 let results: Vec<(usize, f64, f64)> = (0..aspace.nitems)
                     .into_par_iter()
                     .map(|i| {
-                        info!("taumode {}/{}", i, aspace.nitems);
+                        trace!("taumode {}/{}", i, aspace.nitems);
                         let item = aspace.get_item(i);
 
                         // project only if unprojected
@@ -1342,9 +1342,9 @@ impl ConfigValue {
     }
 
     // Convenience extraction methods
-    pub fn as_tau_mode(&self) -> Option<&TauMode> {
+    pub fn as_tau_mode(&self) -> Option<TauMode> {
         match self {
-            ConfigValue::TauMode(v) => Some(v),
+            ConfigValue::TauMode(v) => Some(v.clone()),
             _ => None,
         }
     }

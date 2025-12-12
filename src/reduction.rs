@@ -205,4 +205,8 @@ impl ImplicitProjection {
         trace!("Query projected");
         result // Probability of all-zeros ≈ 0
     }
+
+    pub fn get_reduced_dim(&self) -> usize {
+        self.reduced_dim
+    }
 }

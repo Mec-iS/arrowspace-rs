@@ -51,7 +51,7 @@ fn test_query_without_projection() {
     debug!("{:?}", query_lambda);
     assert!(query_lambda.is_finite(), "Query lambda should be finite");
 
-    let query_item = ArrowItem::new(queries[0].clone(), query_lambda);
+    let query_item = ArrowItem::new(queries[0].as_ref(), query_lambda);
 
     // Search in clustered space
     let results = aspace.search_lambda_aware(&query_item, 5, 0.7);
@@ -116,7 +116,7 @@ fn test_query_with_projection_enabled() {
     // Compute lambda on projected query
     let query_lambda = aspace.prepare_query_item(&query_original, &gl);
 
-    let query_item = ArrowItem::new(query_original, query_lambda);
+    let query_item = ArrowItem::new(query_original.as_ref(), query_lambda);
 
     // Search should work in projected clustered space
     let results = aspace.search_lambda_aware(&query_item, 10, 0.7);
@@ -185,7 +185,7 @@ fn test_search_lambda_aware_alpha_effect() {
 
     let query = queries[2].clone();
     let query_lambda = aspace.prepare_query_item(&query, &gl);
-    let query_item = ArrowItem::new(query, query_lambda);
+    let query_item = ArrowItem::new(query.as_ref(), query_lambda);
 
     // High alpha (0.9): should favor semantic similarity
     let results_high_alpha = aspace.search_lambda_aware(&query_item, 5, 0.9);
@@ -234,7 +234,7 @@ fn test_search_lambda_aware_hybrid() {
 
     let query = queries[1].clone();
     let query_lambda = aspace.prepare_query_item(&query, &gl);
-    let query_item = ArrowItem::new(query, query_lambda);
+    let query_item = ArrowItem::new(query.as_ref(), query_lambda);
 
     // Regular lambda-aware search
     let results_regular = aspace.search_lambda_aware(&query_item, 10, 0.7);
@@ -303,7 +303,7 @@ fn test_range_search_with_query_lambda() {
 
     let query = queries[1].clone();
     let query_lambda = aspace.prepare_query_item(&query, &gl);
-    let query_item = ArrowItem::new(query, query_lambda);
+    let query_item = ArrowItem::new(query.as_ref(), query_lambda);
 
     debug!("query lambda {:?}", query_lambda);
 
@@ -380,7 +380,7 @@ fn test_search_returns_top_k_exactly() {
 
     let query = queries[2].clone();
     let query_lambda = aspace.prepare_query_item(&query, &gl);
-    let query_item = ArrowItem::new(query, query_lambda);
+    let query_item = ArrowItem::new(query.as_ref(), query_lambda);
 
     let num_clusters = aspace.n_clusters;
     debug!("Testing k-NN with {} total clusters", num_clusters);

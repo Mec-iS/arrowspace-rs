@@ -74,7 +74,7 @@ use log::{debug, info, trace, warn};
 /// ```
 /// use arrowspace::core::ArrowItem;
 ///
-/// let mut a = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.5);
+/// let mut a = ArrowItem::new(vec![1.0, 2.0, 3.0].as_ref(), 0.5);
 /// let b = vec![1.0, 0.0, 1.0];
 ///
 /// let cos = a.cosine_similarity(&b);
@@ -108,17 +108,20 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let r = ArrowItem::new(vec![0.0, 1.0], 0.3);
+    /// let r = ArrowItem::new(vec![0.0, 1.0].as_ref(), 0.3);
     /// assert_eq!(r.len(), 2);
     /// ```
     #[inline]
-    pub fn new(item: Vec<f64>, lambda: f64) -> Self {
+    pub fn new(item: &[f64], lambda: f64) -> Self {
         trace!(
             "Creating ArrowItem with {} dimensions, lambda: {:.6}",
             item.len(),
             lambda
         );
-        Self { item, lambda }
+        Self {
+            item: item.to_vec(),
+            lambda,
+        }
     }
 
     /// Returns the length (dimensionality) of the row.
@@ -150,8 +153,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.5);
-    /// let b = ArrowItem::new(vec![1.0, 0.0], 0.6);
+    /// let a = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.5);
+    /// let b = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.6);
     /// let s = a.lambda_similarity(&b, 0.7);
     /// assert!(s <= 1.0 && s >= 0.0);
     /// ```
@@ -185,8 +188,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 2.0, 3.0], 0.0);
-    /// let b = ArrowItem::new(vec![4.0, 5.0, 6.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 2.0, 3.0].as_ref(), 0.0);
+    /// let b = ArrowItem::new(vec![4.0, 5.0, 6.0].as_ref(), 0.0);
     /// assert_eq!(a.dot(&b), 32.0);
     /// ```
     #[inline]
@@ -222,7 +225,7 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 0.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 0.0].as_ref(), 0.0);
     /// let b = vec![0.0, 1.0];
     /// assert!((a.cosine_similarity(&b) - 0.0).abs() < 1e-12);
     /// ```
@@ -230,7 +233,7 @@ impl ArrowItem {
     pub fn cosine_similarity(&self, other: &[f64]) -> f64 {
         let denom = ArrowItem::norm(&self.item) * ArrowItem::norm(other);
         let result = if denom > 0.0 {
-            self.dot(&ArrowItem::new(other.to_vec(), 0.0)) / denom
+            self.dot(&ArrowItem::new(other, 0.0)) / denom
         } else {
             warn!("Zero vector encountered in cosine similarity computation");
             0.0
@@ -249,8 +252,8 @@ impl ArrowItem {
     ///
     /// ```
     /// use arrowspace::core::ArrowItem;
-    /// let a = ArrowItem::new(vec![1.0, 1.0], 0.0);
-    /// let b = ArrowItem::new(vec![4.0, 5.0], 0.0);
+    /// let a = ArrowItem::new(vec![1.0, 1.0].as_ref(), 0.0);
+    /// let b = ArrowItem::new(vec![4.0, 5.0].as_ref(), 0.0);
     /// assert!((a.euclidean_distance(&b) - 5.0).abs() < 1e-12);
     /// ```
     #[inline]
@@ -907,7 +910,12 @@ impl ArrowSpace {
 
         // Eigen mode
         let tau = TauMode::select_tau(&query, self.taumode);
-        let raw_lambda = TauMode::compute_synthetic_lambda(&query, &self, &gl.matrix, tau);
+        let raw_lambda = TauMode::compute_synthetic_lambda(
+            &query,
+            self.projection_matrix.clone(),
+            &gl.matrix,
+            tau,
+        );
 
         // Normalize if stats are available
         let msg = "Check your eps parameter for the builder, every dataset has an optimal eps. \n \
@@ -971,7 +979,12 @@ impl ArrowSpace {
         trace!("Extracting item {} with lambda {:.6}", i, self.lambdas[i]);
 
         ArrowItem::new(
-            self.data.get_row(i).iterator(0).copied().collect(),
+            self.data
+                .get_row(i)
+                .iterator(0)
+                .copied()
+                .collect::<Vec<f64>>()
+                .as_ref(),
             self.lambdas[i],
         )
     }
@@ -1383,7 +1396,10 @@ impl ArrowSpace {
         debug!("Query vector dimension: {}", query.len());
 
         let query: ArrowItem = if relative_eq!(query.lambda, 0.0, epsilon = 1e-9) {
-            ArrowItem::new(query.item.clone(), self.prepare_query_item(&query.item, gl))
+            ArrowItem::new(
+                query.item.as_ref(),
+                self.prepare_query_item(&query.item, gl),
+            )
         } else {
             query.clone()
         };

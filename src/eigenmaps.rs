@@ -245,7 +245,7 @@ impl EigenMaps for ArrowSpace {
 
         trace!("Preparing query λ with projection and taumode policy");
         let q_lambda = self.prepare_query_item(item, gl);
-        let q = ArrowItem::new(item.to_vec(), q_lambda);
+        let q = ArrowItem::new(item, q_lambda);
 
         // λ-aware semantic ranking
         let results = self.search_lambda_aware(&q, k, alpha);

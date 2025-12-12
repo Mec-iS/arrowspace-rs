@@ -222,9 +222,8 @@ impl GraphFactory {
         // Convert sparse matrix to dense for signals storage
         trace!("Building feature-to-feature Laplacian matrix");
 
-        let trsp = &graph_laplacian.matrix.clone().transpose_into();
         aspace.signals = build_laplacian_matrix(
-            sparse_to_dense(trsp),
+            sparse_to_dense(&graph_laplacian.matrix),
             &graph_laplacian.graph_params,
             Some(aspace.nitems),
             false,

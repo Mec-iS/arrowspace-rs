@@ -98,7 +98,7 @@ fn test_metadata_from_builder() {
 
     // Verify synthesis mode
     if let Some(tau) = metadata.synthesis() {
-        assert_eq!(*tau, TauMode::Median);
+        assert_eq!(tau, TauMode::Median);
     } else {
         panic!("Expected TauMode::Median");
     }
@@ -388,7 +388,7 @@ fn test_checkpoint_with_auto_graph_builder() {
     // Verify synthesis mode
     if let Some(tau) = metadata.synthesis() {
         match tau {
-            TauMode::Fixed(alpha) => assert_relative_eq!(*alpha, 0.7, epsilon = 1e-10),
+            TauMode::Fixed(alpha) => assert_relative_eq!(alpha, 0.7, epsilon = 1e-10),
             _ => panic!("Expected TauMode::Alpha"),
         }
     }

@@ -421,7 +421,7 @@ fn test_energy_vs_standard_search_overlap() {
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
 
     let q_item_std = ArrowItem::new(
-        query.clone(),
+        query.as_ref(),
         aspace_std.prepare_query_item(&query, &gl_std),
     );
     let results_std = aspace_std.search_lambda_aware(&q_item_std, k, 0.7);
@@ -606,7 +606,7 @@ fn test_energy_vs_standard_precision_at_k() {
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
-        query.clone(),
+        query.as_ref(),
         aspace_std.prepare_query_item(&query, &gl_std),
     );
     let results_std = aspace_std.search_lambda_aware(&q_item_std, k, 0.7);
@@ -656,7 +656,7 @@ fn test_energy_vs_standard_recall_at_k() {
         .with_inline_sampling(None);
     let (aspace_std, gl_std) = builder_std.build(rows.clone());
     let q_item_std = ArrowItem::new(
-        query.clone(),
+        query.as_ref(),
         aspace_std.prepare_query_item(&query, &gl_std),
     );
     assert_relative_ne!(q_item_std.lambda, 0.0);

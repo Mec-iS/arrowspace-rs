@@ -188,7 +188,7 @@ fn test_eigenmaps_vs_build_basic() {
     // Verify search results
     let query_lambda = aspace_control.prepare_query_item(&query, &gl_control);
     let results_control = aspace_control.search_lambda_aware(
-        &crate::core::ArrowItem::new(query.clone(), query_lambda),
+        &crate::core::ArrowItem::new(query, query_lambda),
         k,
         tau,
     );
@@ -266,7 +266,7 @@ fn test_eigenmaps_vs_build_with_spectral() {
     // Search
     let results_control = aspace_control.search_lambda_aware(
         &crate::core::ArrowItem::new(
-            query.clone(),
+            query,
             aspace_control.prepare_query_item(&query, &gl_control),
         ),
         k,
@@ -331,7 +331,7 @@ fn test_eigenmaps_vs_build_different_taumode() {
     // Search
     let results_control = aspace_control.search_lambda_aware(
         &crate::core::ArrowItem::new(
-            query.clone(),
+            query,
             aspace_control.prepare_query_item(&query, &gl_control),
         ),
         k,
@@ -443,6 +443,12 @@ fn test_eigenmaps_with_dim_reduction() {
         .with_dims_reduction(true, Some(0.1));
 
     let (aspace, gl) = builder_control.build(rows.clone());
+
+    assert_eq!(
+        aspace.lambdas()[query_idx],
+        aspace.prepare_query_item(query, &gl),
+        "original query lambda and prepared query lambda should be equal"
+    );
 
     let results = aspace.search(query, &gl, k, 0.62);
 
