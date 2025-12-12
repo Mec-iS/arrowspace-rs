@@ -1342,9 +1342,9 @@ impl ConfigValue {
     }
 
     // Convenience extraction methods
-    pub fn as_tau_mode(&self) -> Option<&TauMode> {
+    pub fn as_tau_mode(&self) -> Option<TauMode> {
         match self {
-            ConfigValue::TauMode(v) => Some(v),
+            ConfigValue::TauMode(v) => Some(v.clone()),
             _ => None,
         }
     }
