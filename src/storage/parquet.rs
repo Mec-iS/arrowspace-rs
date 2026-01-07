@@ -294,41 +294,76 @@ pub fn load_dense_matrix(path: impl AsRef<Path>) -> Result<DenseMatrix<f64>, Sto
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    let mut n_rows_total: Option<usize> = None;
+    let mut n_cols_total: Option<usize> = None;
+    let mut flat_data: Vec<f64> = Vec::new();
+    let mut current_row_offset = 0;
 
-    // Extract dimensions from first row
-    let n_rows_col = batch
-        .column_by_name("n_rows")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_rows column missing".to_string()))?;
-    let n_rows = n_rows_col.value(0) as usize;
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let n_cols_col = batch
-        .column_by_name("n_cols")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_cols column missing".to_string()))?;
-    let n_cols = n_cols_col.value(0) as usize;
+        // Extract dimensions from first batch
+        if n_rows_total.is_none() {
+            let n_rows_col = batch
+                .column_by_name("n_rows")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_rows column missing".to_string()))?;
+            let r = n_rows_col.value(0) as usize;
+            n_rows_total = Some(r);
 
-    // Extract data in column-major order
-    let mut flat_data = Vec::with_capacity(n_rows * n_cols);
+            let n_cols_col = batch
+                .column_by_name("n_cols")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_cols column missing".to_string()))?;
+            let c = n_cols_col.value(0) as usize;
+            n_cols_total = Some(c);
 
-    for col_idx in 0..n_cols {
-        let col_name = format!("col_{}", col_idx);
-        let col = batch
-            .column_by_name(&col_name)
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| StorageError::Invalid(format!("Column {} missing", col_name)))?;
-
-        for row_idx in 0..n_rows {
-            flat_data.push(col.value(row_idx));
+            // Pre-allocate the single flat vector with zeroed memory
+            // We use zeroed memory so we can safely copy into slices at offsets
+            flat_data = vec![0.0; r * c];
         }
+
+        let total_rows = n_rows_total.unwrap();
+        let cols = n_cols_total.unwrap();
+        let batch_rows = batch.num_rows();
+
+        for col_idx in 0..cols {
+            let col_name = format!("col_{}", col_idx);
+            let col = batch
+                .column_by_name(&col_name)
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| StorageError::Invalid(format!("Column {} missing", col_name)))?;
+
+            // Calculate the start index for this column's chunk in the flat vector.
+            // Layout is Column-Major: [Col0_Full | Col1_Full | ...]s
+            // So Col K starts at K * total_rows.
+            // Within Col K, this batch starts at current_row_offset.
+            let start_idx = (col_idx * total_rows) + current_row_offset;
+            let end_idx = start_idx + batch_rows;
+
+            flat_data[start_idx..end_idx].copy_from_slice(col.values());
+        }
+
+        current_row_offset += batch_rows;
+    }
+
+    if n_rows_total.is_none() {
+        return Err(StorageError::Invalid("No data in parquet file".to_string()));
+    }
+
+    let n_rows = n_rows_total.unwrap();
+    let n_cols = n_cols_total.unwrap();
+
+    // Sanity check
+    if current_row_offset != n_rows {
+        return Err(StorageError::Invalid(format!(
+            "Parquet file contained {} rows, but metadata claimed {}",
+            current_row_offset, n_rows
+        )));
     }
 
     // Reconstruct with axis=1 (column-major)
@@ -465,57 +500,63 @@ pub fn load_sparse_matrix(path: impl AsRef<Path>) -> Result<CsMat<f64>, StorageE
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
-
-    // Extract dimensions
-    let n_rows_col = batch
-        .column_by_name("n_rows")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_rows missing".to_string()))?;
-    let n_rows = n_rows_col.value(0) as usize;
-
-    let n_cols_col = batch
-        .column_by_name("n_cols")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_cols missing".to_string()))?;
-    let n_cols = n_cols_col.value(0) as usize;
-
-    // Extract triplets
-    let row_col = batch
-        .column_by_name("row")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("row missing".to_string()))?;
-
-    let col_col = batch
-        .column_by_name("col")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("col missing".to_string()))?;
-
-    let val_col = batch
-        .column_by_name("value")
-        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-        .ok_or_else(|| StorageError::Invalid("value missing".to_string()))?;
-
-    // Build sparse matrix from triplets
     use sprs::TriMat;
-    let mut trimat = TriMat::new((n_rows, n_cols));
+    let mut trimat: Option<TriMat<f64>> = None;
 
-    for i in 0..row_col.len() {
-        trimat.add_triplet(
-            row_col.value(i) as usize,
-            col_col.value(i) as usize,
-            val_col.value(i),
-        );
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
+
+        // Extract dimensions from the first batch
+        if trimat.is_none() {
+            let n_rows_col = batch
+                .column_by_name("n_rows")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_rows missing".to_string()))?;
+            let n_rows = n_rows_col.value(0) as usize;
+
+            let n_cols_col = batch
+                .column_by_name("n_cols")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_cols missing".to_string()))?;
+            let n_cols = n_cols_col.value(0) as usize;
+
+            trimat = Some(TriMat::new((n_rows, n_cols)));
+        }
+
+        // Extract triplets
+        let row_col = batch
+            .column_by_name("row")
+            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| StorageError::Invalid("row missing".to_string()))?;
+
+        let col_col = batch
+            .column_by_name("col")
+            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| StorageError::Invalid("col missing".to_string()))?;
+
+        let val_col = batch
+            .column_by_name("value")
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+            .ok_or_else(|| StorageError::Invalid("value missing".to_string()))?;
+
+        if let Some(tm) = &mut trimat {
+            for i in 0..row_col.len() {
+                tm.add_triplet(
+                    row_col.value(i) as usize,
+                    col_col.value(i) as usize,
+                    val_col.value(i),
+                );
+            }
+        }
     }
 
-    Ok(trimat.to_csr())
+    trimat
+        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))
+        .map(|tm| tm.to_csr())
 }
 
 // ============================================================================
@@ -767,29 +808,35 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    let mut lambdas = Vec::new();
 
-    // Extract n_values from first row
-    let n_values_col = batch
-        .column_by_name("n_values")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_values column missing".to_string()))?;
-    let n_values = n_values_col.value(0) as usize;
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    // Extract lambda values
-    let lambda_col = batch
-        .column_by_name("lambda")
-        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-        .ok_or_else(|| StorageError::Invalid("lambda column missing".to_string()))?;
+        if lambdas.is_empty() {
+             // Try to pre-allocate based on n_values from the first batch
+             if let Some(n_values_col) = batch.column_by_name("n_values")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>()) 
+             {
+                 if !n_values_col.is_empty() {
+                    let n_values = n_values_col.value(0) as usize;
+                    lambdas.reserve(n_values);
+                 }
+             }
+        }
 
-    let lambdas: Vec<f64> = (0..n_values).map(|i| lambda_col.value(i)).collect();
+        // Extract lambda values
+        let lambda_col = batch
+            .column_by_name("lambda")
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+            .ok_or_else(|| StorageError::Invalid("lambda column missing".to_string()))?;
+
+        lambdas.extend_from_slice(lambda_col.values());
+    }
 
     Ok(lambdas)
 }
