@@ -902,4 +902,68 @@ mod tests {
             assert!(path.exists(), "Missing file: {}", filename);
         }
     }
+
+    #[test]
+    fn test_dense_multibatch() {
+        let _ = fs::create_dir_all("./test_data");
+        let path = Path::new("./test_data/test_dense_multibatch.parquet");
+
+        // Create a matrix with 2000 rows. This exceeds the default Arrow batch size (1024),
+        // forcing the reader to process multiple RecordBatches.
+        let rows = 2000;
+        let cols = 2;
+        let data: Vec<f64> = (0..rows * cols).map(|i| i as f64).collect();
+        let matrix = DenseMatrix::from_iterator(data.into_iter(), rows, cols, 1); 
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_rows", DataType::UInt64, false),
+            Field::new("n_cols", DataType::UInt64, false),
+            Field::new("col_0", DataType::Float64, false),
+            Field::new("col_1", DataType::Float64, false),
+        ]));
+
+        let file = File::create(path).unwrap();
+
+        // Explicitly set max row group size to ensure the file is structured 
+        // in a way that triggers multiple batch reads.
+        let props = WriterProperties::builder()
+            .set_max_row_group_size(1024) 
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
+
+        // Manually write the data in two separate batches of 1000 rows.
+        for i in 0..2 {
+            let start = i * 1000;
+            let end = std::cmp::min(start + 1000, rows);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_rows_arr = UInt64Array::from(vec![rows as u64; len]);
+            let n_cols_arr = UInt64Array::from(vec![cols as u64; len]);
+
+            let col0_data: Vec<f64> = (start..end).map(|r| matrix.get((r, 0)).clone()).collect();
+            let col1_data: Vec<f64> = (start..end).map(|r| matrix.get((r, 1)).clone()).collect();
+
+            let col0_arr = Float64Array::from(col0_data);
+            let col1_arr = Float64Array::from(col1_data);
+
+            let batch = RecordBatch::try_new(schema.clone(), vec![
+                Arc::new(name_arr),
+                Arc::new(n_rows_arr),
+                Arc::new(n_cols_arr),
+                Arc::new(col0_arr),
+                Arc::new(col1_arr),
+            ]).unwrap();
+
+            writer.write(&batch).unwrap();
+        }
+        writer.close().unwrap();
+
+        // Verify that load_dense_matrix correctly concatenates all batches.
+        let loaded = load_dense_matrix(path).unwrap();
+
+        assert_eq!(loaded.shape(), (rows, cols), "Loaded matrix shape mismatch");
+    }
 }
