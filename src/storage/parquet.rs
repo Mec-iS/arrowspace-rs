@@ -802,11 +802,32 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
 mod tests {
     use super::*;
     use crate::storage::test_storage::{
-        create_test_builder, create_test_dense_matrix, create_test_sparse_matrix,
+        create_test_builder, create_test_dense_matrix, create_test_dense_matrix_with_size,
+        create_test_sparse_matrix, create_test_sparse_matrix_with_size,
     };
     use approx::assert_relative_eq;
+    use arrow::datatypes::SchemaRef;
     use sprs::TriMat;
     use std::fs;
+
+    /// Helper function for *_multibatch tests
+    fn create_forced_multibatch_parquet(
+        path: impl AsRef<Path>,
+        schema: SchemaRef,
+        batches: impl Iterator<Item = RecordBatch>,
+    ) {
+        let file = File::create(path).unwrap();
+        let props = WriterProperties::builder()
+            .set_max_row_group_size(1024)
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+
+        for batch in batches {
+            writer.write(&batch).unwrap();
+        }
+        writer.close().unwrap();
+    }
 
     #[test]
     fn test_dense_roundtrip() {
@@ -912,8 +933,7 @@ mod tests {
         // forcing the reader to process multiple RecordBatches.
         let rows = 2000;
         let cols = 2;
-        let data: Vec<f64> = (0..rows * cols).map(|i| i as f64).collect();
-        let matrix = DenseMatrix::from_iterator(data.into_iter(), rows, cols, 1); 
+        let matrix = create_test_dense_matrix_with_size(rows, cols);
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("name_id", DataType::Utf8, false),
@@ -923,18 +943,8 @@ mod tests {
             Field::new("col_1", DataType::Float64, false),
         ]));
 
-        let file = File::create(path).unwrap();
-
-        // Explicitly set max row group size to ensure the file is structured 
-        // in a way that triggers multiple batch reads.
-        let props = WriterProperties::builder()
-            .set_max_row_group_size(1024) 
-            .build();
-
-        let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
-
-        // Manually write the data in two separate batches of 1000 rows.
-        for i in 0..2 {
+        // Create batches
+        let batches = (0..2).map(|i| {
             let start = i * 1000;
             let end = std::cmp::min(start + 1000, rows);
             let len = end - start;
@@ -949,21 +959,147 @@ mod tests {
             let col0_arr = Float64Array::from(col0_data);
             let col1_arr = Float64Array::from(col1_data);
 
-            let batch = RecordBatch::try_new(schema.clone(), vec![
-                Arc::new(name_arr),
-                Arc::new(n_rows_arr),
-                Arc::new(n_cols_arr),
-                Arc::new(col0_arr),
-                Arc::new(col1_arr),
-            ]).unwrap();
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_rows_arr),
+                    Arc::new(n_cols_arr),
+                    Arc::new(col0_arr),
+                    Arc::new(col1_arr),
+                ],
+            )
+            .unwrap()
+        });
 
-            writer.write(&batch).unwrap();
-        }
-        writer.close().unwrap();
+        create_forced_multibatch_parquet(path, schema.clone(), batches);
 
         // Verify that load_dense_matrix correctly concatenates all batches.
         let loaded = load_dense_matrix(path).unwrap();
 
         assert_eq!(loaded.shape(), (rows, cols), "Loaded matrix shape mismatch");
+    }
+
+    #[test]
+    fn test_sparse_multibatch() {
+        let _ = fs::create_dir_all("./test_data");
+        let path = Path::new("./test_data/test_sparse_multibatch.parquet");
+
+        // Create a sparse matrix with 2000 rows.
+        let rows = 2000;
+        let cols = 10;
+        let matrix = create_test_sparse_matrix_with_size(rows, cols);
+        let nnz = matrix.nnz();
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_rows", DataType::UInt64, false),
+            Field::new("n_cols", DataType::UInt64, false),
+            Field::new("nnz", DataType::UInt64, false),
+            Field::new("row", DataType::UInt64, false),
+            Field::new("col", DataType::UInt64, false),
+            Field::new("value", DataType::Float64, false),
+        ]));
+
+        let chunk_size = 1000;
+        let total_chunks = (nnz + chunk_size - 1) / chunk_size;
+
+        let batches = (0..total_chunks).map(|i| {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, nnz);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_rows_arr = UInt64Array::from(vec![rows as u64; len]);
+            let n_cols_arr = UInt64Array::from(vec![cols as u64; len]);
+            let nnz_arr = UInt64Array::from(vec![nnz as u64; len]);
+
+            let mut chunk_rows = Vec::with_capacity(len);
+            let mut chunk_cols = Vec::with_capacity(len);
+            let mut chunk_vals = Vec::with_capacity(len);
+
+            for idx in start..end {
+                chunk_rows.push(idx as u64);
+                chunk_cols.push((idx % cols) as u64);
+                chunk_vals.push(1.0);
+            }
+
+            let row_arr = UInt64Array::from(chunk_rows);
+            let col_arr = UInt64Array::from(chunk_cols);
+            let val_arr = Float64Array::from(chunk_vals);
+
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_rows_arr),
+                    Arc::new(n_cols_arr),
+                    Arc::new(nnz_arr),
+                    Arc::new(row_arr),
+                    Arc::new(col_arr),
+                    Arc::new(val_arr),
+                ],
+            )
+            .unwrap()
+        });
+
+        create_forced_multibatch_parquet(path, schema.clone(), batches);
+
+        let loaded = load_sparse_matrix(path).unwrap();
+
+        // If bug exists, loaded.nnz() will be ~1024 instead of 2000
+        assert_eq!(loaded.nnz(), nnz, "Loaded sparse matrix nnz mismatch");
+        assert_eq!(
+            loaded.shape(),
+            (rows, cols),
+            "Loaded sparse matrix shape mismatch"
+        );
+    }
+
+    #[test]
+    fn test_lambda_multibatch() {
+        let _ = fs::create_dir_all("./test_data");
+        let path = Path::new("./test_data/test_lambda_multibatch.parquet");
+
+        let n_values = 2000;
+        let lambdas: Vec<_> = (0..n_values).map(|i| i as f64).collect();
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_values", DataType::UInt64, false),
+            Field::new("row_index", DataType::UInt64, false),
+            Field::new("lambda", DataType::Float64, false),
+        ]));
+
+        let chunk_size = 1000;
+        let total_chunks = (n_values + chunk_size - 1) / chunk_size;
+
+        let batches = (0..total_chunks).map(|i| {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, n_values);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_vals_arr = UInt64Array::from(vec![n_values as u64; len]);
+            let row_idx_arr = UInt64Array::from((start as u64..end as u64).collect::<Vec<_>>());
+            let lambda_arr = Float64Array::from(lambdas[start..end].to_vec());
+
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_vals_arr),
+                    Arc::new(row_idx_arr),
+                    Arc::new(lambda_arr),
+                ],
+            )
+            .unwrap()
+        });
+
+        create_forced_multibatch_parquet(path, schema.clone(), batches);
+
+        let loaded = load_lambda(path).unwrap();
+
+        assert_eq!(loaded.len(), n_values, "Loaded lambda vector length mismatch");
     }
 }
