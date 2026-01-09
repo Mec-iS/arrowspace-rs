@@ -855,7 +855,7 @@ mod tests {
     use approx::assert_relative_eq;
     use arrow::datatypes::SchemaRef;
     use sprs::TriMat;
-    use std::fs;
+    use tempfile::TempDir;
 
     /// Helper function for *_multibatch tests
     fn create_forced_multibatch_parquet(
@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn test_dense_roundtrip() {
-        let _ = fs::create_dir_all("./test_data");
+        let temp_dir = TempDir::new().unwrap();
 
         let data = vec![
             vec![1.0, 2.0, 3.0],
@@ -887,9 +887,9 @@ mod tests {
         ];
         let original = DenseMatrix::from_2d_vec(&data).unwrap();
 
-        save_dense_matrix(&original, "./test_data", "test_dense", None).unwrap();
+        save_dense_matrix(&original, temp_dir.path(), "test_dense", None).unwrap();
 
-        let loaded = load_dense_matrix("./test_data/test_dense.parquet").unwrap();
+        let loaded = load_dense_matrix(temp_dir.path().join("test_dense.parquet")).unwrap();
 
         assert_eq!(original.shape(), loaded.shape());
 
@@ -899,13 +899,11 @@ mod tests {
                 assert_relative_eq!(*original.get((i, j)), *loaded.get((i, j)), epsilon = 1e-10);
             }
         }
-
-        // let _ = fs::remove_dir_all("./test_data");
     }
 
     #[test]
     fn test_sparse_roundtrip() {
-        let _ = fs::create_dir_all("./test_data");
+        let temp_dir = TempDir::new().unwrap();
 
         let mut trimat = TriMat::new((4, 4));
         trimat.add_triplet(0, 0, 2.0);
@@ -914,9 +912,9 @@ mod tests {
         trimat.add_triplet(2, 2, 1.5);
         let original = trimat.to_csr();
 
-        save_sparse_matrix(&original, "./test_data", "test_sparse", None).unwrap();
+        save_sparse_matrix(&original, temp_dir.path(), "test_sparse", None).unwrap();
 
-        let loaded = load_sparse_matrix("./test_data/test_sparse.parquet").unwrap();
+        let loaded = load_sparse_matrix(temp_dir.path().join("test_sparse.parquet")).unwrap();
 
         assert_eq!(original.shape(), loaded.shape());
         assert_eq!(original.nnz(), loaded.nnz());
@@ -928,13 +926,11 @@ mod tests {
                 assert_relative_eq!(orig_val, loaded_val, epsilon = 1e-10);
             }
         }
-
-        //let _ = fs::remove_dir_all("./test_data");
     }
 
     #[test]
     fn test_checkpoint_save_all_artifacts() {
-        let temp_dir = Path::new("./test_data");
+        let temp_dir = TempDir::new().unwrap();
         let builder = create_test_builder();
 
         let raw_data = create_test_dense_matrix();
@@ -944,7 +940,7 @@ mod tests {
         let signals = create_test_sparse_matrix();
 
         save_arrowspace_checkpoint_with_builder(
-            temp_dir,
+            temp_dir.path(),
             "checkpoint_test",
             &raw_data,
             &adjacency,
@@ -966,15 +962,15 @@ mod tests {
         ];
 
         for filename in expected_files {
-            let path = temp_dir.join(filename);
+            let path = temp_dir.path().join(filename);
             assert!(path.exists(), "Missing file: {}", filename);
         }
     }
 
     #[test]
     fn test_dense_multibatch() {
-        let _ = fs::create_dir_all("./test_data");
-        let path = Path::new("./test_data/test_dense_multibatch.parquet");
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_dense_multibatch.parquet");
 
         // Create a matrix with 2000 rows. This exceeds the default Arrow batch size (1024),
         // forcing the reader to process multiple RecordBatches.
@@ -1019,7 +1015,7 @@ mod tests {
             .unwrap()
         });
 
-        create_forced_multibatch_parquet(path, schema.clone(), batches);
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
 
         // Verify that load_dense_matrix correctly concatenates all batches.
         let loaded = load_dense_matrix(path).unwrap();
@@ -1029,8 +1025,8 @@ mod tests {
 
     #[test]
     fn test_sparse_multibatch() {
-        let _ = fs::create_dir_all("./test_data");
-        let path = Path::new("./test_data/test_sparse_multibatch.parquet");
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_sparse_multibatch.parquet");
 
         // Create a sparse matrix with 2000 rows.
         let rows = 2000;
@@ -1090,7 +1086,7 @@ mod tests {
             .unwrap()
         });
 
-        create_forced_multibatch_parquet(path, schema.clone(), batches);
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
 
         let loaded = load_sparse_matrix(path).unwrap();
 
@@ -1105,8 +1101,8 @@ mod tests {
 
     #[test]
     fn test_lambda_multibatch() {
-        let _ = fs::create_dir_all("./test_data");
-        let path = Path::new("./test_data/test_lambda_multibatch.parquet");
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_lambda_multibatch.parquet");
 
         let n_values = 2000;
         let lambdas: Vec<_> = (0..n_values).map(|i| i as f64).collect();
@@ -1143,7 +1139,7 @@ mod tests {
             .unwrap()
         });
 
-        create_forced_multibatch_parquet(path, schema.clone(), batches);
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
 
         let loaded = load_lambda(path).unwrap();
 
