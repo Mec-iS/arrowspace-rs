@@ -2,7 +2,7 @@ use crate::builder::{ArrowSpaceBuilder, ConfigValue};
 use crate::sampling::SamplerType;
 use crate::taumode::TauMode;
 use approx::assert_relative_eq;
-use smartcore::linalg::basic::arrays::Array;
+use smartcore::linalg::basic::arrays::{Array, Array2};
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use sprs::{CsMat, TriMat};
 use tempfile::TempDir;
@@ -23,6 +23,11 @@ pub(crate) fn create_test_dense_matrix() -> DenseMatrix<f64> {
     DenseMatrix::from_2d_vec(&data).unwrap()
 }
 
+pub(crate) fn create_test_dense_matrix_with_size(rows: usize, cols: usize) -> DenseMatrix<f64> {
+    let data: Vec<f64> = (0..rows * cols).map(|i| i as f64).collect();
+    DenseMatrix::from_iterator(data.into_iter(), rows, cols, 1)
+}
+
 pub(crate) fn create_test_sparse_matrix() -> CsMat<f64> {
     let mut trimat = TriMat::new((4, 4));
     trimat.add_triplet(0, 0, 2.0);
@@ -32,6 +37,14 @@ pub(crate) fn create_test_sparse_matrix() -> CsMat<f64> {
     trimat.add_triplet(2, 2, 1.5);
     trimat.add_triplet(3, 3, 4.0);
     trimat.to_csr()
+}
+
+pub(crate) fn create_test_sparse_matrix_with_size(rows: usize, cols: usize) -> CsMat<f64> {
+    let mut trimat = TriMat::new((rows, cols));
+    for i in 0..rows {
+        trimat.add_triplet(i, i % cols, 1.0);
+    }
+    trimat.to_csr::<usize>()
 }
 
 pub(crate) fn create_test_builder() -> ArrowSpaceBuilder {

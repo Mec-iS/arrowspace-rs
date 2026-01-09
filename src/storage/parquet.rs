@@ -294,41 +294,76 @@ pub fn load_dense_matrix(path: impl AsRef<Path>) -> Result<DenseMatrix<f64>, Sto
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    let mut n_rows_total: Option<usize> = None;
+    let mut n_cols_total: Option<usize> = None;
+    let mut flat_data: Vec<f64> = Vec::new();
+    let mut current_row_offset = 0;
 
-    // Extract dimensions from first row
-    let n_rows_col = batch
-        .column_by_name("n_rows")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_rows column missing".to_string()))?;
-    let n_rows = n_rows_col.value(0) as usize;
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let n_cols_col = batch
-        .column_by_name("n_cols")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_cols column missing".to_string()))?;
-    let n_cols = n_cols_col.value(0) as usize;
+        // Extract dimensions from first batch
+        if n_rows_total.is_none() {
+            let n_rows_col = batch
+                .column_by_name("n_rows")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_rows column missing".to_string()))?;
+            let r = n_rows_col.value(0) as usize;
+            n_rows_total = Some(r);
 
-    // Extract data in column-major order
-    let mut flat_data = Vec::with_capacity(n_rows * n_cols);
+            let n_cols_col = batch
+                .column_by_name("n_cols")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_cols column missing".to_string()))?;
+            let c = n_cols_col.value(0) as usize;
+            n_cols_total = Some(c);
 
-    for col_idx in 0..n_cols {
-        let col_name = format!("col_{}", col_idx);
-        let col = batch
-            .column_by_name(&col_name)
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| StorageError::Invalid(format!("Column {} missing", col_name)))?;
-
-        for row_idx in 0..n_rows {
-            flat_data.push(col.value(row_idx));
+            // Pre-allocate the single flat vector with zeroed memory
+            // We use zeroed memory so we can safely copy into slices at offsets
+            flat_data = vec![0.0; r * c];
         }
+
+        let total_rows = n_rows_total.unwrap();
+        let cols = n_cols_total.unwrap();
+        let batch_rows = batch.num_rows();
+
+        for col_idx in 0..cols {
+            let col_name = format!("col_{}", col_idx);
+            let col = batch
+                .column_by_name(&col_name)
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| StorageError::Invalid(format!("Column {} missing", col_name)))?;
+
+            // Calculate the start index for this column's chunk in the flat vector.
+            // Layout is Column-Major: [Col0_Full | Col1_Full | ...]s
+            // So Col K starts at K * total_rows.
+            // Within Col K, this batch starts at current_row_offset.
+            let start_idx = (col_idx * total_rows) + current_row_offset;
+            let end_idx = start_idx + batch_rows;
+
+            flat_data[start_idx..end_idx].copy_from_slice(col.values());
+        }
+
+        current_row_offset += batch_rows;
+    }
+
+    if n_rows_total.is_none() {
+        return Err(StorageError::Invalid("No data in parquet file".to_string()));
+    }
+
+    let n_rows = n_rows_total.unwrap();
+    let n_cols = n_cols_total.unwrap();
+
+    // Sanity check
+    if current_row_offset != n_rows {
+        return Err(StorageError::Invalid(format!(
+            "Parquet file contained {} rows, but metadata claimed {}",
+            current_row_offset, n_rows
+        )));
     }
 
     // Reconstruct with axis=1 (column-major)
@@ -465,57 +500,63 @@ pub fn load_sparse_matrix(path: impl AsRef<Path>) -> Result<CsMat<f64>, StorageE
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
-
-    // Extract dimensions
-    let n_rows_col = batch
-        .column_by_name("n_rows")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_rows missing".to_string()))?;
-    let n_rows = n_rows_col.value(0) as usize;
-
-    let n_cols_col = batch
-        .column_by_name("n_cols")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_cols missing".to_string()))?;
-    let n_cols = n_cols_col.value(0) as usize;
-
-    // Extract triplets
-    let row_col = batch
-        .column_by_name("row")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("row missing".to_string()))?;
-
-    let col_col = batch
-        .column_by_name("col")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("col missing".to_string()))?;
-
-    let val_col = batch
-        .column_by_name("value")
-        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-        .ok_or_else(|| StorageError::Invalid("value missing".to_string()))?;
-
-    // Build sparse matrix from triplets
     use sprs::TriMat;
-    let mut trimat = TriMat::new((n_rows, n_cols));
+    let mut trimat: Option<TriMat<f64>> = None;
 
-    for i in 0..row_col.len() {
-        trimat.add_triplet(
-            row_col.value(i) as usize,
-            col_col.value(i) as usize,
-            val_col.value(i),
-        );
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
+
+        // Extract dimensions from the first batch
+        if trimat.is_none() {
+            let n_rows_col = batch
+                .column_by_name("n_rows")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_rows missing".to_string()))?;
+            let n_rows = n_rows_col.value(0) as usize;
+
+            let n_cols_col = batch
+                .column_by_name("n_cols")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .ok_or_else(|| StorageError::Invalid("n_cols missing".to_string()))?;
+            let n_cols = n_cols_col.value(0) as usize;
+
+            trimat = Some(TriMat::new((n_rows, n_cols)));
+        }
+
+        // Extract triplets
+        let row_col = batch
+            .column_by_name("row")
+            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| StorageError::Invalid("row missing".to_string()))?;
+
+        let col_col = batch
+            .column_by_name("col")
+            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| StorageError::Invalid("col missing".to_string()))?;
+
+        let val_col = batch
+            .column_by_name("value")
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+            .ok_or_else(|| StorageError::Invalid("value missing".to_string()))?;
+
+        if let Some(tm) = &mut trimat {
+            for i in 0..row_col.len() {
+                tm.add_triplet(
+                    row_col.value(i) as usize,
+                    col_col.value(i) as usize,
+                    val_col.value(i),
+                );
+            }
+        }
     }
 
-    Ok(trimat.to_csr())
+    trimat
+        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))
+        .map(|tm| tm.to_csr())
 }
 
 // ============================================================================
@@ -767,29 +808,35 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let mut reader = builder
+    let reader = builder
         .build()
         .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    let batch = reader
-        .next()
-        .ok_or_else(|| StorageError::Invalid("No data in parquet file".to_string()))?
-        .map_err(|e| StorageError::Parquet(e.to_string()))?;
+    let mut lambdas = Vec::new();
 
-    // Extract n_values from first row
-    let n_values_col = batch
-        .column_by_name("n_values")
-        .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-        .ok_or_else(|| StorageError::Invalid("n_values column missing".to_string()))?;
-    let n_values = n_values_col.value(0) as usize;
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-    // Extract lambda values
-    let lambda_col = batch
-        .column_by_name("lambda")
-        .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
-        .ok_or_else(|| StorageError::Invalid("lambda column missing".to_string()))?;
+        if lambdas.is_empty() {
+             // Try to pre-allocate based on n_values from the first batch
+             if let Some(n_values_col) = batch.column_by_name("n_values")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>()) 
+             {
+                 if !n_values_col.is_empty() {
+                    let n_values = n_values_col.value(0) as usize;
+                    lambdas.reserve(n_values);
+                 }
+             }
+        }
 
-    let lambdas: Vec<f64> = (0..n_values).map(|i| lambda_col.value(i)).collect();
+        // Extract lambda values
+        let lambda_col = batch
+            .column_by_name("lambda")
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+            .ok_or_else(|| StorageError::Invalid("lambda column missing".to_string()))?;
+
+        lambdas.extend_from_slice(lambda_col.values());
+    }
 
     Ok(lambdas)
 }
@@ -802,15 +849,36 @@ pub fn load_lambda(path: impl AsRef<Path>) -> Result<Vec<f64>, StorageError> {
 mod tests {
     use super::*;
     use crate::storage::test_storage::{
-        create_test_builder, create_test_dense_matrix, create_test_sparse_matrix,
+        create_test_builder, create_test_dense_matrix, create_test_dense_matrix_with_size,
+        create_test_sparse_matrix, create_test_sparse_matrix_with_size,
     };
     use approx::assert_relative_eq;
+    use arrow::datatypes::SchemaRef;
     use sprs::TriMat;
-    use std::fs;
+    use tempfile::TempDir;
+
+    /// Helper function for *_multibatch tests
+    fn create_forced_multibatch_parquet(
+        path: impl AsRef<Path>,
+        schema: SchemaRef,
+        batches: impl Iterator<Item = RecordBatch>,
+    ) {
+        let file = File::create(path).unwrap();
+        let props = WriterProperties::builder()
+            .set_max_row_group_size(1024)
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+
+        for batch in batches {
+            writer.write(&batch).unwrap();
+        }
+        writer.close().unwrap();
+    }
 
     #[test]
     fn test_dense_roundtrip() {
-        let _ = fs::create_dir_all("./test_data");
+        let temp_dir = TempDir::new().unwrap();
 
         let data = vec![
             vec![1.0, 2.0, 3.0],
@@ -819,9 +887,9 @@ mod tests {
         ];
         let original = DenseMatrix::from_2d_vec(&data).unwrap();
 
-        save_dense_matrix(&original, "./test_data", "test_dense", None).unwrap();
+        save_dense_matrix(&original, temp_dir.path(), "test_dense", None).unwrap();
 
-        let loaded = load_dense_matrix("./test_data/test_dense.parquet").unwrap();
+        let loaded = load_dense_matrix(temp_dir.path().join("test_dense.parquet")).unwrap();
 
         assert_eq!(original.shape(), loaded.shape());
 
@@ -831,13 +899,11 @@ mod tests {
                 assert_relative_eq!(*original.get((i, j)), *loaded.get((i, j)), epsilon = 1e-10);
             }
         }
-
-        // let _ = fs::remove_dir_all("./test_data");
     }
 
     #[test]
     fn test_sparse_roundtrip() {
-        let _ = fs::create_dir_all("./test_data");
+        let temp_dir = TempDir::new().unwrap();
 
         let mut trimat = TriMat::new((4, 4));
         trimat.add_triplet(0, 0, 2.0);
@@ -846,9 +912,9 @@ mod tests {
         trimat.add_triplet(2, 2, 1.5);
         let original = trimat.to_csr();
 
-        save_sparse_matrix(&original, "./test_data", "test_sparse", None).unwrap();
+        save_sparse_matrix(&original, temp_dir.path(), "test_sparse", None).unwrap();
 
-        let loaded = load_sparse_matrix("./test_data/test_sparse.parquet").unwrap();
+        let loaded = load_sparse_matrix(temp_dir.path().join("test_sparse.parquet")).unwrap();
 
         assert_eq!(original.shape(), loaded.shape());
         assert_eq!(original.nnz(), loaded.nnz());
@@ -860,13 +926,11 @@ mod tests {
                 assert_relative_eq!(orig_val, loaded_val, epsilon = 1e-10);
             }
         }
-
-        //let _ = fs::remove_dir_all("./test_data");
     }
 
     #[test]
     fn test_checkpoint_save_all_artifacts() {
-        let temp_dir = Path::new("./test_data");
+        let temp_dir = TempDir::new().unwrap();
         let builder = create_test_builder();
 
         let raw_data = create_test_dense_matrix();
@@ -876,7 +940,7 @@ mod tests {
         let signals = create_test_sparse_matrix();
 
         save_arrowspace_checkpoint_with_builder(
-            temp_dir,
+            temp_dir.path(),
             "checkpoint_test",
             &raw_data,
             &adjacency,
@@ -898,8 +962,187 @@ mod tests {
         ];
 
         for filename in expected_files {
-            let path = temp_dir.join(filename);
+            let path = temp_dir.path().join(filename);
             assert!(path.exists(), "Missing file: {}", filename);
         }
+    }
+
+    #[test]
+    fn test_dense_multibatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_dense_multibatch.parquet");
+
+        // Create a matrix with 2000 rows. This exceeds the default Arrow batch size (1024),
+        // forcing the reader to process multiple RecordBatches.
+        let rows = 2000;
+        let cols = 2;
+        let matrix = create_test_dense_matrix_with_size(rows, cols);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_rows", DataType::UInt64, false),
+            Field::new("n_cols", DataType::UInt64, false),
+            Field::new("col_0", DataType::Float64, false),
+            Field::new("col_1", DataType::Float64, false),
+        ]));
+
+        // Create batches
+        let batches = (0..2).map(|i| {
+            let start = i * 1000;
+            let end = std::cmp::min(start + 1000, rows);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_rows_arr = UInt64Array::from(vec![rows as u64; len]);
+            let n_cols_arr = UInt64Array::from(vec![cols as u64; len]);
+
+            let col0_data: Vec<f64> = (start..end).map(|r| matrix.get((r, 0)).clone()).collect();
+            let col1_data: Vec<f64> = (start..end).map(|r| matrix.get((r, 1)).clone()).collect();
+
+            let col0_arr = Float64Array::from(col0_data);
+            let col1_arr = Float64Array::from(col1_data);
+
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_rows_arr),
+                    Arc::new(n_cols_arr),
+                    Arc::new(col0_arr),
+                    Arc::new(col1_arr),
+                ],
+            )
+            .unwrap()
+        });
+
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
+
+        // Verify that load_dense_matrix correctly concatenates all batches.
+        let loaded = load_dense_matrix(path).unwrap();
+
+        assert_eq!(loaded.shape(), (rows, cols), "Loaded matrix shape mismatch");
+    }
+
+    #[test]
+    fn test_sparse_multibatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_sparse_multibatch.parquet");
+
+        // Create a sparse matrix with 2000 rows.
+        let rows = 2000;
+        let cols = 10;
+        let matrix = create_test_sparse_matrix_with_size(rows, cols);
+        let nnz = matrix.nnz();
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_rows", DataType::UInt64, false),
+            Field::new("n_cols", DataType::UInt64, false),
+            Field::new("nnz", DataType::UInt64, false),
+            Field::new("row", DataType::UInt64, false),
+            Field::new("col", DataType::UInt64, false),
+            Field::new("value", DataType::Float64, false),
+        ]));
+
+        let chunk_size = 1000;
+        let total_chunks = (nnz + chunk_size - 1) / chunk_size;
+
+        let batches = (0..total_chunks).map(|i| {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, nnz);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_rows_arr = UInt64Array::from(vec![rows as u64; len]);
+            let n_cols_arr = UInt64Array::from(vec![cols as u64; len]);
+            let nnz_arr = UInt64Array::from(vec![nnz as u64; len]);
+
+            let mut chunk_rows = Vec::with_capacity(len);
+            let mut chunk_cols = Vec::with_capacity(len);
+            let mut chunk_vals = Vec::with_capacity(len);
+
+            for idx in start..end {
+                chunk_rows.push(idx as u64);
+                chunk_cols.push((idx % cols) as u64);
+                chunk_vals.push(1.0);
+            }
+
+            let row_arr = UInt64Array::from(chunk_rows);
+            let col_arr = UInt64Array::from(chunk_cols);
+            let val_arr = Float64Array::from(chunk_vals);
+
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_rows_arr),
+                    Arc::new(n_cols_arr),
+                    Arc::new(nnz_arr),
+                    Arc::new(row_arr),
+                    Arc::new(col_arr),
+                    Arc::new(val_arr),
+                ],
+            )
+            .unwrap()
+        });
+
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
+
+        let loaded = load_sparse_matrix(path).unwrap();
+
+        // If bug exists, loaded.nnz() will be ~1024 instead of 2000
+        assert_eq!(loaded.nnz(), nnz, "Loaded sparse matrix nnz mismatch");
+        assert_eq!(
+            loaded.shape(),
+            (rows, cols),
+            "Loaded sparse matrix shape mismatch"
+        );
+    }
+
+    #[test]
+    fn test_lambda_multibatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_lambda_multibatch.parquet");
+
+        let n_values = 2000;
+        let lambdas: Vec<_> = (0..n_values).map(|i| i as f64).collect();
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name_id", DataType::Utf8, false),
+            Field::new("n_values", DataType::UInt64, false),
+            Field::new("row_index", DataType::UInt64, false),
+            Field::new("lambda", DataType::Float64, false),
+        ]));
+
+        let chunk_size = 1000;
+        let total_chunks = (n_values + chunk_size - 1) / chunk_size;
+
+        let batches = (0..total_chunks).map(|i| {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, n_values);
+            let len = end - start;
+
+            let name_arr = StringArray::from(vec!["test"; len]);
+            let n_vals_arr = UInt64Array::from(vec![n_values as u64; len]);
+            let row_idx_arr = UInt64Array::from((start as u64..end as u64).collect::<Vec<_>>());
+            let lambda_arr = Float64Array::from(lambdas[start..end].to_vec());
+
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(name_arr),
+                    Arc::new(n_vals_arr),
+                    Arc::new(row_idx_arr),
+                    Arc::new(lambda_arr),
+                ],
+            )
+            .unwrap()
+        });
+
+        create_forced_multibatch_parquet(&path, schema.clone(), batches);
+
+        let loaded = load_lambda(path).unwrap();
+
+        assert_eq!(loaded.len(), n_values, "Loaded lambda vector length mismatch");
     }
 }
